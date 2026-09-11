@@ -1,6 +1,23 @@
+fastapi
+uvicorn
+
 langchain
+langchain-community
+langchain-openai
 langgraph
 openai
-python-dotenv
-pydantic
 
+pydantic
+pydantic-settings
+python-dotenv
+
+chromadb
+faiss-cpu
+
+pypdf
+pdfplumber
+pillow
+pytesseract
+
+pytest
+pytest-asyncio
