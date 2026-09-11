@@ -1,0 +1,2 @@
+"""Response generation node package."""
+

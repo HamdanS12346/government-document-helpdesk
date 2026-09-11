@@ -1,0 +1,2 @@
+"""Normalized input contract."""
+

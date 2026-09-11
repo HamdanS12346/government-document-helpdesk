@@ -1,0 +1,2 @@
+"""Intent decision contract."""
+
