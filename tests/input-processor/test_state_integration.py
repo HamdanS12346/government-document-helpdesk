@@ -13,7 +13,7 @@ def test_input_processor_writes_only_normalized_input_to_graph_state() -> None:
     assert state_update.keys() == {"normalized_input"}
     assert state_update["normalized_input"].user_query == "What does this notice mean?"
     assert state_update["normalized_input"].combined_text == (
-        "What does this notice mean?"
+        "<USER_QUERY>\nWhat does this notice mean?"
     )
 
 
@@ -63,7 +63,7 @@ def test_downstream_nodes_can_read_normalized_input_fields_from_graph_state() ->
     assert normalized_input.user_query == "Explain renewal steps."
     assert normalized_input.image_content == []
     assert normalized_input.pdf_content == []
-    assert normalized_input.combined_text == "Explain renewal steps."
+    assert normalized_input.combined_text == "<USER_QUERY>\nExplain renewal steps."
 
 
 def test_graph_state_contains_no_raw_attachment_bytes_after_success() -> None:

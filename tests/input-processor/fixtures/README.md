@@ -54,3 +54,24 @@ Milestone 4 PDF fixtures:
 - `pdfs/over_page_limit/at_limit_5_pages.pdf`: PDF at the configured page limit.
 
 Oversized upload fixtures should be generated in test code rather than committed.
+
+Regression process:
+
+- Put permanent input-processor regression tests in `tests/input-processor/test_regressions.py`.
+- Name tests with `test_reg_<number>_<short_failure_mode>`.
+- Use fixture IDs like `REG-001` in the test docstring or assertion context.
+- Keep fixtures synthetic, deterministic, and safe to commit.
+- Prefer reusing existing synthetic fixtures before adding new files.
+- Generate oversized or large temporary payloads in test code instead of committing them.
+- Convert each discovered bug into a focused regression test before marking it fixed.
+- If a regression needs a new fixture, add it under `fixtures/regressions/<category>/` and document it here.
+
+Initial regression examples:
+
+- `REG-001`: OCR missed government form field.
+- `REG-002`: scanned PDF produced empty text.
+- `REG-003`: mixed PDF lost scanned pages.
+- `REG-004`: raw upload entered graph state.
+- `REG-005`: PII appeared in trace-like payload.
+- `REG-006`: legitimate form instruction incorrectly rejected.
+- `REG-007`: injection-like document content affected routing.

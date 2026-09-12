@@ -69,6 +69,24 @@ def make_pdf_attachment(filename: str = "sample.pdf") -> Attachment:
     )
 
 
+def expected_combined_text(
+    *,
+    user_query: str | None = None,
+    image_texts: list[str] | None = None,
+    pdf_texts: list[str] | None = None,
+) -> str:
+    parts = []
+    if user_query and user_query.strip():
+        parts.append(f"<USER_QUERY>\n{user_query}")
+    if image_texts:
+        image_text = "\n\n".join(image_texts)
+        parts.append(f"<IMAGE_CONTENT>\n{image_text}")
+    if pdf_texts:
+        pdf_text = "\n\n".join(pdf_texts)
+        parts.append(f"<PDF_CONTENT>\n{pdf_text}")
+    return "\n\n".join(parts)
+
+
 def test_process_input_rejects_empty_request_safely() -> None:
     result = process_input(InputRequest())
 
@@ -90,7 +108,9 @@ def test_process_input_normalizes_text_only_request() -> None:
     assert result.normalized_input.user_query == "What does this document mean?"
     assert result.normalized_input.image_content == []
     assert result.normalized_input.pdf_content == []
-    assert result.normalized_input.combined_text == "What does this document mean?"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        user_query="What does this document mean?"
+    )
     assert result.attachment_statuses == []
 
 
@@ -115,8 +135,9 @@ def test_process_input_processes_user_text_and_image_attachment() -> None:
     assert result.normalized_input.image_content[0].image_name == "fictional_form.png"
     assert result.normalized_input.image_content[0].extracted_text == "Image document text"
     assert result.normalized_input.pdf_content == []
-    assert result.normalized_input.combined_text == (
-        "Please read this.\n\nImage document text"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        user_query="Please read this.",
+        image_texts=["Image document text"],
     )
     assert result.attachment_statuses[0].status == "success"
 
@@ -150,8 +171,9 @@ def test_process_input_processes_user_text_and_pdf_attachment(
     assert result.normalized_input.image_content == []
     assert result.normalized_input.pdf_content[0].pdf_name == "sample.pdf"
     assert result.normalized_input.pdf_content[0].extracted_text == "PDF document text"
-    assert result.normalized_input.combined_text == (
-        "Please explain this.\n\nPDF document text"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        user_query="Please explain this.",
+        pdf_texts=["PDF document text"],
     )
     assert result.attachment_statuses[0].status == "success"
 
@@ -333,7 +355,9 @@ def test_process_input_preserves_successful_content_when_attachment_fails(
     assert result.normalized_input.image_content[0].extracted_text == (
         "successful image text"
     )
-    assert result.normalized_input.combined_text == "successful image text"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        image_texts=["successful image text"]
+    )
     assert [status.status for status in result.attachment_statuses] == [
         "success",
         "failed",
@@ -379,8 +403,9 @@ def test_process_input_keeps_failed_attachment_errors_out_of_combined_text(
     assert result.normalized_input is not None
     assert result.attachment_statuses[0].error is not None
     failed_message = result.attachment_statuses[0].error.message
-    assert result.normalized_input.combined_text == (
-        "Please review these.\n\nsuccessful pdf text"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        user_query="Please review these.",
+        pdf_texts=["successful pdf text"],
     )
     assert failed_message not in result.normalized_input.combined_text
     assert "failed.png" not in result.normalized_input.combined_text
@@ -406,7 +431,9 @@ def test_process_input_returns_text_only_success_when_attachment_fails() -> None
     assert result.normalized_input.user_query == "What documents do I need?"
     assert result.normalized_input.image_content == []
     assert result.normalized_input.pdf_content == []
-    assert result.normalized_input.combined_text == "What documents do I need?"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        user_query="What documents do I need?"
+    )
     assert result.attachment_statuses[0].status == "failed"
     assert result.attachment_statuses[0].error is not None
     assert (
@@ -532,7 +559,9 @@ def test_process_input_preserves_user_query_exactly_in_normalized_input() -> Non
     assert result.success is True
     assert result.normalized_input is not None
     assert result.normalized_input.user_query == user_query
-    assert result.normalized_input.combined_text == user_query
+    assert result.normalized_input.combined_text == expected_combined_text(
+        user_query=user_query
+    )
 
 
 def test_process_input_uses_empty_user_query_for_attachment_only_success(
@@ -557,7 +586,9 @@ def test_process_input_uses_empty_user_query_for_attachment_only_success(
     assert result.success is True
     assert result.normalized_input is not None
     assert result.normalized_input.user_query == ""
-    assert result.normalized_input.combined_text == "attachment-only text"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        image_texts=["attachment-only text"]
+    )
 
 
 def test_process_input_populates_only_successful_image_and_pdf_content(
@@ -670,8 +701,10 @@ def test_process_input_builds_combined_text_from_user_query_images_and_pdfs(
 
     assert result.success is True
     assert result.normalized_input is not None
-    assert result.normalized_input.combined_text == (
-        "user question\n\nimage extracted text\n\npdf extracted text"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        user_query="user question",
+        image_texts=["image extracted text"],
+        pdf_texts=["pdf extracted text"],
     )
     assert not hasattr(result.normalized_input, "attachment_statuses")
     assert not hasattr(result.normalized_input, "raw_attachment_bytes")
@@ -685,7 +718,9 @@ def test_e2e_orchestration_text_only() -> None:
     assert result.normalized_input.user_query == "Text only request"
     assert result.normalized_input.image_content == []
     assert result.normalized_input.pdf_content == []
-    assert result.normalized_input.combined_text == "Text only request"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        user_query="Text only request"
+    )
 
 
 def test_e2e_orchestration_text_and_image(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -705,8 +740,9 @@ def test_e2e_orchestration_text_and_image(monkeypatch: pytest.MonkeyPatch) -> No
         "image.png"
     ]
     assert result.normalized_input.pdf_content == []
-    assert result.normalized_input.combined_text == (
-        "Text plus image\n\nimage.png text"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        user_query="Text plus image",
+        image_texts=["image.png text"],
     )
 
 
@@ -727,8 +763,9 @@ def test_e2e_orchestration_text_and_pdf(monkeypatch: pytest.MonkeyPatch) -> None
     assert [content.pdf_name for content in result.normalized_input.pdf_content] == [
         "document.pdf"
     ]
-    assert result.normalized_input.combined_text == (
-        "Text plus PDF\n\ndocument.pdf text"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        user_query="Text plus PDF",
+        pdf_texts=["document.pdf text"],
     )
 
 
@@ -756,8 +793,10 @@ def test_e2e_orchestration_text_image_and_pdf(
     assert [content.pdf_name for content in result.normalized_input.pdf_content] == [
         "document.pdf"
     ]
-    assert result.normalized_input.combined_text == (
-        "Full request\n\nimage.png text\n\ndocument.pdf text"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        user_query="Full request",
+        image_texts=["image.png text"],
+        pdf_texts=["document.pdf text"],
     )
 
 
@@ -779,7 +818,10 @@ def test_e2e_orchestration_image_and_pdf_without_user_text(
     assert result.success is True
     assert result.normalized_input is not None
     assert result.normalized_input.user_query == ""
-    assert result.normalized_input.combined_text == "image.png text\n\ndocument.pdf text"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        image_texts=["image.png text"],
+        pdf_texts=["document.pdf text"],
+    )
 
 
 def test_e2e_orchestration_multiple_images_and_multiple_pdfs(
@@ -810,8 +852,10 @@ def test_e2e_orchestration_multiple_images_and_multiple_pdfs(
         "three.pdf",
         "four.pdf",
     ]
-    assert result.normalized_input.combined_text == (
-        "Many files\n\none.png text\n\ntwo.jpg text\n\nthree.pdf text\n\nfour.pdf text"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        user_query="Many files",
+        image_texts=["one.png text", "two.jpg text"],
+        pdf_texts=["three.pdf text", "four.pdf text"],
     )
 
 
@@ -836,7 +880,9 @@ def test_e2e_orchestration_text_only_success_when_all_attachments_fail() -> None
 
     assert result.success is True
     assert result.normalized_input is not None
-    assert result.normalized_input.combined_text == "Text survives"
+    assert result.normalized_input.combined_text == expected_combined_text(
+        user_query="Text survives"
+    )
     assert [status.status for status in result.attachment_statuses] == [
         "failed",
         "failed",
@@ -917,7 +963,7 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             "text only",
             [],
             True,
-            "text only",
+            expected_combined_text(user_query="text only"),
             [],
             [],
             [],
@@ -927,7 +973,10 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             "text plus image",
             [make_png_attachment("image.png")],
             True,
-            "text plus image\n\nimage.png text",
+            expected_combined_text(
+                user_query="text plus image",
+                image_texts=["image.png text"],
+            ),
             ["image.png"],
             [],
             ["success"],
@@ -937,7 +986,10 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             "text plus pdf",
             [make_pdf_attachment("document.pdf")],
             True,
-            "text plus pdf\n\ndocument.pdf text",
+            expected_combined_text(
+                user_query="text plus pdf",
+                pdf_texts=["document.pdf text"],
+            ),
             [],
             ["document.pdf"],
             ["success"],
@@ -947,7 +999,11 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             "text plus both",
             [make_png_attachment("image.png"), make_pdf_attachment("document.pdf")],
             True,
-            "text plus both\n\nimage.png text\n\ndocument.pdf text",
+            expected_combined_text(
+                user_query="text plus both",
+                image_texts=["image.png text"],
+                pdf_texts=["document.pdf text"],
+            ),
             ["image.png"],
             ["document.pdf"],
             ["success", "success"],
@@ -957,7 +1013,10 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             None,
             [make_png_attachment("image.png"), make_pdf_attachment("document.pdf")],
             True,
-            "image.png text\n\ndocument.pdf text",
+            expected_combined_text(
+                image_texts=["image.png text"],
+                pdf_texts=["document.pdf text"],
+            ),
             ["image.png"],
             ["document.pdf"],
             ["success", "success"],
@@ -967,7 +1026,7 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             None,
             [make_png_attachment("image.png")],
             True,
-            "image.png text",
+            expected_combined_text(image_texts=["image.png text"]),
             ["image.png"],
             [],
             ["success"],
@@ -977,7 +1036,7 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             None,
             [make_pdf_attachment("document.pdf")],
             True,
-            "document.pdf text",
+            expected_combined_text(pdf_texts=["document.pdf text"]),
             [],
             ["document.pdf"],
             ["success"],
@@ -994,7 +1053,10 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
                 make_pdf_attachment("document.pdf"),
             ],
             True,
-            "text plus failed image plus pdf\n\ndocument.pdf text",
+            expected_combined_text(
+                user_query="text plus failed image plus pdf",
+                pdf_texts=["document.pdf text"],
+            ),
             [],
             ["document.pdf"],
             ["failed", "success"],
@@ -1015,7 +1077,7 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
                 ),
             ],
             True,
-            "text plus failed files",
+            expected_combined_text(user_query="text plus failed files"),
             [],
             [],
             ["failed", "failed"],

@@ -367,7 +367,9 @@ def test_public_processor_handles_ocr_timeout_and_provider_error_with_text_succe
 
     assert result.success is True
     assert result.normalized_input is not None
-    assert result.normalized_input.combined_text == "Text survives failed OCR."
+    assert result.normalized_input.combined_text == (
+        "<USER_QUERY>\nText survives failed OCR."
+    )
     assert result.attachment_statuses[0].error is not None
     assert expected_fragment in result.attachment_statuses[0].error.message
 
@@ -477,7 +479,9 @@ def test_public_processor_handles_pdf_provider_failures_as_partial_success(
 
     assert result.success is True
     assert result.normalized_input is not None
-    assert result.normalized_input.combined_text == "Text survives failed PDF."
+    assert result.normalized_input.combined_text == (
+        "<USER_QUERY>\nText survives failed PDF."
+    )
     assert result.attachment_statuses[0].error is not None
     assert result.attachment_statuses[0].error.code == expected_code
     assert result.attachment_statuses[0].error.message == message

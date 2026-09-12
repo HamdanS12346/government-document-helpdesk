@@ -208,9 +208,15 @@ def _build_combined_text(
     image_content: list[ImageContent],
     pdf_content: list[PDFContent],
 ) -> str:
-    parts = [user_query] if user_query.strip() else []
-    parts.extend(content.extracted_text for content in image_content)
-    parts.extend(content.extracted_text for content in pdf_content)
+    parts = []
+    if user_query.strip():
+        parts.append(f"<USER_QUERY>\n{user_query}")
+    if image_content:
+        image_text = "\n\n".join(content.extracted_text for content in image_content)
+        parts.append(f"<IMAGE_CONTENT>\n{image_text}")
+    if pdf_content:
+        pdf_text = "\n\n".join(content.extracted_text for content in pdf_content)
+        parts.append(f"<PDF_CONTENT>\n{pdf_text}")
     return "\n\n".join(parts)
 
 
