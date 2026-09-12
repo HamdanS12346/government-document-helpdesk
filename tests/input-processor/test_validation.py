@@ -11,15 +11,73 @@ from app.input_processing.schemas import (
 )
 from guardrails.input_processor import (
     InputGuardrailDecision,
+    SUPPORTED_MEDIA_TYPES,
     inspect_attachment_signature,
     validate_attachment_modality,
     validate_input_presence,
+    validate_supported_media_type,
 )
 
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nsynthetic image bytes"
 JPEG_BYTES = b"\xff\xd8\xff\xe0synthetic image bytes"
 PDF_BYTES = b"%PDF-1.4\nsynthetic pdf bytes"
+
+
+def test_supported_media_type_set_contains_only_confirmed_upload_types() -> None:
+    assert SUPPORTED_MEDIA_TYPES == {
+        "image/png",
+        "image/jpeg",
+        "application/pdf",
+    }
+
+
+@pytest.mark.parametrize(
+    ("filename", "media_type", "content", "expected_modality"),
+    [
+        ("sample.png", "image/png", PNG_BYTES, InputModality.PNG),
+        ("sample.jpg", "image/jpeg", JPEG_BYTES, InputModality.JPEG),
+        ("sample.jpeg", "image/jpeg", JPEG_BYTES, InputModality.JPEG),
+        ("sample.pdf", "application/pdf", PDF_BYTES, InputModality.PDF),
+    ],
+)
+def test_validate_supported_media_type_accepts_confirmed_types(
+    filename: str,
+    media_type: str,
+    content: bytes,
+    expected_modality: InputModality,
+) -> None:
+    attachment = Attachment(filename=filename, media_type=media_type, content=content)
+
+    assert validate_supported_media_type(attachment) == expected_modality
+
+
+@pytest.mark.parametrize(
+    ("filename", "media_type"),
+    [
+        ("sample.gif", "image/gif"),
+        ("sample.bmp", "image/bmp"),
+        ("sample.svg", "image/svg+xml"),
+        ("sample.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        ("sample.txt", "text/plain"),
+        ("sample.zip", "application/zip"),
+    ],
+)
+def test_validate_supported_media_type_rejects_unsupported_types(
+    filename: str,
+    media_type: str,
+) -> None:
+    attachment = Attachment(
+        filename=filename,
+        media_type=media_type,
+        content=b"synthetic bytes",
+    )
+
+    with pytest.raises(InputProcessingError) as exc_info:
+        validate_supported_media_type(attachment)
+
+    assert exc_info.value.code == InputProcessingErrorCode.UNSUPPORTED_FORMAT
+    assert exc_info.value.message == "This attachment type is not supported."
 
 
 def test_validate_input_presence_accepts_text_only_request() -> None:

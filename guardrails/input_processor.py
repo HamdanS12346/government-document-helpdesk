@@ -20,6 +20,7 @@ MEDIA_TYPE_MODALITIES = {
     "image/jpeg": InputModality.JPEG,
     "application/pdf": InputModality.PDF,
 }
+SUPPORTED_MEDIA_TYPES = frozenset(MEDIA_TYPE_MODALITIES)
 
 
 class InputGuardrailDecision(StrEnum):
@@ -67,8 +68,8 @@ def inspect_attachment_signature(content: bytes) -> InputModality | None:
     return None
 
 
-def validate_attachment_modality(attachment: Attachment) -> ValidatedAttachment:
-    """Validate declared media type against the attachment byte signature."""
+def validate_supported_media_type(attachment: Attachment) -> InputModality:
+    """Validate the declared media type before modality-specific processing."""
 
     declared_modality = MEDIA_TYPE_MODALITIES.get(attachment.media_type)
     if declared_modality is None:
@@ -76,7 +77,13 @@ def validate_attachment_modality(attachment: Attachment) -> ValidatedAttachment:
             InputProcessingErrorCode.UNSUPPORTED_FORMAT,
             "This attachment type is not supported.",
         )
+    return declared_modality
 
+
+def validate_attachment_modality(attachment: Attachment) -> ValidatedAttachment:
+    """Validate declared media type against the attachment byte signature."""
+
+    declared_modality = validate_supported_media_type(attachment)
     actual_modality = inspect_attachment_signature(attachment.content)
     if actual_modality != declared_modality:
         raise InputProcessingError(
@@ -89,9 +96,11 @@ def validate_attachment_modality(attachment: Attachment) -> ValidatedAttachment:
 
 __all__ = [
     "InputGuardrailDecision",
+    "SUPPORTED_MEDIA_TYPES",
     "inspect_attachment_signature",
     "validate_attachment_modality",
     "validate_input_presence",
     "validate_post_extraction_boundary",
     "validate_pre_processing_boundary",
+    "validate_supported_media_type",
 ]
