@@ -9,6 +9,7 @@ from app.input_processing.schemas import (
     AttachmentProcessingError,
     AttachmentProcessingStatus,
     AttachmentProcessingWarning,
+    InputProcessingErrorCode,
     InputProcessingResult,
     InputRequest,
 )
@@ -136,7 +137,7 @@ def test_input_processing_result_accepts_full_success() -> None:
 def test_input_processing_result_accepts_partial_success() -> None:
     error = AttachmentProcessingError(
         filename="bad.pdf",
-        code="EXTRACTION_FAILURE",
+        code=InputProcessingErrorCode.EXTRACTION_FAILURE,
         message="This attachment could not be processed.",
     )
 
@@ -164,7 +165,7 @@ def test_input_processing_result_accepts_partial_success() -> None:
 def test_input_processing_result_accepts_complete_failure() -> None:
     error = AttachmentProcessingError(
         filename="bad.pdf",
-        code="UNREADABLE_CONTENT",
+        code=InputProcessingErrorCode.UNREADABLE_CONTENT,
         message="No readable content could be extracted from this attachment.",
     )
 
@@ -208,7 +209,7 @@ def test_successful_attachment_status_rejects_error() -> None:
             status="success",
             error=AttachmentProcessingError(
                 filename="good.pdf",
-                code="UNSUPPORTED_FORMAT",
+                code=InputProcessingErrorCode.UNSUPPORTED_FORMAT,
                 message="This file type is not supported.",
             ),
         )
@@ -228,3 +229,49 @@ def test_result_warnings_are_safe_structured_objects() -> None:
     )
 
     assert result.warnings == [warning]
+
+
+def test_error_taxonomy_includes_required_categories() -> None:
+    required_codes = {
+        "INVALID_INPUT",
+        "UNSUPPORTED_FORMAT",
+        "SIGNATURE_MISMATCH",
+        "FILE_TOO_LARGE",
+        "PDF_PAGE_LIMIT_EXCEEDED",
+        "OCR_FAILURE",
+        "EXTRACTION_FAILURE",
+        "UNREADABLE_CONTENT",
+        "PII_PROCESSING_FAILURE",
+        "SAFETY_REJECTION",
+        "INTERNAL_PROCESSING_ERROR",
+    }
+
+    assert {code.value for code in InputProcessingErrorCode} == required_codes
+
+
+def test_attachment_processing_error_rejects_unknown_error_code() -> None:
+    with pytest.raises(ValidationError):
+        AttachmentProcessingError(
+            filename="bad.pdf",
+            code="PATH_LEAKING_DEBUG_ERROR",
+            message="This attachment could not be processed.",
+        )
+
+
+def test_attachment_processing_error_is_structured_for_safe_display() -> None:
+    error = AttachmentProcessingError(
+        filename="bad.pdf",
+        code=InputProcessingErrorCode.SIGNATURE_MISMATCH,
+        message="The declared file type does not match the uploaded content.",
+    )
+
+    payload = error.model_dump(mode="json")
+
+    assert payload == {
+        "filename": "bad.pdf",
+        "code": "SIGNATURE_MISMATCH",
+        "message": "The declared file type does not match the uploaded content.",
+    }
+    assert "traceback" not in payload
+    assert "path" not in payload
+    assert "content" not in payload

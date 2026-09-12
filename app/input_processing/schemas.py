@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.contracts.normalized_input import NormalizedInput
+from app.input_processing.errors import InputProcessingErrorCode
 
 
 class Attachment(BaseModel):
@@ -61,10 +62,10 @@ class AttachmentProcessingError(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     filename: str
-    code: str
+    code: InputProcessingErrorCode
     message: str
 
-    @field_validator("filename", "code", "message")
+    @field_validator("filename", "message")
     @classmethod
     def validate_non_empty_text(cls, value: str) -> str:
         if not value.strip():
@@ -140,6 +141,7 @@ __all__ = [
     "AttachmentProcessingStatus",
     "AttachmentProcessingWarning",
     "AttachmentStatus",
+    "InputProcessingErrorCode",
     "InputProcessingResult",
     "InputRequest",
 ]

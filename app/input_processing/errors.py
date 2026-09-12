@@ -1,6 +1,33 @@
 """Input Processor error types."""
 
+from enum import StrEnum
+
+
+class InputProcessingErrorCode(StrEnum):
+    """Controlled Input Processor failure categories."""
+
+    INVALID_INPUT = "INVALID_INPUT"
+    UNSUPPORTED_FORMAT = "UNSUPPORTED_FORMAT"
+    SIGNATURE_MISMATCH = "SIGNATURE_MISMATCH"
+    FILE_TOO_LARGE = "FILE_TOO_LARGE"
+    PDF_PAGE_LIMIT_EXCEEDED = "PDF_PAGE_LIMIT_EXCEEDED"
+    OCR_FAILURE = "OCR_FAILURE"
+    EXTRACTION_FAILURE = "EXTRACTION_FAILURE"
+    UNREADABLE_CONTENT = "UNREADABLE_CONTENT"
+    PII_PROCESSING_FAILURE = "PII_PROCESSING_FAILURE"
+    SAFETY_REJECTION = "SAFETY_REJECTION"
+    INTERNAL_PROCESSING_ERROR = "INTERNAL_PROCESSING_ERROR"
+
 
 class InputProcessingError(Exception):
     """Base error for controlled Input Processor failures."""
 
+    def __init__(self, code: InputProcessingErrorCode, message: str) -> None:
+        if not message.strip():
+            raise ValueError("message must not be empty")
+        self.code = code
+        self.message = message
+        super().__init__(message)
+
+
+__all__ = ["InputProcessingError", "InputProcessingErrorCode"]
