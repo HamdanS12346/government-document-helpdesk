@@ -233,6 +233,11 @@ def test_successful_attachment_status_rejects_error() -> None:
         )
 
 
+def test_attachment_processing_status_rejects_unknown_status() -> None:
+    with pytest.raises(ValidationError):
+        AttachmentProcessingStatus(filename="sample.pdf", status="pending")
+
+
 def test_result_warnings_are_safe_structured_objects() -> None:
     warning = AttachmentProcessingWarning(
         filename="sample.pdf",
@@ -247,6 +252,17 @@ def test_result_warnings_are_safe_structured_objects() -> None:
     )
 
     assert result.warnings == [warning]
+
+
+def test_input_processing_result_rejects_raw_or_debug_fields() -> None:
+    with pytest.raises(ValidationError):
+        InputProcessingResult.model_validate(
+            {
+                "success": True,
+                "normalized_input": make_normalized_input(),
+                "raw_attachment_bytes": b"%PDF-1.4",
+            }
+        )
 
 
 def test_error_taxonomy_includes_required_categories() -> None:
