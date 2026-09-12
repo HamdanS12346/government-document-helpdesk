@@ -61,7 +61,27 @@ Then install all project requirements:
 pip install -r requirements.txt
 ```
 
-### 4. Configure environment variables
+### 4. Install OCR system dependency
+
+Image OCR uses `pytesseract`, which is a Python wrapper around the external Tesseract OCR executable. Installing `requirements.txt` is not enough for OCR; Tesseract must also be installed on the machine and available on `PATH`.
+
+On Windows, install Tesseract OCR and make sure this folder is on `PATH`:
+
+```text
+C:\Program Files\Tesseract-OCR
+```
+
+Verify from an activated virtual environment:
+
+```powershell
+where.exe tesseract
+tesseract --version
+python -c "import pytesseract; print(pytesseract.get_tesseract_version())"
+```
+
+All three commands should succeed before real OCR integration is expected to work.
+
+### 5. Configure environment variables
 
 Copy `.env.example` to `.env`:
 
