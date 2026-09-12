@@ -1,0 +1,444 @@
+[
+	{
+		"id": "IP-001",
+		"input": {
+			"text": "What documents are required to apply for a passport?",
+			"attachments": []
+		},
+		"expected": { "valid": true, "modality": ["text"] }
+	},
+	{
+		"id": "IP-002",
+		"input": {
+			"text": "Hello, I need help with a government form.",
+			"attachments": []
+		},
+		"expected": { "valid": true, "modality": ["text"] }
+	},
+	{
+		"id": "IP-003",
+		"input": {
+			"text": "Why was my application rejected and what can I do next?",
+			"attachments": []
+		},
+		"expected": { "valid": true, "modality": ["text"] }
+	},
+	{
+		"id": "IP-004",
+		"input": {
+			"text": "Please explain the eligibility requirements for this benefit in detail, including residency, income, age, supporting evidence, deadlines, renewal rules, and appeal options.",
+			"attachments": []
+		},
+		"expected": { "valid": true, "modality": ["text"] }
+	},
+	{
+		"id": "IP-005",
+		"input": {
+			"text": "How do I replace a lost identity document?",
+			"attachments": []
+		},
+		"expected": { "valid": true, "modality": ["text"] }
+	},
+	{
+		"id": "IP-006",
+		"input": {
+			"text": "What is shown on this document?",
+			"attachments": [{ "filename": "residence-card.jpg", "mime_type": "image/jpeg", "content": "Certificate of residence with name and address" }]
+		},
+		"expected": { "valid": true, "modality": ["text", "image"] }
+	},
+	{
+		"id": "IP-007",
+		"input": {
+			"text": "Can you check whether this card is readable?",
+			"attachments": [{ "filename": "identity-card.png", "mime_type": "image/png", "content": "Government identity card image" }]
+		},
+		"expected": { "valid": true, "modality": ["text", "image"] }
+	},
+	{
+		"id": "IP-008",
+		"input": {
+			"text": "Extract the expiration date from this screenshot.",
+			"attachments": [{ "filename": "portal-screenshot.webp", "mime_type": "image/webp", "content": "Screenshot containing an expiration date" }]
+		},
+		"expected": { "valid": true, "modality": ["text", "image"] }
+	},
+	{
+		"id": "IP-009",
+		"input": {
+			"text": "Review this scanned form for missing fields.",
+			"attachments": [{ "filename": "benefit-form.jpg", "mime_type": "image/jpeg", "content": "Scanned government benefit form" }]
+		},
+		"expected": { "valid": true, "modality": ["text", "image"] }
+	},
+	{
+		"id": "IP-010",
+		"input": {
+			"text": "Is this an acceptable proof of address?",
+			"attachments": [{ "filename": "utility-bill.jpeg", "mime_type": "image/jpeg", "content": "Utility bill showing name and address" }]
+		},
+		"expected": { "valid": true, "modality": ["text", "image"] }
+	},
+	{
+		"id": "IP-011",
+		"input": {
+			"text": "What are the filing requirements described in this document?",
+			"attachments": [{ "filename": "filing-guide.pdf", "mime_type": "application/pdf", "content": "Text-based government filing guide" }]
+		},
+		"expected": { "valid": true, "modality": ["text", "pdf"] }
+	},
+	{
+		"id": "IP-012",
+		"input": {
+			"text": "Summarize the attached policy.",
+			"attachments": [{ "filename": "policy.pdf", "mime_type": "application/pdf", "content": "Multi-page policy document" }]
+		},
+		"expected": { "valid": true, "modality": ["text", "pdf"] }
+	},
+	{
+		"id": "IP-013",
+		"input": {
+			"text": "Find the application deadline in the PDF.",
+			"attachments": [{ "filename": "application-calendar.pdf", "mime_type": "application/pdf", "content": "Government application calendar" }]
+		},
+		"expected": { "valid": true, "modality": ["text", "pdf"] }
+	},
+	{
+		"id": "IP-014",
+		"input": {
+			"text": "Does this guide mention renewal fees?",
+			"attachments": [{ "filename": "renewal-guide.pdf", "mime_type": "application/pdf", "content": "Document containing renewal fee information" }]
+		},
+		"expected": { "valid": true, "modality": ["text", "pdf"] }
+	},
+	{
+		"id": "IP-015",
+		"input": {
+			"text": "Compare the eligibility sections in this PDF.",
+			"attachments": [{ "filename": "eligibility-rules.pdf", "mime_type": "application/pdf", "content": "Government eligibility rules" }]
+		},
+		"expected": { "valid": true, "modality": ["text", "pdf"] }
+	},
+	{
+		"id": "IP-016",
+		"input": {
+			"text": "Compare the document in the photo with the requirements in the guide.",
+			"attachments": [
+				{ "filename": "submitted-document.jpg", "mime_type": "image/jpeg", "content": "Photograph of submitted document" },
+				{ "filename": "requirements.pdf", "mime_type": "application/pdf", "content": "Application requirements guide" }
+			]
+		},
+		"expected": { "valid": true, "modality": ["text", "image", "pdf"] }
+	},
+	{
+		"id": "IP-017",
+		"input": {
+			"text": "Do these two files show the same information?",
+			"attachments": [
+				{ "filename": "identity-front.png", "mime_type": "image/png", "content": "Front of identity document" },
+				{ "filename": "identity-record.pdf", "mime_type": "application/pdf", "content": "Identity record PDF" }
+			]
+		},
+		"expected": { "valid": true, "modality": ["text", "image", "pdf"] }
+	},
+	{
+		"id": "IP-018",
+		"input": {
+			"text": "",
+			"attachments": [
+				{ "filename": "notice.jpg", "mime_type": "image/jpeg", "content": "Government notice image" },
+				{ "filename": "notice-details.pdf", "mime_type": "application/pdf", "content": "Related notice details" }
+			]
+		},
+		"expected": { "valid": true, "modality": ["image", "pdf"] }
+	},
+	{
+		"id": "IP-019",
+		"input": {
+			"text": "Use the image and PDF to determine whether I can apply.",
+			"attachments": [
+				{ "filename": "residency-card.jpg", "mime_type": "image/jpeg", "content": "Residency card" },
+				{ "filename": "eligibility.pdf", "mime_type": "application/pdf", "content": "Eligibility requirements" }
+			]
+		},
+		"expected": { "valid": true, "modality": ["text", "image", "pdf"] }
+	},
+	{
+		"id": "IP-020",
+		"input": {
+			"text": "Check the attached identification and application instructions together.",
+			"attachments": [
+				{ "filename": "id-card.jpg", "mime_type": "image/jpeg", "content": "Identification card" },
+				{ "filename": "instructions.pdf", "mime_type": "application/pdf", "content": "Application instructions" }
+			]
+		},
+		"expected": { "valid": true, "modality": ["text", "image", "pdf"] }
+	},
+	{
+		"id": "IP-021",
+		"input": {
+			"text": "Review all attached evidence for my application.",
+			"attachments": [
+				{ "filename": "passport.jpg", "mime_type": "image/jpeg", "content": "Passport photograph" },
+				{ "filename": "instructions.pdf", "mime_type": "application/pdf", "content": "Application instructions" },
+				{ "filename": "address.jpg", "mime_type": "image/jpeg", "content": "Address proof photograph" }
+			]
+		},
+		"expected": { "valid": true, "modality": ["text", "image", "pdf"] }
+	},
+	{
+		"id": "IP-022",
+		"input": {
+			"text": "",
+			"attachments": []
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-023",
+		"input": {
+			"text": "   ",
+			"attachments": []
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-024",
+		"input": {
+			"text": "Please inspect this file.",
+			"attachments": [{ "filename": "archive.zip", "mime_type": "application/zip", "content": "Unsupported archive" }]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-025",
+		"input": {
+			"text": "Can you read this PDF?",
+			"attachments": [{ "filename": "corrupt.pdf", "mime_type": "application/pdf", "content": "CORRUPT_PDF", "valid": false }]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-026",
+		"input": {
+			"text": "Please process this attachment.",
+			"attachments": [{ "filename": "unreadable.jpg", "mime_type": "image/jpeg", "content": "UNREADABLE_ATTACHMENT", "valid": false }]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-027",
+		"input": {
+			"text": "Please process this very large document.",
+			"attachments": [{ "filename": "large.pdf", "mime_type": "application/pdf", "content": "FILE_EXCEEDS_SIZE_LIMIT", "size_bytes": 52428801, "valid": false }]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-028",
+		"input": {
+			"text": "Please review this long PDF.",
+			"attachments": [{ "filename": "long.pdf", "mime_type": "application/pdf", "content": "PDF_EXCEEDS_PAGE_LIMIT", "page_count": 501, "valid": false }]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-029",
+		"input": {
+			"text": "Review these attachments.",
+			"attachments": [
+				{ "filename": "one.jpg", "mime_type": "image/jpeg", "content": "Image one" },
+				{ "filename": "two.jpg", "mime_type": "image/jpeg", "content": "Image two" },
+				{ "filename": "three.jpg", "mime_type": "image/jpeg", "content": "Image three" },
+				{ "filename": "four.jpg", "mime_type": "image/jpeg", "content": "Image four" },
+				{ "filename": "five.jpg", "mime_type": "image/jpeg", "content": "Image five" },
+				{ "filename": "six.jpg", "mime_type": "image/jpeg", "content": "Image six" }
+			]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-030",
+		"input": {
+			"text": "What is in this attachment?",
+			"attachments": [{ "mime_type": "image/jpeg", "content": "Missing filename" }]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-031",
+		"input": {
+			"text": "Please check this attachment.",
+			"attachments": [{ "filename": "unknown", "content": "Missing MIME type" }]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-032",
+		"input": {
+			"text": "Please process this input.",
+			"attachments": "not-a-list"
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-033",
+		"input": {
+			"text": 12345,
+			"attachments": []
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-034",
+		"input": {
+			"attachments": []
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-035",
+		"input": {
+			"text": "Please review this document.",
+			"attachments": [{ "filename": "document.docx", "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "content": "Unsupported document format" }]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-036",
+		"input": {
+			"text": "What does this PDF say?",
+			"attachments": [{ "filename": "empty.pdf", "mime_type": "application/pdf", "content": "EMPTY_PDF", "valid": false }]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-037",
+		"input": {
+			"text": "Is this image acceptable?",
+			"attachments": [{ "filename": "blank.png", "mime_type": "image/png", "content": "BLANK_IMAGE", "valid": false }]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-038",
+		"input": {
+			"text": "Please inspect these files.",
+			"attachments": [
+				{ "filename": "valid.jpg", "mime_type": "image/jpeg", "content": "Valid image" },
+				{ "filename": "broken.pdf", "mime_type": "application/pdf", "content": "CORRUPT_PDF", "valid": false }
+			]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-039",
+		"input": {
+			"text": "",
+			"attachments": [{ "filename": "empty-description.jpg", "mime_type": "image/jpeg", "content": "Image without a user question" }]
+		},
+		"expected": { "valid": true, "modality": ["image"] }
+	},
+	{
+		"id": "IP-040",
+		"input": {
+			"text": "Can you read the name and date on this document?",
+			"attachments": [{ "filename": "document.tif", "mime_type": "image/tiff", "content": "Scanned document in TIFF format" }]
+		},
+		"expected": { "valid": true, "modality": ["text", "image"] }
+	},
+	{
+		"id": "IP-041",
+		"input": {
+			"text": "Is the attached PDF searchable?",
+			"attachments": [{ "filename": "scanned-record.pdf", "mime_type": "application/pdf", "content": "Scanned PDF requiring OCR" }]
+		},
+		"expected": { "valid": true, "modality": ["text", "pdf"] }
+	},
+	{
+		"id": "IP-042",
+		"input": {
+			"text": "List the forms referenced in both attachments.",
+			"attachments": [
+				{ "filename": "notice-a.pdf", "mime_type": "application/pdf", "content": "First government notice" },
+				{ "filename": "notice-b.pdf", "mime_type": "application/pdf", "content": "Second government notice" }
+			]
+		},
+		"expected": { "valid": true, "modality": ["text", "pdf"] }
+	},
+	{
+		"id": "IP-043",
+		"input": {
+			"text": "Review these two identity images for consistency.",
+			"attachments": [
+				{ "filename": "identity-front.jpg", "mime_type": "image/jpeg", "content": "Front identity image" },
+				{ "filename": "identity-back.jpg", "mime_type": "image/jpeg", "content": "Back identity image" }
+			]
+		},
+		"expected": { "valid": true, "modality": ["text", "image"] }
+	},
+	{
+		"id": "IP-044",
+		"input": {
+			"text": "",
+			"attachments": [{ "filename": "blank-question.pdf", "mime_type": "application/pdf", "content": "PDF with no text prompt" }]
+		},
+		"expected": { "valid": true, "modality": ["pdf"] }
+	},
+	{
+		"id": "IP-045",
+		"input": {
+			"text": "Please inspect this file.",
+			"attachments": [{ "filename": "uppercase.PDF", "mime_type": "application/pdf", "content": "PDF with uppercase extension" }]
+		},
+		"expected": { "valid": true, "modality": ["text", "pdf"] }
+	},
+	{
+		"id": "IP-046",
+		"input": {
+			"text": "Please inspect this attachment.",
+			"attachments": [{ "filename": "photo.jpg", "mime_type": "application/octet-stream", "content": "Image with ambiguous MIME type" }]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-047",
+		"input": {
+			"text": "Please process this attachment.",
+			"attachments": [{ "filename": "negative-size.pdf", "mime_type": "application/pdf", "content": "Invalid size metadata", "size_bytes": -1, "valid": false }]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-048",
+		"input": {
+			"text": "Please check this document.",
+			"attachments": [{ "filename": "missing-content.pdf", "mime_type": "application/pdf", "valid": false }]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-049",
+		"input": {
+			"text": "Please compare these records.",
+			"attachments": [
+				{ "filename": "record.jpg", "mime_type": "image/jpeg", "content": "Record image" },
+				{ "filename": "record.pdf", "mime_type": "application/pdf", "content": "Record PDF" },
+				{ "filename": "record.txt", "mime_type": "text/plain", "content": "Unsupported text attachment", "valid": false }
+			]
+		},
+		"expected": { "valid": false, "modality": [] }
+	},
+	{
+		"id": "IP-050",
+		"input": {
+			"text": "What information is visible in these files?",
+			"attachments": [
+				{ "filename": "document-one.png", "mime_type": "image/png", "content": "First document image" },
+				{ "filename": "document-two.pdf", "mime_type": "application/pdf", "content": "Second document PDF" },
+				{ "filename": "document-three.jpg", "mime_type": "image/jpeg", "content": "Third document image" }
+			]
+		},
+		"expected": { "valid": true, "modality": ["text", "image", "pdf"] }
+	}
+]
