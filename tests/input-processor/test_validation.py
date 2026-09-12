@@ -3,16 +3,73 @@
 import pytest
 
 from app.input_processing.errors import InputProcessingError, InputProcessingErrorCode
-from app.input_processing.schemas import Attachment, InputModality, ValidatedAttachment
+from app.input_processing.schemas import (
+    Attachment,
+    InputModality,
+    InputRequest,
+    ValidatedAttachment,
+)
 from guardrails.input_processor import (
+    InputGuardrailDecision,
     inspect_attachment_signature,
     validate_attachment_modality,
+    validate_input_presence,
 )
 
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nsynthetic image bytes"
 JPEG_BYTES = b"\xff\xd8\xff\xe0synthetic image bytes"
 PDF_BYTES = b"%PDF-1.4\nsynthetic pdf bytes"
+
+
+def test_validate_input_presence_accepts_text_only_request() -> None:
+    request = InputRequest(user_query="What does this mean?")
+
+    assert validate_input_presence(request) == InputGuardrailDecision.ALLOW
+
+
+def test_validate_input_presence_accepts_attachment_only_request() -> None:
+    request = InputRequest(
+        attachments=[
+            Attachment(
+                filename="sample.pdf",
+                media_type="application/pdf",
+                content=PDF_BYTES,
+            )
+        ]
+    )
+
+    assert validate_input_presence(request) == InputGuardrailDecision.ALLOW
+    assert request.user_query is None
+
+
+def test_validate_input_presence_accepts_text_and_attachment_request() -> None:
+    request = InputRequest(
+        user_query="Please summarize this.",
+        attachments=[
+            Attachment(
+                filename="sample.png",
+                media_type="image/png",
+                content=PNG_BYTES,
+            )
+        ],
+    )
+
+    assert validate_input_presence(request) == InputGuardrailDecision.ALLOW
+
+
+@pytest.mark.parametrize("user_query", [None, "", "   "])
+def test_validate_input_presence_rejects_empty_request(
+    user_query: str | None,
+) -> None:
+    request = InputRequest(user_query=user_query)
+
+    with pytest.raises(InputProcessingError) as exc_info:
+        validate_input_presence(request)
+
+    assert exc_info.value.code == InputProcessingErrorCode.INVALID_INPUT
+    assert exc_info.value.message == "Provide a question, an attachment, or both."
+    assert request.user_query is None
 
 
 @pytest.mark.parametrize(
