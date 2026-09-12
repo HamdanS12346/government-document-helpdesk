@@ -9,9 +9,11 @@ from app.input_processing.schemas import (
     AttachmentProcessingError,
     AttachmentProcessingStatus,
     AttachmentProcessingWarning,
+    InputModality,
     InputProcessingErrorCode,
     InputProcessingResult,
     InputRequest,
+    ValidatedAttachment,
 )
 
 
@@ -109,6 +111,22 @@ def test_input_request_rejects_malformed_attachment_objects() -> None:
 def test_input_request_rejects_non_attachment_items() -> None:
     with pytest.raises(ValidationError):
         InputRequest.model_validate({"attachments": [b"%PDF-1.4"]})
+
+
+def test_validated_attachment_captures_supported_modality() -> None:
+    attachment = Attachment(
+        filename="sample.jpeg",
+        media_type="image/jpeg",
+        content=b"\xff\xd8\xff\xe0synthetic image bytes",
+    )
+
+    validated = ValidatedAttachment(
+        attachment=attachment,
+        modality=InputModality.JPEG,
+    )
+
+    assert validated.attachment == attachment
+    assert validated.modality == InputModality.JPEG
 
 
 def make_normalized_input() -> NormalizedInput:

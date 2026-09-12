@@ -1,5 +1,6 @@
 """Input Processor request and internal result schemas."""
 
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -51,6 +52,24 @@ class InputRequest(BaseModel):
         if not value.strip():
             return None
         return value
+
+
+class InputModality(StrEnum):
+    """Supported validated input modalities."""
+
+    TEXT = "text"
+    PNG = "png"
+    JPEG = "jpeg"
+    PDF = "pdf"
+
+
+class ValidatedAttachment(BaseModel):
+    """Attachment after declared type and signature validation."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    attachment: Attachment
+    modality: InputModality
 
 
 AttachmentStatus = Literal["success", "failed"]
@@ -141,7 +160,9 @@ __all__ = [
     "AttachmentProcessingStatus",
     "AttachmentProcessingWarning",
     "AttachmentStatus",
+    "InputModality",
     "InputProcessingErrorCode",
     "InputProcessingResult",
     "InputRequest",
+    "ValidatedAttachment",
 ]
