@@ -310,7 +310,7 @@ PII policy is currently:
 mask and continue
 ```
 
-The current masker is regex-based and deterministic. Exact PII taxonomy/provider remains TBD.
+The current masker is regex-based and deterministic. User query text and extracted attachment text both use this masking path before entering `NormalizedInput`. Exact PII taxonomy/provider remains TBD.
 
 ## Failure Behavior
 

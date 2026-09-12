@@ -15,11 +15,14 @@ from app.input_processing.schemas import (
     Attachment,
     AttachmentProcessingError,
     AttachmentProcessingStatus,
+    AttachmentProcessingWarning,
     InputModality,
     InputProcessingResult,
     InputRequest,
 )
 from guardrails.input_processor import (
+    mark_document_text_untrusted,
+    mask_pii_in_text,
     validate_attachment_modality,
     validate_input_presence,
 )
@@ -72,7 +75,23 @@ def process_input(
         if processed_pdf_content is not None:
             pdf_content.append(processed_pdf_content)
 
-    user_query = request.user_query or ""
+    try:
+        user_query, user_query_warnings = _process_user_query(request.user_query)
+    except InputProcessingError as exc:
+        return InputProcessingResult(
+            success=False,
+            attachment_statuses=[
+                AttachmentProcessingStatus(
+                    filename="request",
+                    status="failed",
+                    error=AttachmentProcessingError(
+                        filename="request",
+                        code=exc.code,
+                        message=exc.message,
+                    ),
+                )
+            ],
+        )
     has_usable_content = bool(user_query.strip() or image_content or pdf_content)
     if not has_usable_content:
         return InputProcessingResult(
@@ -93,6 +112,7 @@ def process_input(
             ),
         ),
         attachment_statuses=attachment_statuses,
+        warnings=user_query_warnings,
     )
 
 
@@ -200,6 +220,29 @@ def _failed_attachment_status(
             message=message,
         ),
     )
+
+
+def _process_user_query(
+    user_query: str | None,
+) -> tuple[str, list[AttachmentProcessingWarning]]:
+    if user_query is None:
+        return "", []
+
+    masked_text = mask_pii_in_text(user_query).text
+    untrusted_text = mark_document_text_untrusted(masked_text)
+    warnings = []
+    if untrusted_text.suspicious:
+        warnings.append(
+            AttachmentProcessingWarning(
+                filename="request",
+                code="SUSPICIOUS_INSTRUCTION",
+                message=(
+                    "The request contains instruction-like text and was treated as "
+                    "untrusted user content."
+                ),
+            )
+        )
+    return untrusted_text.text, warnings
 
 
 def _build_combined_text(
