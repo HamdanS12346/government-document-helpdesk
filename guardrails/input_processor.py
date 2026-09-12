@@ -1,7 +1,9 @@
 """Input Processor validation and safety guardrail boundary."""
 
-from io import BytesIO
 from enum import StrEnum
+from io import BytesIO
+import re
+from typing import Protocol
 
 from pypdf import PdfReader
 
@@ -30,6 +32,13 @@ MEDIA_TYPE_MODALITIES = {
     "application/pdf": InputModality.PDF,
 }
 SUPPORTED_MEDIA_TYPES = frozenset(MEDIA_TYPE_MODALITIES)
+PII_MASK = "[REDACTED]"
+PII_PATTERNS = (
+    re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b"),
+    re.compile(r"\b\d{4}[ -]?\d{4}[ -]?\d{4}\b"),
+    re.compile(r"\b(?:\+91[- ]?)?[6-9]\d{9}\b"),
+    re.compile(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b"),
+)
 
 
 class InputGuardrailDecision(StrEnum):
@@ -39,6 +48,37 @@ class InputGuardrailDecision(StrEnum):
     MASK_AND_CONTINUE = "mask_and_continue"
     REJECT = "reject"
     FAIL = "fail"
+
+
+class PIIMaskingResult:
+    """Result of PII masking for extracted document text."""
+
+    def __init__(self, text: str, decision: InputGuardrailDecision) -> None:
+        self.text = text
+        self.decision = decision
+
+
+class PIIMasker(Protocol):
+    """Interface for replaceable PII detection and masking providers."""
+
+    def mask(self, text: str) -> PIIMaskingResult:
+        """Return masked text and the guardrail decision."""
+
+
+class RegexPIIMasker:
+    """Deterministic placeholder PII masker until provider/taxonomy is finalized."""
+
+    def mask(self, text: str) -> PIIMaskingResult:
+        masked_text = text
+        for pattern in PII_PATTERNS:
+            masked_text = pattern.sub(PII_MASK, masked_text)
+
+        decision = (
+            InputGuardrailDecision.MASK_AND_CONTINUE
+            if masked_text != text
+            else InputGuardrailDecision.ALLOW
+        )
+        return PIIMaskingResult(text=masked_text, decision=decision)
 
 
 def validate_pre_processing_boundary() -> InputGuardrailDecision:
@@ -51,6 +91,24 @@ def validate_post_extraction_boundary() -> InputGuardrailDecision:
     """Placeholder for PII masking and document-content safety checks."""
 
     return InputGuardrailDecision.ALLOW
+
+
+def mask_pii_in_text(
+    text: str,
+    masker: PIIMasker | None = None,
+) -> PIIMaskingResult:
+    """Mask detected PII in extracted text without treating failures as no-PII."""
+
+    active_masker = masker or RegexPIIMasker()
+    try:
+        return active_masker.mask(text)
+    except InputProcessingError:
+        raise
+    except Exception as exc:
+        raise InputProcessingError(
+            InputProcessingErrorCode.PII_PROCESSING_FAILURE,
+            "PII processing could not be completed safely.",
+        ) from exc
 
 
 def validate_input_presence(request: InputRequest) -> InputGuardrailDecision:
@@ -166,12 +224,16 @@ __all__ = [
     "InputGuardrailDecision",
     "MAX_ATTACHMENT_SIZE_BYTES",
     "MAX_PDF_PAGE_COUNT",
+    "PIIMasker",
+    "PIIMaskingResult",
+    "RegexPIIMasker",
     "SUPPORTED_MEDIA_TYPES",
     "get_pdf_page_count",
     "has_jpeg_signature",
     "has_pdf_signature",
     "has_png_signature",
     "inspect_attachment_signature",
+    "mask_pii_in_text",
     "validate_attachment_size",
     "validate_attachment_modality",
     "validate_input_presence",
