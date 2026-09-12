@@ -7,7 +7,10 @@ from typing import Protocol
 from pypdf import PdfReader
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.contracts.normalized_input import PDFContent
 from app.input_processing.errors import InputProcessingError, InputProcessingErrorCode
+from app.input_processing.ocr_provider import OCRProvider, OCRResult, OCRStatus
+from app.input_processing.preview import build_pdf_preview
 from app.input_processing.schemas import (
     AttachmentProcessingError,
     InputModality,
@@ -15,9 +18,9 @@ from app.input_processing.schemas import (
 )
 
 
-# Existing project requirement is 10 pages. Input Processor docs propose 5 pages;
-# keep this single configurable value until the team resolves that discrepancy.
-MAX_PDF_PAGE_COUNT = 10
+# Input Processor PDF limit. Keep this as the single configurable value used
+# before any extraction or OCR work.
+MAX_PDF_PAGE_COUNT = 5
 
 
 class PDFDocumentType(StrEnum):
@@ -52,6 +55,29 @@ class PDFPageText(BaseModel):
     def validate_page_number(cls, value: int) -> int:
         if value < 1:
             raise ValueError("page_number must be 1 or greater")
+        return value
+
+
+class PDFPageImage(BaseModel):
+    """Provider-independent rendered image bytes for one PDF page."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    page_number: int
+    image_content: bytes
+
+    @field_validator("page_number")
+    @classmethod
+    def validate_page_number(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("page_number must be 1 or greater")
+        return value
+
+    @field_validator("image_content")
+    @classmethod
+    def validate_image_content(cls, value: bytes) -> bytes:
+        if not value:
+            raise ValueError("image_content must not be empty")
         return value
 
 
@@ -104,17 +130,25 @@ class PDFClassificationResult(BaseModel):
 
 
 class PDFProcessingResult(BaseModel):
-    """PDF processor outcome before normalized PDFContent is built."""
+    """PDF processor outcome with normalized content or a safe failure."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
+    pdf_content: PDFContent | None = None
     extraction_result: PDFExtractionResult | None = None
     error: AttachmentProcessingError | None = None
 
     @model_validator(mode="after")
     def validate_result_shape(self) -> "PDFProcessingResult":
-        if (self.extraction_result is None) == (self.error is None):
-            raise ValueError("PDF processing result requires extraction_result or error")
+        populated_fields = [
+            self.pdf_content is not None,
+            self.extraction_result is not None,
+            self.error is not None,
+        ]
+        if sum(populated_fields) != 1:
+            raise ValueError(
+                "PDF processing result requires exactly one outcome field"
+            )
         return self
 
 
@@ -142,6 +176,13 @@ class PDFExtractor(Protocol):
         """Inspect and extract supported PDF content from transient bytes."""
 
 
+class PDFPageImageExtractor(Protocol):
+    """Replaceable capability for rendering or extracting scanned PDF page images."""
+
+    def extract_page_images(self, pdf_content: bytes) -> list[PDFPageImage]:
+        """Return rendered page images in document order."""
+
+
 class PendingPDFExtractor:
     """Placeholder PDF extractor until the concrete provider is finalized."""
 
@@ -153,13 +194,22 @@ class PendingPDFExtractor:
             message="PDF extraction provider is not configured.",
         )
 
+    def extract_page_images(self, pdf_content: bytes) -> list[PDFPageImage]:
+        """Return a controlled unavailable outcome for scanned PDF rendering."""
+
+        raise InputProcessingError(
+            InputProcessingErrorCode.EXTRACTION_FAILURE,
+            "PDF page images could not be extracted.",
+        )
+
 
 def get_pdf_page_count(pdf_content: bytes) -> int:
     """Return the page count for a PDF from transient bytes."""
 
     try:
-        reader = PdfReader(BytesIO(pdf_content))
-        return len(reader.pages)
+        with BytesIO(pdf_content) as stream:
+            reader = PdfReader(stream)
+            return len(reader.pages)
     except Exception as exc:
         raise InputProcessingError(
             InputProcessingErrorCode.UNREADABLE_CONTENT,
@@ -171,14 +221,15 @@ def classify_pdf_content(pdf_content: bytes) -> PDFClassificationResult:
     """Classify a PDF as text-based, scanned, or mixed using page text presence."""
 
     try:
-        reader = PdfReader(BytesIO(pdf_content))
-        pages = [
-            PDFPageText(
-                page_number=page_number,
-                text=(page.extract_text() or "").strip(),
-            )
-            for page_number, page in enumerate(reader.pages, start=1)
-        ]
+        with BytesIO(pdf_content) as stream:
+            reader = PdfReader(stream)
+            pages = [
+                PDFPageText(
+                    page_number=page_number,
+                    text=(page.extract_text() or "").strip(),
+                )
+                for page_number, page in enumerate(reader.pages, start=1)
+            ]
     except Exception as exc:
         raise InputProcessingError(
             InputProcessingErrorCode.UNREADABLE_CONTENT,
@@ -188,6 +239,151 @@ def classify_pdf_content(pdf_content: bytes) -> PDFClassificationResult:
     return PDFClassificationResult(
         document_type=classify_pdf_page_texts(pages),
         pages=pages,
+    )
+
+
+def build_text_based_pdf_content(
+    *,
+    pdf_name: str,
+    pages: list[PDFPageText],
+) -> PDFContent:
+    """Build normalized PDF content from machine-readable PDF text."""
+
+    return _build_pdf_content_from_page_texts(pdf_name=pdf_name, pages=pages)
+
+
+def build_scanned_pdf_content(
+    *,
+    pdf_name: str,
+    page_images: list[PDFPageImage],
+    ocr_provider: OCRProvider,
+) -> PDFContent:
+    """Build normalized PDF content from page-level OCR over scanned pages."""
+
+    if not page_images:
+        raise InputProcessingError(
+            InputProcessingErrorCode.UNREADABLE_CONTENT,
+            "No PDF pages were available for OCR.",
+        )
+
+    page_texts: list[PDFPageText] = []
+    for page_image in sorted(page_images, key=lambda page: page.page_number):
+        try:
+            ocr_result = ocr_provider.extract_text(page_image.image_content)
+        except Exception as exc:
+            raise InputProcessingError(
+                InputProcessingErrorCode.OCR_FAILURE,
+                "OCR could not be completed for this PDF.",
+            ) from exc
+
+        if not isinstance(ocr_result, OCRResult):
+            raise InputProcessingError(
+                InputProcessingErrorCode.OCR_FAILURE,
+                "OCR provider returned an invalid result.",
+            )
+
+        if ocr_result.status == OCRStatus.SUCCESS:
+            page_texts.append(
+                PDFPageText(page_number=page_image.page_number, text=ocr_result.text)
+            )
+            continue
+
+        if ocr_result.status in {OCRStatus.EMPTY, OCRStatus.LOW_CONFIDENCE}:
+            page_texts.append(PDFPageText(page_number=page_image.page_number, text=""))
+            continue
+
+        raise InputProcessingError(
+            InputProcessingErrorCode.OCR_FAILURE,
+            ocr_result.message or "OCR could not be completed for this PDF.",
+        )
+
+    return _build_pdf_content_from_page_texts(pdf_name=pdf_name, pages=page_texts)
+
+
+def build_mixed_pdf_content(
+    *,
+    pdf_name: str,
+    classified_pages: list[PDFPageText],
+    page_images: list[PDFPageImage],
+    ocr_provider: OCRProvider,
+) -> PDFContent:
+    """Build normalized PDF content from mixed machine text and scanned pages."""
+
+    page_images_by_number = {page.page_number: page for page in page_images}
+    page_texts: list[PDFPageText] = []
+
+    for page in sorted(classified_pages, key=lambda item: item.page_number):
+        if page.text.strip():
+            page_texts.append(page)
+            continue
+
+        page_image = page_images_by_number.get(page.page_number)
+        if page_image is None:
+            page_texts.append(PDFPageText(page_number=page.page_number, text=""))
+            continue
+
+        try:
+            ocr_result = ocr_provider.extract_text(page_image.image_content)
+        except Exception as exc:
+            raise InputProcessingError(
+                InputProcessingErrorCode.OCR_FAILURE,
+                "OCR could not be completed for this PDF.",
+            ) from exc
+
+        if not isinstance(ocr_result, OCRResult):
+            raise InputProcessingError(
+                InputProcessingErrorCode.OCR_FAILURE,
+                "OCR provider returned an invalid result.",
+            )
+
+        if ocr_result.status == OCRStatus.SUCCESS:
+            page_texts.append(
+                PDFPageText(page_number=page.page_number, text=ocr_result.text)
+            )
+            continue
+
+        if ocr_result.status in {OCRStatus.EMPTY, OCRStatus.LOW_CONFIDENCE}:
+            page_texts.append(PDFPageText(page_number=page.page_number, text=""))
+            continue
+
+        raise InputProcessingError(
+            InputProcessingErrorCode.OCR_FAILURE,
+            ocr_result.message or "OCR could not be completed for this PDF.",
+        )
+
+    return _build_pdf_content_from_page_texts(pdf_name=pdf_name, pages=page_texts)
+
+
+def _build_pdf_content_from_page_texts(
+    *,
+    pdf_name: str,
+    pages: list[PDFPageText],
+) -> PDFContent:
+    """Build normalized PDF content from page-level text."""
+
+    from guardrails.input_processor import (
+        mark_document_text_untrusted,
+        mask_pii_in_text,
+    )
+
+    extracted_text = "\n".join(page.text for page in pages).strip()
+    if not extracted_text:
+        raise InputProcessingError(
+            InputProcessingErrorCode.UNREADABLE_CONTENT,
+            "No readable text could be extracted from this PDF.",
+        )
+
+    masked_text = mask_pii_in_text(extracted_text).text
+    safe_document_text = mark_document_text_untrusted(masked_text).text
+    safe_page_texts = [
+        mark_document_text_untrusted(mask_pii_in_text(page.text).text).text
+        for page in pages
+    ]
+
+    return PDFContent(
+        pdf_name=pdf_name,
+        extracted_text=safe_document_text,
+        preview=build_pdf_preview(safe_page_texts),
     )
 
 
@@ -215,6 +411,8 @@ def process_pdf_attachment(
     validated_attachment: ValidatedAttachment,
     pdf_extractor: PDFExtractor,
     *,
+    ocr_provider: OCRProvider | None = None,
+    page_image_extractor: PDFPageImageExtractor | None = None,
     max_page_count: int = MAX_PDF_PAGE_COUNT,
 ) -> PDFProcessingResult:
     """Process an already-validated PDF through bounded PDF extraction."""
@@ -234,7 +432,7 @@ def process_pdf_attachment(
             attachment.content,
             max_page_count=max_page_count,
         )
-        classify_pdf_content(attachment.content)
+        classification = classify_pdf_content(attachment.content)
     except InputProcessingError as exc:
         return PDFProcessingResult(
             error=AttachmentProcessingError(
@@ -244,27 +442,111 @@ def process_pdf_attachment(
             )
         )
 
-    try:
-        extraction_result = pdf_extractor.extract(attachment.content)
-    except Exception:
-        return PDFProcessingResult(
-            error=AttachmentProcessingError(
-                filename=attachment.filename,
-                code=InputProcessingErrorCode.EXTRACTION_FAILURE,
-                message="PDF extraction could not be completed.",
+    if classification.document_type == PDFDocumentType.TEXT_BASED:
+        try:
+            return PDFProcessingResult(
+                pdf_content=build_text_based_pdf_content(
+                    pdf_name=attachment.filename,
+                    pages=classification.pages,
+                )
             )
-        )
-
-    if not isinstance(extraction_result, PDFExtractionResult):
-        return PDFProcessingResult(
-            error=AttachmentProcessingError(
-                filename=attachment.filename,
-                code=InputProcessingErrorCode.EXTRACTION_FAILURE,
-                message="PDF extraction provider returned an invalid result.",
+        except InputProcessingError as exc:
+            return PDFProcessingResult(
+                error=AttachmentProcessingError(
+                    filename=attachment.filename,
+                    code=exc.code,
+                    message=exc.message,
+                )
             )
-        )
+        except Exception:
+            return PDFProcessingResult(
+                error=AttachmentProcessingError(
+                    filename=attachment.filename,
+                    code=InputProcessingErrorCode.INTERNAL_PROCESSING_ERROR,
+                    message="PDF content could not be processed safely.",
+                )
+            )
 
-    return PDFProcessingResult(extraction_result=extraction_result)
+    if classification.document_type == PDFDocumentType.SCANNED:
+        if ocr_provider is None or page_image_extractor is None:
+            return PDFProcessingResult(
+                error=AttachmentProcessingError(
+                    filename=attachment.filename,
+                    code=InputProcessingErrorCode.OCR_FAILURE,
+                    message="Scanned PDF OCR is not configured.",
+                )
+            )
+
+        try:
+            page_images = page_image_extractor.extract_page_images(attachment.content)
+            return PDFProcessingResult(
+                pdf_content=build_scanned_pdf_content(
+                    pdf_name=attachment.filename,
+                    page_images=page_images,
+                    ocr_provider=ocr_provider,
+                )
+            )
+        except InputProcessingError as exc:
+            return PDFProcessingResult(
+                error=AttachmentProcessingError(
+                    filename=attachment.filename,
+                    code=exc.code,
+                    message=exc.message,
+                )
+            )
+        except Exception:
+            return PDFProcessingResult(
+                error=AttachmentProcessingError(
+                    filename=attachment.filename,
+                    code=InputProcessingErrorCode.INTERNAL_PROCESSING_ERROR,
+                    message="PDF content could not be processed safely.",
+                )
+            )
+
+    if classification.document_type == PDFDocumentType.MIXED:
+        if ocr_provider is None or page_image_extractor is None:
+            return PDFProcessingResult(
+                error=AttachmentProcessingError(
+                    filename=attachment.filename,
+                    code=InputProcessingErrorCode.OCR_FAILURE,
+                    message="Mixed PDF OCR is not configured.",
+                )
+            )
+
+        try:
+            page_images = page_image_extractor.extract_page_images(attachment.content)
+            return PDFProcessingResult(
+                pdf_content=build_mixed_pdf_content(
+                    pdf_name=attachment.filename,
+                    classified_pages=classification.pages,
+                    page_images=page_images,
+                    ocr_provider=ocr_provider,
+                )
+            )
+        except InputProcessingError as exc:
+            return PDFProcessingResult(
+                error=AttachmentProcessingError(
+                    filename=attachment.filename,
+                    code=exc.code,
+                    message=exc.message,
+                )
+            )
+        except Exception:
+            return PDFProcessingResult(
+                error=AttachmentProcessingError(
+                    filename=attachment.filename,
+                    code=InputProcessingErrorCode.INTERNAL_PROCESSING_ERROR,
+                    message="PDF content could not be processed safely.",
+                )
+            )
+
+    return PDFProcessingResult(
+        error=AttachmentProcessingError(
+            filename=attachment.filename,
+            code=InputProcessingErrorCode.UNREADABLE_CONTENT,
+            message="This PDF could not be classified for processing.",
+        )
+    )
 
 
 __all__ = [
@@ -274,9 +556,14 @@ __all__ = [
     "PDFExtractionResult",
     "PDFExtractionStatus",
     "PDFExtractor",
+    "PDFPageImage",
+    "PDFPageImageExtractor",
     "PDFPageText",
     "PDFProcessingResult",
     "PendingPDFExtractor",
+    "build_mixed_pdf_content",
+    "build_scanned_pdf_content",
+    "build_text_based_pdf_content",
     "classify_pdf_content",
     "classify_pdf_page_texts",
     "get_pdf_page_count",

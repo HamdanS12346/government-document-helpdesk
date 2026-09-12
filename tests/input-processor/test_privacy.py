@@ -1,12 +1,24 @@
 """Privacy boundary tests for the Input Processor."""
 
 import logging
+from io import BytesIO
 from pathlib import Path
+
+from pypdf import PdfWriter
 
 from app.contracts.normalized_input import NormalizedInput
 from app.graph.state import GraphState
 from app.input_processing.image_processor import process_image_attachment
 from app.input_processing.ocr_provider import OCRResult, OCRStatus
+from app.input_processing.pdf_processor import (
+    PDFClassificationResult,
+    PDFDocumentType,
+    PDFExtractionResult,
+    PDFExtractionStatus,
+    PDFPageText,
+    PendingPDFExtractor,
+    process_pdf_attachment,
+)
 from app.input_processing.schemas import Attachment, InputModality, ValidatedAttachment
 
 
@@ -30,6 +42,25 @@ def make_validated_image() -> ValidatedAttachment:
             content=VALID_IMAGE.read_bytes(),
         ),
         modality=InputModality.PNG,
+    )
+
+
+def make_pdf_bytes() -> bytes:
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    buffer = BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def make_validated_pdf(raw_bytes: bytes | None = None) -> ValidatedAttachment:
+    return ValidatedAttachment(
+        attachment=Attachment(
+            filename="synthetic.pdf",
+            media_type="application/pdf",
+            content=raw_bytes or make_pdf_bytes(),
+        ),
+        modality=InputModality.PDF,
     )
 
 
@@ -128,3 +159,131 @@ def test_image_processing_trace_like_payload_excludes_raw_ocr_text_and_unmasked_
     assert "ABCDE1234F" not in str(trace_payload)
     assert "9876543210" not in str(trace_payload)
     assert "[REDACTED]" in str(trace_payload)
+
+
+def test_pdf_processing_result_does_not_include_raw_pdf_bytes(monkeypatch) -> None:
+    raw_bytes = make_pdf_bytes()
+
+    def fake_classify_pdf_content(pdf_content: bytes) -> PDFClassificationResult:
+        return PDFClassificationResult(
+            document_type=PDFDocumentType.TEXT_BASED,
+            pages=[PDFPageText(page_number=1, text="Synthetic PDF text")],
+        )
+
+    monkeypatch.setattr(
+        "app.input_processing.pdf_processor.classify_pdf_content",
+        fake_classify_pdf_content,
+    )
+
+    result = process_pdf_attachment(make_validated_pdf(raw_bytes), PendingPDFExtractor())
+    payload = result.model_dump(mode="json")
+
+    assert "content" not in payload
+    assert "raw" not in payload
+    assert str(raw_bytes) not in str(payload)
+
+
+def test_pdf_processing_masks_pii_before_result_or_preview(monkeypatch) -> None:
+    def fake_classify_pdf_content(pdf_content: bytes) -> PDFClassificationResult:
+        return PDFClassificationResult(
+            document_type=PDFDocumentType.TEXT_BASED,
+            pages=[PDFPageText(page_number=1, text="PAN ABCDE1234F phone 9876543210")],
+        )
+
+    monkeypatch.setattr(
+        "app.input_processing.pdf_processor.classify_pdf_content",
+        fake_classify_pdf_content,
+    )
+
+    result = process_pdf_attachment(make_validated_pdf(), PendingPDFExtractor())
+    payload = result.model_dump(mode="json")
+
+    assert "ABCDE1234F" not in str(payload)
+    assert "9876543210" not in str(payload)
+    assert "[REDACTED]" in str(payload)
+
+
+def test_pdf_processing_does_not_log_raw_extracted_text_or_pii(caplog, monkeypatch) -> None:
+    caplog.set_level(logging.DEBUG)
+
+    def fake_classify_pdf_content(pdf_content: bytes) -> PDFClassificationResult:
+        return PDFClassificationResult(
+            document_type=PDFDocumentType.TEXT_BASED,
+            pages=[PDFPageText(page_number=1, text="Applicant PAN ABCDE1234F")],
+        )
+
+    monkeypatch.setattr(
+        "app.input_processing.pdf_processor.classify_pdf_content",
+        fake_classify_pdf_content,
+    )
+
+    process_pdf_attachment(make_validated_pdf(), PendingPDFExtractor())
+
+    log_output = caplog.text
+
+    assert "ABCDE1234F" not in log_output
+    assert "Applicant PAN" not in log_output
+
+
+def test_pdf_processing_normalized_content_does_not_put_raw_bytes_in_state_like_payload(
+    monkeypatch,
+) -> None:
+    raw_bytes = make_pdf_bytes()
+
+    def fake_classify_pdf_content(pdf_content: bytes) -> PDFClassificationResult:
+        return PDFClassificationResult(
+            document_type=PDFDocumentType.TEXT_BASED,
+            pages=[PDFPageText(page_number=1, text="Applicant PAN ABCDE1234F")],
+        )
+
+    monkeypatch.setattr(
+        "app.input_processing.pdf_processor.classify_pdf_content",
+        fake_classify_pdf_content,
+    )
+
+    result = process_pdf_attachment(make_validated_pdf(raw_bytes), PendingPDFExtractor())
+
+    assert result.pdf_content is not None
+
+    normalized_input = NormalizedInput(
+        user_query="",
+        image_content=[],
+        pdf_content=[result.pdf_content],
+        combined_text=result.pdf_content.extracted_text,
+    )
+    state: GraphState = {"normalized_input": normalized_input}
+    state_payload = str(state)
+
+    assert "attachment" not in state_payload
+    assert "raw_attachment_bytes" not in state_payload
+    assert "raw_pdf_bytes" not in state_payload
+    assert str(raw_bytes) not in state_payload
+    assert "ABCDE1234F" not in state_payload
+    assert "[REDACTED]" in state_payload
+
+
+def test_failed_pdf_extraction_does_not_leak_provider_text_or_raw_bytes(monkeypatch) -> None:
+    raw_bytes = make_pdf_bytes()
+
+    def fake_classify_pdf_content(pdf_content: bytes) -> PDFClassificationResult:
+        return PDFClassificationResult(
+            document_type=PDFDocumentType.MIXED,
+            pages=[
+                PDFPageText(page_number=1, text=""),
+                PDFPageText(page_number=2, text="Machine text"),
+            ],
+        )
+
+    monkeypatch.setattr(
+        "app.input_processing.pdf_processor.classify_pdf_content",
+        fake_classify_pdf_content,
+    )
+
+    result = process_pdf_attachment(make_validated_pdf(raw_bytes), PendingPDFExtractor())
+    payload = result.model_dump(mode="json")
+
+    assert result.error is not None
+    assert result.pdf_content is None
+    assert result.extraction_result is None
+    assert "Machine text" not in str(payload)
+    assert str(raw_bytes) not in str(payload)

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.input_processing import image_processor
+from app.input_processing import pdf_processor
 from app.input_processing.errors import InputProcessingError, InputProcessingErrorCode
 from app.input_processing.ocr_provider import OCRResult, OCRStatus
 from app.input_processing.schemas import Attachment, InputModality, ValidatedAttachment
@@ -46,6 +47,44 @@ class RaisingOCRProvider:
 class MalformedOCRProvider:
     def extract_text(self, image_content: bytes) -> object:
         return {"status": "success", "text": "not validated"}
+
+
+class TrackedBytesIO:
+    events: list[str] = []
+
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+        self.closed = False
+
+    def __enter__(self) -> "TrackedBytesIO":
+        self.events.append("enter")
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self.closed = True
+        self.events.append("close")
+
+
+class FakePDFReader:
+    def __init__(self, stream: TrackedBytesIO) -> None:
+        self.stream = stream
+        self.pages = [FakePDFPage("Synthetic PDF text")]
+
+
+class RaisingPDFReader:
+    def __init__(self, stream: TrackedBytesIO) -> None:
+        raise RuntimeError("parser failed")
+
+
+class FakePDFPage:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def extract_text(self) -> str:
+        return self.text
 
 
 def make_validated_image() -> ValidatedAttachment:
@@ -176,3 +215,53 @@ def test_image_handle_is_closed_after_unexpected_post_processing_error(
     assert result.error.code == InputProcessingErrorCode.INTERNAL_PROCESSING_ERROR
     assert result.error.message == "Image content could not be processed safely."
     assert events == ["enter", "verify", "exit"]
+
+
+def test_pdf_page_count_stream_is_closed_after_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    TrackedBytesIO.events = []
+    monkeypatch.setattr(pdf_processor, "BytesIO", TrackedBytesIO)
+    monkeypatch.setattr(pdf_processor, "PdfReader", FakePDFReader)
+
+    assert pdf_processor.get_pdf_page_count(b"%PDF-1.4 synthetic bytes") == 1
+    assert TrackedBytesIO.events == ["enter", "close"]
+
+
+def test_pdf_page_count_stream_is_closed_after_validation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    TrackedBytesIO.events = []
+    monkeypatch.setattr(pdf_processor, "BytesIO", TrackedBytesIO)
+    monkeypatch.setattr(pdf_processor, "PdfReader", RaisingPDFReader)
+
+    with pytest.raises(InputProcessingError):
+        pdf_processor.get_pdf_page_count(b"%PDF-1.4 corrupt bytes")
+
+    assert TrackedBytesIO.events == ["enter", "close"]
+
+
+def test_pdf_classification_stream_is_closed_after_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    TrackedBytesIO.events = []
+    monkeypatch.setattr(pdf_processor, "BytesIO", TrackedBytesIO)
+    monkeypatch.setattr(pdf_processor, "PdfReader", FakePDFReader)
+
+    result = pdf_processor.classify_pdf_content(b"%PDF-1.4 synthetic bytes")
+
+    assert result.document_type == pdf_processor.PDFDocumentType.TEXT_BASED
+    assert TrackedBytesIO.events == ["enter", "close"]
+
+
+def test_pdf_classification_stream_is_closed_after_parser_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    TrackedBytesIO.events = []
+    monkeypatch.setattr(pdf_processor, "BytesIO", TrackedBytesIO)
+    monkeypatch.setattr(pdf_processor, "PdfReader", RaisingPDFReader)
+
+    with pytest.raises(InputProcessingError):
+        pdf_processor.classify_pdf_content(b"%PDF-1.4 corrupt bytes")
+
+    assert TrackedBytesIO.events == ["enter", "close"]
