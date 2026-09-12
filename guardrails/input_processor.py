@@ -14,6 +14,7 @@ from app.input_processing.schemas import (
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 PDF_SIGNATURE = b"%PDF-"
+PDF_EOF_MARKER = b"%%EOF"
 
 MEDIA_TYPE_MODALITIES = {
     "image/png": InputModality.PNG,
@@ -56,14 +57,32 @@ def validate_input_presence(request: InputRequest) -> InputGuardrailDecision:
     )
 
 
+def has_png_signature(content: bytes) -> bool:
+    """Return whether bytes have the PNG file signature."""
+
+    return content.startswith(PNG_SIGNATURE)
+
+
+def has_jpeg_signature(content: bytes) -> bool:
+    """Return whether bytes have the JPEG file signature."""
+
+    return content.startswith(JPEG_SIGNATURE)
+
+
+def has_pdf_signature(content: bytes) -> bool:
+    """Return whether bytes look enough like a PDF for cheap validation."""
+
+    return content.startswith(PDF_SIGNATURE) and PDF_EOF_MARKER in content[-1024:]
+
+
 def inspect_attachment_signature(content: bytes) -> InputModality | None:
     """Identify an attachment modality from its bytes."""
 
-    if content.startswith(PNG_SIGNATURE):
+    if has_png_signature(content):
         return InputModality.PNG
-    if content.startswith(JPEG_SIGNATURE):
+    if has_jpeg_signature(content):
         return InputModality.JPEG
-    if content.startswith(PDF_SIGNATURE):
+    if has_pdf_signature(content):
         return InputModality.PDF
     return None
 
@@ -97,6 +116,9 @@ def validate_attachment_modality(attachment: Attachment) -> ValidatedAttachment:
 __all__ = [
     "InputGuardrailDecision",
     "SUPPORTED_MEDIA_TYPES",
+    "has_jpeg_signature",
+    "has_pdf_signature",
+    "has_png_signature",
     "inspect_attachment_signature",
     "validate_attachment_modality",
     "validate_input_presence",

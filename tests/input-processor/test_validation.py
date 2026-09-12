@@ -12,6 +12,9 @@ from app.input_processing.schemas import (
 from guardrails.input_processor import (
     InputGuardrailDecision,
     SUPPORTED_MEDIA_TYPES,
+    has_jpeg_signature,
+    has_pdf_signature,
+    has_png_signature,
     inspect_attachment_signature,
     validate_attachment_modality,
     validate_input_presence,
@@ -21,7 +24,7 @@ from guardrails.input_processor import (
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nsynthetic image bytes"
 JPEG_BYTES = b"\xff\xd8\xff\xe0synthetic image bytes"
-PDF_BYTES = b"%PDF-1.4\nsynthetic pdf bytes"
+PDF_BYTES = b"%PDF-1.4\nsynthetic pdf bytes\n%%EOF"
 
 
 def test_supported_media_type_set_contains_only_confirmed_upload_types() -> None:
@@ -130,6 +133,22 @@ def test_validate_input_presence_rejects_empty_request(
     assert request.user_query is None
 
 
+def test_png_signature_validation_accepts_only_png_header() -> None:
+    assert has_png_signature(PNG_BYTES) is True
+    assert has_png_signature(b"not png bytes") is False
+
+
+def test_jpeg_signature_validation_accepts_only_jpeg_header() -> None:
+    assert has_jpeg_signature(JPEG_BYTES) is True
+    assert has_jpeg_signature(b"not jpeg bytes") is False
+
+
+def test_pdf_signature_validation_requires_header_and_eof_marker() -> None:
+    assert has_pdf_signature(PDF_BYTES) is True
+    assert has_pdf_signature(b"%PDF-1.4\nmissing eof marker") is False
+    assert has_pdf_signature(b"not pdf bytes\n%%EOF") is False
+
+
 @pytest.mark.parametrize(
     ("content", "expected_modality"),
     [
@@ -147,6 +166,21 @@ def test_inspect_attachment_signature_identifies_supported_modalities(
 
 def test_inspect_attachment_signature_returns_none_for_unknown_bytes() -> None:
     assert inspect_attachment_signature(b"not a supported file") is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"%PDF-1.4\nmissing eof marker",
+        b"not pdf bytes\n%%EOF",
+        b"\x89PNX\r\n\x1a\nnear png bytes",
+        b"\xff\xd9\xff\xe0near jpeg bytes",
+    ],
+)
+def test_inspect_attachment_signature_rejects_obvious_invalid_signatures(
+    content: bytes,
+) -> None:
+    assert inspect_attachment_signature(content) is None
 
 
 @pytest.mark.parametrize(
@@ -195,6 +229,27 @@ def test_validate_attachment_modality_rejects_declared_image_with_pdf_bytes() ->
         media_type="image/png",
         content=PDF_BYTES,
     )
+
+    with pytest.raises(InputProcessingError) as exc_info:
+        validate_attachment_modality(attachment)
+
+    assert exc_info.value.code == InputProcessingErrorCode.SIGNATURE_MISMATCH
+
+
+@pytest.mark.parametrize(
+    ("filename", "media_type", "content"),
+    [
+        ("sample.png", "image/png", b"not image bytes"),
+        ("sample.jpg", "image/jpeg", b"not image bytes"),
+        ("sample.pdf", "application/pdf", b"%PDF-1.4\nmissing eof marker"),
+    ],
+)
+def test_validate_attachment_modality_rejects_declared_type_with_invalid_bytes(
+    filename: str,
+    media_type: str,
+    content: bytes,
+) -> None:
+    attachment = Attachment(filename=filename, media_type=media_type, content=content)
 
     with pytest.raises(InputProcessingError) as exc_info:
         validate_attachment_modality(attachment)
