@@ -1,6 +1,7 @@
 """Input validation tests for the Input Processor."""
 
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from pypdf import PdfWriter
@@ -44,6 +45,11 @@ def make_pdf_bytes(page_count: int) -> bytes:
 
 
 PDF_BYTES = make_pdf_bytes(1)
+FIXTURE_ROOT = Path(__file__).parent / "fixtures"
+
+
+def read_fixture(relative_path: str) -> bytes:
+    return (FIXTURE_ROOT / relative_path).read_bytes()
 
 
 def test_supported_media_type_set_contains_only_confirmed_upload_types() -> None:
@@ -100,6 +106,54 @@ def test_validate_supported_media_type_rejects_unsupported_types(
 
     assert exc_info.value.code == InputProcessingErrorCode.UNSUPPORTED_FORMAT
     assert exc_info.value.message == "This attachment type is not supported."
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "media_type", "expected_modality"),
+    [
+        ("images/valid/fictional_form.png", "image/png", InputModality.PNG),
+        ("images/valid/fictional_form.jpg", "image/jpeg", InputModality.JPEG),
+        ("pdfs/text/one_page_fixture.pdf", "application/pdf", InputModality.PDF),
+    ],
+)
+def test_validate_attachment_modality_accepts_synthetic_fixtures(
+    relative_path: str,
+    media_type: str,
+    expected_modality: InputModality,
+) -> None:
+    attachment = Attachment(
+        filename=Path(relative_path).name,
+        media_type=media_type,
+        content=read_fixture(relative_path),
+    )
+
+    validated = validate_attachment_modality(attachment)
+
+    assert validated.modality == expected_modality
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "media_type"),
+    [
+        ("images/invalid/not_an_image.png", "image/png"),
+        ("images/invalid/not_an_image.jpg", "image/jpeg"),
+        ("pdfs/invalid/not_a_pdf.pdf", "application/pdf"),
+    ],
+)
+def test_validate_attachment_modality_rejects_invalid_synthetic_fixtures(
+    relative_path: str,
+    media_type: str,
+) -> None:
+    attachment = Attachment(
+        filename=Path(relative_path).name,
+        media_type=media_type,
+        content=read_fixture(relative_path),
+    )
+
+    with pytest.raises(InputProcessingError) as exc_info:
+        validate_attachment_modality(attachment)
+
+    assert exc_info.value.code == InputProcessingErrorCode.SIGNATURE_MISMATCH
 
 
 def test_validate_input_presence_accepts_text_only_request() -> None:

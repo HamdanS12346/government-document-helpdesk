@@ -16,3 +16,14 @@ Folder intent:
 - `pdfs/over_page_limit/`: synthetic PDFs exceeding the configured page limit.
 - `pdfs/invalid/`: malformed or invalid synthetic PDF fixtures.
 - `text/`: synthetic text-only input fixtures.
+
+Milestone 2 validation fixtures:
+
+- `images/valid/fictional_form.png`: tiny synthetic PNG with fictional text.
+- `images/valid/fictional_form.jpg`: tiny synthetic JPEG with fictional text.
+- `images/invalid/not_an_image.png`: invalid bytes using a `.png` name.
+- `images/invalid/not_an_image.jpg`: invalid bytes using a `.jpg` name.
+- `pdfs/text/one_page_fixture.pdf`: small one-page synthetic PDF.
+- `pdfs/invalid/not_a_pdf.pdf`: invalid bytes using a `.pdf` name.
+
+Oversized upload fixtures should be generated in test code rather than committed.
