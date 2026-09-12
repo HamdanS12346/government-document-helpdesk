@@ -27,6 +27,7 @@ from app.input_processing.pdf_processor import (
     build_scanned_pdf_content,
     classify_pdf_content,
     classify_pdf_page_texts,
+    extract_pdf_page_images,
     get_pdf_page_count,
     process_pdf_attachment,
     validate_pdf_page_count,
@@ -103,6 +104,38 @@ class StaticPDFPageImageExtractor:
         self.calls += 1
         assert pdf_content
         return self.page_images
+
+
+class RaisingPDFPageImageExtractor:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def extract_page_images(self, pdf_content: bytes) -> list[PDFPageImage]:
+        self.calls += 1
+        raise RuntimeError("page image provider internals should not leak")
+
+
+class MalformedPDFPageImageExtractor:
+    def __init__(self, result: object) -> None:
+        self.result = result
+        self.calls = 0
+
+    def extract_page_images(self, pdf_content: bytes) -> object:
+        self.calls += 1
+        return self.result
+
+
+class ControlledFailurePDFPageImageExtractor:
+    def __init__(self, message: str) -> None:
+        self.message = message
+        self.calls = 0
+
+    def extract_page_images(self, pdf_content: bytes) -> list[PDFPageImage]:
+        self.calls += 1
+        raise pdf_processor.InputProcessingError(
+            InputProcessingErrorCode.EXTRACTION_FAILURE,
+            self.message,
+        )
 
 
 class StaticOCRProvider:
@@ -329,6 +362,81 @@ def test_mock_provider_can_satisfy_page_image_extractor_interface() -> None:
     result = extractor.extract_page_images(b"%PDF-1.4 scanned bytes")
 
     assert result == [PDFPageImage(page_number=1, image_content=b"page-one-image")]
+
+
+def test_extract_pdf_page_images_accepts_valid_mock_provider() -> None:
+    extractor = StaticPDFPageImageExtractor(
+        [PDFPageImage(page_number=1, image_content=b"page-one-image")]
+    )
+
+    result = extract_pdf_page_images(
+        pdf_content=b"%PDF-1.4 scanned bytes",
+        page_image_extractor=extractor,
+    )
+
+    assert extractor.calls == 1
+    assert result == [PDFPageImage(page_number=1, image_content=b"page-one-image")]
+
+
+def test_extract_pdf_page_images_returns_controlled_failure_for_provider_exception() -> None:
+    extractor = RaisingPDFPageImageExtractor()
+
+    with pytest.raises(Exception) as exc_info:
+        extract_pdf_page_images(
+            pdf_content=b"%PDF-1.4 scanned bytes",
+            page_image_extractor=extractor,
+        )
+
+    assert extractor.calls == 1
+    assert exc_info.value.code == InputProcessingErrorCode.EXTRACTION_FAILURE
+    assert exc_info.value.message == "PDF page images could not be extracted."
+
+
+@pytest.mark.parametrize(
+    "malformed_result",
+    [
+        None,
+        {"page_number": 1, "image_content": b"page-one-image"},
+        [object()],
+    ],
+)
+def test_extract_pdf_page_images_returns_controlled_failure_for_malformed_response(
+    malformed_result: object,
+) -> None:
+    extractor = MalformedPDFPageImageExtractor(malformed_result)
+
+    with pytest.raises(Exception) as exc_info:
+        extract_pdf_page_images(
+            pdf_content=b"%PDF-1.4 scanned bytes",
+            page_image_extractor=extractor,
+        )
+
+    assert extractor.calls == 1
+    assert exc_info.value.code == InputProcessingErrorCode.EXTRACTION_FAILURE
+    assert exc_info.value.message == "PDF page image extractor returned an invalid result."
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "PDF page image provider is unavailable.",
+        "PDF page image provider timed out.",
+    ],
+)
+def test_extract_pdf_page_images_preserves_controlled_unavailable_and_timeout_failures(
+    message: str,
+) -> None:
+    extractor = ControlledFailurePDFPageImageExtractor(message)
+
+    with pytest.raises(Exception) as exc_info:
+        extract_pdf_page_images(
+            pdf_content=b"%PDF-1.4 scanned bytes",
+            page_image_extractor=extractor,
+        )
+
+    assert extractor.calls == 1
+    assert exc_info.value.code == InputProcessingErrorCode.EXTRACTION_FAILURE
+    assert exc_info.value.message == message
 
 
 def test_pending_pdf_extractor_keeps_provider_choice_internal() -> None:

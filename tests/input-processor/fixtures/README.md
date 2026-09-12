@@ -38,4 +38,19 @@ Milestone 3 image fixtures:
 - `images/invalid/img_008_invalid_image_bytes.png`: IMG-008 invalid image bytes.
 - `images/unsupported/img_008_unsupported_format.gif`: IMG-008 unsupported image format sample.
 
+Milestone 4 PDF fixtures:
+
+- `pdfs/text/pdf_001_text_based.pdf`: PDF-001 text-based fictional government-style PDF.
+- `pdfs/scanned/pdf_002_scanned.pdf`: PDF-002 scanned/image-based synthetic PDF.
+- `pdfs/mixed/pdf_003_mixed.pdf`: PDF-003 mixed PDF with one text page and one scanned page.
+- `pdfs/forms/pdf_004_simple_form.pdf`: PDF-004 simple form PDF with labels and fictional values.
+- `pdfs/tables/pdf_005_table.pdf`: PDF-005 synthetic table PDF.
+- `pdfs/pii/pdf_006_fictional_pii.pdf`: PDF-006 PDF with fictional PII-like values.
+- `pdfs/instructions/pdf_007_legitimate_instructions.pdf`: PDF-007 PDF with legitimate government-style instructions.
+- `pdfs/injection/pdf_008_ai_directed_text.pdf`: PDF-008 PDF with AI-directed injection-like text.
+- `pdfs/invalid/pdf_009_corrupt.pdf`: PDF-009 corrupt/invalid PDF.
+- `pdfs/over_page_limit/pdf_010_over_page_limit.pdf`: PDF-010 PDF exceeding the configured page limit.
+- `pdfs/over_page_limit/below_limit_4_pages.pdf`: PDF below the configured page limit.
+- `pdfs/over_page_limit/at_limit_5_pages.pdf`: PDF at the configured page limit.
+
 Oversized upload fixtures should be generated in test code rather than committed.

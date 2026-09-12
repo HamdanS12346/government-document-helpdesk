@@ -354,6 +354,34 @@ def build_mixed_pdf_content(
     return _build_pdf_content_from_page_texts(pdf_name=pdf_name, pages=page_texts)
 
 
+def extract_pdf_page_images(
+    *,
+    pdf_content: bytes,
+    page_image_extractor: PDFPageImageExtractor,
+) -> list[PDFPageImage]:
+    """Extract scanned page images through a controlled provider boundary."""
+
+    try:
+        page_images = page_image_extractor.extract_page_images(pdf_content)
+    except InputProcessingError:
+        raise
+    except Exception as exc:
+        raise InputProcessingError(
+            InputProcessingErrorCode.EXTRACTION_FAILURE,
+            "PDF page images could not be extracted.",
+        ) from exc
+
+    if not isinstance(page_images, list) or not all(
+        isinstance(page_image, PDFPageImage) for page_image in page_images
+    ):
+        raise InputProcessingError(
+            InputProcessingErrorCode.EXTRACTION_FAILURE,
+            "PDF page image extractor returned an invalid result.",
+        )
+
+    return page_images
+
+
 def _build_pdf_content_from_page_texts(
     *,
     pdf_name: str,
@@ -478,7 +506,10 @@ def process_pdf_attachment(
             )
 
         try:
-            page_images = page_image_extractor.extract_page_images(attachment.content)
+            page_images = extract_pdf_page_images(
+                pdf_content=attachment.content,
+                page_image_extractor=page_image_extractor,
+            )
             return PDFProcessingResult(
                 pdf_content=build_scanned_pdf_content(
                     pdf_name=attachment.filename,
@@ -514,7 +545,10 @@ def process_pdf_attachment(
             )
 
         try:
-            page_images = page_image_extractor.extract_page_images(attachment.content)
+            page_images = extract_pdf_page_images(
+                pdf_content=attachment.content,
+                page_image_extractor=page_image_extractor,
+            )
             return PDFProcessingResult(
                 pdf_content=build_mixed_pdf_content(
                     pdf_name=attachment.filename,
@@ -566,6 +600,7 @@ __all__ = [
     "build_text_based_pdf_content",
     "classify_pdf_content",
     "classify_pdf_page_texts",
+    "extract_pdf_page_images",
     "get_pdf_page_count",
     "process_pdf_attachment",
     "validate_pdf_page_count",
