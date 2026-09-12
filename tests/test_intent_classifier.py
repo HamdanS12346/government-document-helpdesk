@@ -1,0 +1,90 @@
+from pydantic import ValidationError
+import pytest
+
+from app.contracts.intent_decision import IntentDecision
+from app.contracts.normalized_input import NormalizedInput
+from app.intent.node import classify_intent
+from app.intent.query_builder import build_classification_query
+
+
+class FakeClassifier:
+    def __init__(self, decision: IntentDecision):
+        self.decision = decision
+        self.query = None
+
+    def classify(self, query: str) -> IntentDecision:
+        self.query = query
+        return self.decision
+
+
+def test_intent_decision_validates_supported_values_and_confidence():
+    decision = IntentDecision(
+        query="Hello",
+        intent_type="general_chat",
+        confidence_score=0.8,
+    )
+
+    assert decision.intent_type == "general_chat"
+
+    with pytest.raises(ValidationError):
+        IntentDecision(query="Hello", intent_type="unsupported", confidence_score=0.8)
+    with pytest.raises(ValidationError):
+        IntentDecision(query="Hello", intent_type="general_chat", confidence_score=1.1)
+
+
+def test_query_builder_uses_input_previews_and_conversation_context():
+    normalized_input = NormalizedInput(
+        user_query="Can I use this document?",
+        image_preview=["identity card preview"],
+        pdf_preview=["application requirements preview"],
+        context="The user is applying for a passport.",
+    )
+    messages = [{"role": "human", "content": f"turn {index}"} for index in range(12)]
+
+    query = build_classification_query(
+        normalized_input,
+        messages=messages,
+        conversation_summary="Earlier discussion about passport eligibility.",
+    )
+
+    assert "Can I use this document?" in query
+    assert "identity card preview" in query
+    assert "application requirements preview" in query
+    assert "The user is applying for a passport." in query
+    assert "human: turn 2" in query
+    assert "human: turn 11" in query
+    assert "human: turn 1\n" not in query
+    assert "Earlier discussion about passport eligibility." in query
+
+
+def test_node_returns_validated_decision_with_constructed_query_only():
+    normalized_input = NormalizedInput(user_query="What documents do I need?")
+    classifier = FakeClassifier(
+        IntentDecision(
+            query="provider query",
+            intent_type="document_info",
+            confidence_score=0.95,
+        )
+    )
+
+    result = classify_intent(
+        {
+            "normalized_input": normalized_input,
+            "messages": [],
+            "conversation_summary": "",
+        },
+        classifier,
+    )
+
+    assert list(result) == ["intent_decision"]
+    assert result["intent_decision"].query == classifier.query
+    assert result["intent_decision"].intent_type == "document_info"
+
+
+def test_node_requires_normalized_input():
+    classifier = FakeClassifier(
+        IntentDecision(query="query", intent_type="ambiguous", confidence_score=0.5)
+    )
+
+    with pytest.raises(ValueError, match="normalized_input is required"):
+        classify_intent({}, classifier)
