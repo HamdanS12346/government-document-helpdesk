@@ -8,6 +8,7 @@ from pypdf import PdfWriter
 
 from app.contracts.normalized_input import NormalizedInput
 from app.graph.state import GraphState
+from app.input_processing import processors
 from app.input_processing.image_processor import process_image_attachment
 from app.input_processing.ocr_provider import OCRResult, OCRStatus
 from app.input_processing.pdf_processor import (
@@ -19,7 +20,8 @@ from app.input_processing.pdf_processor import (
     PendingPDFExtractor,
     process_pdf_attachment,
 )
-from app.input_processing.schemas import Attachment, InputModality, ValidatedAttachment
+from app.input_processing.processors import build_graph_state_update, process_input
+from app.input_processing.schemas import Attachment, InputModality, InputRequest, ValidatedAttachment
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -287,3 +289,125 @@ def test_failed_pdf_extraction_does_not_leak_provider_text_or_raw_bytes(monkeypa
     assert result.extraction_result is None
     assert "Machine text" not in str(payload)
     assert str(raw_bytes) not in str(payload)
+
+
+def test_public_processor_does_not_put_raw_uploads_in_graph_state() -> None:
+    raw_upload = b"synthetic raw private upload bytes"
+    result = process_input(
+        InputRequest(
+            user_query="Use the text only.",
+            attachments=[
+                Attachment(
+                    filename="private.pdf",
+                    media_type="application/pdf",
+                    content=raw_upload,
+                )
+            ],
+        )
+    )
+
+    state_update = build_graph_state_update(result)
+
+    assert result.success is True
+    assert state_update.keys() == {"normalized_input"}
+    assert "synthetic raw private upload bytes" not in str(state_update)
+    assert str(raw_upload) not in str(state_update)
+
+
+def test_public_processor_does_not_log_raw_upload_or_extracted_pii(
+    caplog,
+    monkeypatch,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+
+    def fake_process_image_attachment(validated_attachment, ocr_provider):
+        from app.contracts.normalized_input import ImageContent
+        from app.input_processing.image_processor import ImageProcessingResult
+
+        return ImageProcessingResult(
+            image_content=ImageContent(
+                image_name=validated_attachment.attachment.filename,
+                extracted_text="Applicant PAN [REDACTED]",
+                preview="Applicant PAN [REDACTED]",
+            )
+        )
+
+    monkeypatch.setattr(processors, "process_image_attachment", fake_process_image_attachment)
+
+    process_input(
+        InputRequest(
+            attachments=[
+                Attachment(
+                    filename="private.png",
+                    media_type="image/png",
+                    content=b"\x89PNG\r\n\x1a\nraw upload bytes ABCDE1234F",
+                )
+            ],
+        ),
+        ocr_provider=StaticOCRProvider("Applicant PAN ABCDE1234F"),
+    )
+
+    assert "raw upload bytes" not in caplog.text
+    assert "ABCDE1234F" not in caplog.text
+    assert "Applicant PAN" not in caplog.text
+
+
+def test_public_processor_does_not_create_memory_or_storage_side_effects(
+    monkeypatch,
+) -> None:
+    def forbidden_store(*args, **kwargs):
+        raise AssertionError("uploads must not be persisted")
+
+    monkeypatch.setattr(processors, "memory_store", forbidden_store, raising=False)
+    monkeypatch.setattr(processors, "knowledge_store", forbidden_store, raising=False)
+    monkeypatch.setattr(processors, "vector_store", forbidden_store, raising=False)
+
+    result = process_input(InputRequest(user_query="No storage side effects."))
+
+    assert result.success is True
+    assert not hasattr(result, "memory_store")
+    assert not hasattr(result, "knowledge_store")
+    assert not hasattr(result, "vector_store")
+
+
+def test_user_uploads_are_not_treated_as_authoritative_knowledge_documents(
+    monkeypatch,
+) -> None:
+    def fake_process_pdf_attachment(
+        validated_attachment,
+        pdf_extractor,
+        *,
+        ocr_provider=None,
+        page_image_extractor=None,
+    ):
+        from app.contracts.normalized_input import PDFContent
+        from app.input_processing.pdf_processor import PDFProcessingResult
+
+        return PDFProcessingResult(
+            pdf_content=PDFContent(
+                pdf_name=validated_attachment.attachment.filename,
+                extracted_text="User supplied document text",
+                preview="User supplied document text",
+            )
+        )
+
+    monkeypatch.setattr(processors, "process_pdf_attachment", fake_process_pdf_attachment)
+
+    result = process_input(
+        InputRequest(
+            attachments=[
+                Attachment(
+                    filename="upload.pdf",
+                    media_type="application/pdf",
+                    content=make_pdf_bytes(),
+                )
+            ],
+        )
+    )
+
+    assert result.success is True
+    assert result.normalized_input is not None
+    assert result.normalized_input.pdf_content[0].pdf_name == "upload.pdf"
+    assert not hasattr(result.normalized_input.pdf_content[0], "authoritative")
+    assert not hasattr(result.normalized_input.pdf_content[0], "knowledge_base_id")
+    assert not hasattr(result.normalized_input.pdf_content[0], "vector_id")
