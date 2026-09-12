@@ -182,6 +182,72 @@
   line-height: 1.4;
 }
 
+.submitError {
+  color: #b42318;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.formReady {
+  color: #1f7a4d;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.attachmentErrors {
+  border: 1px solid #f1b9b4;
+  border-radius: 8px;
+  background: #fff7f6;
+  color: #8a1f16;
+  padding: 12px;
+}
+
+.attachmentErrorsLabel {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.attachmentErrors ul {
+  display: grid;
+  gap: 6px;
+  list-style-position: inside;
+}
+
+.attachmentErrors li {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.warningList {
+  border: 1px solid #f4cf72;
+  border-radius: 8px;
+  background: #fff9e8;
+  color: #6f4b00;
+  padding: 12px;
+}
+
+.warningListLabel {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.warningList ul {
+  display: grid;
+  gap: 6px;
+  list-style-position: inside;
+}
+
+.warningList li {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
 .actions {
   display: flex;
   justify-content: flex-end;
