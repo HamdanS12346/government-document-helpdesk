@@ -39,6 +39,11 @@ PII_PATTERNS = (
     re.compile(r"\b(?:\+91[- ]?)?[6-9]\d{9}\b"),
     re.compile(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b"),
 )
+AI_DIRECTED_INSTRUCTION_PATTERNS = (
+    re.compile(r"\bignore (?:all )?(?:previous|prior|above) instructions\b", re.I),
+    re.compile(r"\breveal (?:the )?(?:system|developer) (?:prompt|instructions)\b", re.I),
+    re.compile(r"\b(?:send|show|print|exfiltrate) (?:the )?(?:secret|api key|credentials?)\b", re.I),
+)
 
 
 class InputGuardrailDecision(StrEnum):
@@ -56,6 +61,15 @@ class PIIMaskingResult:
     def __init__(self, text: str, decision: InputGuardrailDecision) -> None:
         self.text = text
         self.decision = decision
+
+
+class UntrustedDocumentText:
+    """Extracted document text represented as untrusted data."""
+
+    def __init__(self, text: str, suspicious: bool) -> None:
+        self.text = text
+        self.suspicious = suspicious
+        self.decision = InputGuardrailDecision.ALLOW
 
 
 class PIIMasker(Protocol):
@@ -109,6 +123,16 @@ def mask_pii_in_text(
             InputProcessingErrorCode.PII_PROCESSING_FAILURE,
             "PII processing could not be completed safely.",
         ) from exc
+
+
+def mark_document_text_untrusted(text: str) -> UntrustedDocumentText:
+    """Represent extracted document text as data, not executable instructions."""
+
+    suspicious = any(
+        pattern.search(text) is not None
+        for pattern in AI_DIRECTED_INSTRUCTION_PATTERNS
+    )
+    return UntrustedDocumentText(text=text, suspicious=suspicious)
 
 
 def validate_input_presence(request: InputRequest) -> InputGuardrailDecision:
@@ -228,11 +252,13 @@ __all__ = [
     "PIIMaskingResult",
     "RegexPIIMasker",
     "SUPPORTED_MEDIA_TYPES",
+    "UntrustedDocumentText",
     "get_pdf_page_count",
     "has_jpeg_signature",
     "has_pdf_signature",
     "has_png_signature",
     "inspect_attachment_signature",
+    "mark_document_text_untrusted",
     "mask_pii_in_text",
     "validate_attachment_size",
     "validate_attachment_modality",
