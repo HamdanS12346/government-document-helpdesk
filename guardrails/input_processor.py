@@ -1,13 +1,15 @@
 """Input Processor validation and safety guardrail boundary."""
 
 from enum import StrEnum
-from io import BytesIO
 import re
 from typing import Protocol
 
-from pypdf import PdfReader
-
 from app.input_processing.errors import InputProcessingError, InputProcessingErrorCode
+from app.input_processing.pdf_processor import (
+    MAX_PDF_PAGE_COUNT,
+    get_pdf_page_count,
+    validate_pdf_page_count as validate_pdf_page_count_bytes,
+)
 from app.input_processing.schemas import (
     Attachment,
     InputModality,
@@ -22,9 +24,6 @@ PDF_SIGNATURE = b"%PDF-"
 PDF_EOF_MARKER = b"%%EOF"
 ONE_MEGABYTE = 1024 * 1024
 MAX_ATTACHMENT_SIZE_BYTES = 10 * ONE_MEGABYTE
-# Existing project requirement is 10 pages. Input Processor docs propose 5 pages;
-# keep this configurable until the team resolves that decision-log discrepancy.
-MAX_PDF_PAGE_COUNT = 10
 
 MEDIA_TYPE_MODALITIES = {
     "image/png": InputModality.PNG,
@@ -201,30 +200,11 @@ def validate_attachment_size(attachment: Attachment) -> InputGuardrailDecision:
     )
 
 
-def get_pdf_page_count(content: bytes) -> int:
-    """Return the page count for a PDF from transient bytes."""
-
-    try:
-        reader = PdfReader(BytesIO(content))
-        return len(reader.pages)
-    except Exception as exc:
-        raise InputProcessingError(
-            InputProcessingErrorCode.UNREADABLE_CONTENT,
-            "This PDF could not be read for validation.",
-        ) from exc
-
-
 def validate_pdf_page_count(attachment: Attachment) -> InputGuardrailDecision:
     """Reject PDFs that exceed the configured page limit before processing."""
 
-    page_count = get_pdf_page_count(attachment.content)
-    if page_count <= MAX_PDF_PAGE_COUNT:
-        return InputGuardrailDecision.ALLOW
-
-    raise InputProcessingError(
-        InputProcessingErrorCode.PDF_PAGE_LIMIT_EXCEEDED,
-        f"This PDF has too many pages. Upload a PDF with {MAX_PDF_PAGE_COUNT} pages or fewer.",
-    )
+    validate_pdf_page_count_bytes(attachment.content)
+    return InputGuardrailDecision.ALLOW
 
 
 def validate_attachment_modality(attachment: Attachment) -> ValidatedAttachment:

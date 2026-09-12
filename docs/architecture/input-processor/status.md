@@ -1,136 +1,52 @@
 # Input Processor Status
 
-## Current Summary
+## Current Position
 
-Milestone 1, Milestone 2, and Milestone 3 are complete for the Input Processor scope.
-
-Current implementation position: Milestone 3 is complete; next milestone is Milestone 4.
-
-Current branch:
+Milestones 1, 2, and 3 are complete on branch:
 
 ```text
 feature/input-processor
 ```
 
-Current verified test result:
+Latest verified test run:
 
 ```text
 .venv\Scripts\python.exe -m pytest
 177 passed
 ```
 
-## Milestone 1 Completed
+Next work: start `docs/architecture/input-processor/implementation-plan/milestone4.md` for PDF processing.
 
-- Verified local setup, `.venv`, dependency imports, and external Tesseract availability.
-- Added README note that `pytesseract` requires the external Tesseract executable.
-- Added shared `NormalizedInput`, `ImageContent`, and `PDFContent` contracts without changing documented fields.
-- Added `GraphState.normalized_input` and kept raw uploads out of graph state.
-- Added Input Processor package scaffolding under `app/input_processing/`.
-- Added guardrail scaffold at `guardrails/input_processor.py`.
-- Added test scaffolding and synthetic fixture folder documentation under `tests/input-processor/fixtures/`.
+## What Exists
 
-## Milestone 2 Completed
+- Shared contracts exist: `NormalizedInput`, `ImageContent`, `PDFContent`.
+- `GraphState` has `normalized_input`; raw uploads are kept out of graph state.
+- Input Processor schemas exist: `Attachment`, `InputRequest`, `InputProcessingResult`, attachment statuses/errors/warnings, `ValidatedAttachment`.
+- Pre-processing guardrails exist for input presence, supported MIME types, byte signatures, file size `< 10 MB`, and PDF page count.
+- PII masking and untrusted document-text boundaries exist in `guardrails/input_processor.py`.
+- Image OCR is implemented through `OCRProvider` and `TesseractOCRProvider`.
+- `image_processor.py` turns validated PNG/JPEG bytes into `ImageContent` or safe attachment-scoped failures.
+- Image tests cover OCR success, empty/unusable OCR, provider failure, malformed provider response, PII masking, prompt-injection-like text, privacy, cleanup, and real Tesseract integration when available.
+- Synthetic image fixtures exist for clear, blank, blurry, unreadable, PII-like, instruction-like, injection-like, invalid, and unsupported image cases.
 
-Implemented contracts and cheap pre-processing guardrails before OCR/PDF extraction.
+## Still Pending
 
-Code added:
+- PDF processor implementation is not done.
+- Public orchestrator in `app/input_processing/processors.py` is still a scaffold.
+- No full `InputRequest -> InputProcessingResult -> NormalizedInput` flow yet.
+- No CLI support yet.
+- No Docling/PDF provider implementation yet.
 
-- `app/input_processing/schemas.py`
-  - `Attachment`
-  - `InputRequest`
-  - `InputProcessingResult`
-  - attachment status/error/warning schemas
-  - `InputModality`
-  - `ValidatedAttachment`
-- `app/input_processing/errors.py`
-  - `InputProcessingErrorCode`
-  - controlled `InputProcessingError`
-- `app/input_processing/preview.py`
-  - deterministic image preview, first 500 characters
-  - deterministic PDF preview, 200 characters per page
-- `guardrails/input_processor.py`
-  - input presence validation
-  - supported MIME validation
-  - PNG/JPEG/PDF signature validation
-  - `< 10 MB` attachment size validation
-  - PDF page-count validation shell
-  - initial PII masking boundary
-  - prompt-injection/document-text trust boundary
+## Important Constraints
 
-Validation behavior now covered:
+- Do not change shared contracts unless explicitly requested.
+- Keep image logic in `app/input_processing/image_processor.py`.
+- Keep PDF logic in `app/input_processing/pdf_processor.py`.
+- Keep orchestration only in `app/input_processing/processors.py`.
+- Raw uploaded bytes must stay transient and must not enter graph state, logs, traces, memory, vector stores, or fixture data.
+- Test fixtures must remain synthetic and safe; no real citizen documents or real PII.
+- PDF page limit conflict is still explicit: architecture mentions 5 pages, current project requirement/code uses 10 pages.
 
-- Accept text-only requests.
-- Accept attachment-only requests.
-- Reject completely empty requests.
-- Accept only `image/png`, `image/jpeg`, and `application/pdf`.
-- Treat `.jpg` and `.jpeg` as JPEG when declared as `image/jpeg` and bytes match.
-- Do not trust filename extensions alone.
-- Reject MIME/signature mismatch safely.
-- Reject oversized files before expensive processing.
-- Validate PDF page count before PDF processing.
-- Return controlled errors without stack traces, raw bytes, paths, or document text.
+## Suggested Next Step
 
-Configured limits:
-
-- `MAX_ATTACHMENT_SIZE_BYTES = 10 MB`; enforced as file size `< 10 MB`.
-- `MAX_PDF_PAGE_COUNT = 10`.
-- The architecture docs still note a 5-vs-10 page discrepancy; code keeps this configurable and currently follows the confirmed 10-page project requirement.
-
-Synthetic fixtures added:
-
-- `tests/input-processor/fixtures/images/valid/fictional_form.png`
-- `tests/input-processor/fixtures/images/valid/fictional_form.jpg`
-- `tests/input-processor/fixtures/images/invalid/not_an_image.png`
-- `tests/input-processor/fixtures/images/invalid/not_an_image.jpg`
-- `tests/input-processor/fixtures/pdfs/text/one_page_fixture.pdf`
-- `tests/input-processor/fixtures/pdfs/invalid/not_a_pdf.pdf`
-
-Oversized upload coverage is generated in test code, not committed as a large file.
-
-## Tests Added
-
-- `tests/input-processor/test_schemas.py`
-- `tests/input-processor/test_validation.py`
-- `tests/input-processor/test_guardrails.py`
-- `tests/input-processor/test_preview.py`
-
-Current coverage includes:
-
-- request schemas
-- processing result schemas
-- error taxonomy
-- safe error payload shape
-- input presence validation
-- supported media-type validation
-- file signature validation
-- file-size boundaries
-- PDF page-count boundaries
-- deterministic previews
-- PII mask-and-continue boundary
-- PII detector failure handling
-- prompt-injection content boundary
-- synthetic validation fixtures
-
-## Current Boundaries
-
-- No OCR implementation yet.
-- No image processor extraction behavior yet.
-- No PDF extraction behavior yet.
-- No orchestration logic in `processors.py` yet beyond scaffolding.
-- No CLI path yet.
-- No Docling dependency added; Docling remains pending/proposed.
-- No raw uploads are stored in graph state.
-- No broad shared contract changes were made beyond the milestone 1 `NormalizedInput`/`GraphState` setup.
-- Fixture data is synthetic and safe; no real citizen documents or real PII were added.
-
-## Next Step
-
-Continue with the next implementation milestone after `milestone2.md`.
-
-Likely next work:
-
-- define or implement the public Input Processor orchestrator in `app/input_processing/processors.py`
-- add OCR provider abstraction wiring if not already finalized
-- begin image processing behavior behind `image_processor.py`
-- keep raw attachment bytes transient and out of graph state
-- continue adding tests in `tests/input-processor/`
+Begin Milestone 4 Task 1: define the PDF provider/extractor boundary before implementing PDF extraction paths.
