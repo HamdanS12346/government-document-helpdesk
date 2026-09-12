@@ -1,6 +1,9 @@
 """Input Processor validation and safety guardrail boundary."""
 
+from io import BytesIO
 from enum import StrEnum
+
+from pypdf import PdfReader
 
 from app.input_processing.errors import InputProcessingError, InputProcessingErrorCode
 from app.input_processing.schemas import (
@@ -17,6 +20,9 @@ PDF_SIGNATURE = b"%PDF-"
 PDF_EOF_MARKER = b"%%EOF"
 ONE_MEGABYTE = 1024 * 1024
 MAX_ATTACHMENT_SIZE_BYTES = 10 * ONE_MEGABYTE
+# Existing project requirement is 10 pages. Input Processor docs propose 5 pages;
+# keep this configurable until the team resolves that decision-log discrepancy.
+MAX_PDF_PAGE_COUNT = 10
 
 MEDIA_TYPE_MODALITIES = {
     "image/png": InputModality.PNG,
@@ -113,6 +119,32 @@ def validate_attachment_size(attachment: Attachment) -> InputGuardrailDecision:
     )
 
 
+def get_pdf_page_count(content: bytes) -> int:
+    """Return the page count for a PDF from transient bytes."""
+
+    try:
+        reader = PdfReader(BytesIO(content))
+        return len(reader.pages)
+    except Exception as exc:
+        raise InputProcessingError(
+            InputProcessingErrorCode.UNREADABLE_CONTENT,
+            "This PDF could not be read for validation.",
+        ) from exc
+
+
+def validate_pdf_page_count(attachment: Attachment) -> InputGuardrailDecision:
+    """Reject PDFs that exceed the configured page limit before processing."""
+
+    page_count = get_pdf_page_count(attachment.content)
+    if page_count <= MAX_PDF_PAGE_COUNT:
+        return InputGuardrailDecision.ALLOW
+
+    raise InputProcessingError(
+        InputProcessingErrorCode.PDF_PAGE_LIMIT_EXCEEDED,
+        f"This PDF has too many pages. Upload a PDF with {MAX_PDF_PAGE_COUNT} pages or fewer.",
+    )
+
+
 def validate_attachment_modality(attachment: Attachment) -> ValidatedAttachment:
     """Validate declared media type against the attachment byte signature."""
 
@@ -124,6 +156,8 @@ def validate_attachment_modality(attachment: Attachment) -> ValidatedAttachment:
             InputProcessingErrorCode.SIGNATURE_MISMATCH,
             "The declared file type does not match the uploaded content.",
         )
+    if declared_modality == InputModality.PDF:
+        validate_pdf_page_count(attachment)
 
     return ValidatedAttachment(attachment=attachment, modality=declared_modality)
 
@@ -131,7 +165,9 @@ def validate_attachment_modality(attachment: Attachment) -> ValidatedAttachment:
 __all__ = [
     "InputGuardrailDecision",
     "MAX_ATTACHMENT_SIZE_BYTES",
+    "MAX_PDF_PAGE_COUNT",
     "SUPPORTED_MEDIA_TYPES",
+    "get_pdf_page_count",
     "has_jpeg_signature",
     "has_pdf_signature",
     "has_png_signature",
@@ -139,6 +175,7 @@ __all__ = [
     "validate_attachment_size",
     "validate_attachment_modality",
     "validate_input_presence",
+    "validate_pdf_page_count",
     "validate_post_extraction_boundary",
     "validate_pre_processing_boundary",
     "validate_supported_media_type",

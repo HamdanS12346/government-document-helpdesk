@@ -1,6 +1,9 @@
 """Input validation tests for the Input Processor."""
 
+from io import BytesIO
+
 import pytest
+from pypdf import PdfWriter
 
 from app.input_processing.errors import InputProcessingError, InputProcessingErrorCode
 from app.input_processing.schemas import (
@@ -12,7 +15,9 @@ from app.input_processing.schemas import (
 from guardrails.input_processor import (
     InputGuardrailDecision,
     MAX_ATTACHMENT_SIZE_BYTES,
+    MAX_PDF_PAGE_COUNT,
     SUPPORTED_MEDIA_TYPES,
+    get_pdf_page_count,
     has_jpeg_signature,
     has_pdf_signature,
     has_png_signature,
@@ -20,13 +25,25 @@ from guardrails.input_processor import (
     validate_attachment_modality,
     validate_attachment_size,
     validate_input_presence,
+    validate_pdf_page_count,
     validate_supported_media_type,
 )
 
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nsynthetic image bytes"
 JPEG_BYTES = b"\xff\xd8\xff\xe0synthetic image bytes"
-PDF_BYTES = b"%PDF-1.4\nsynthetic pdf bytes\n%%EOF"
+
+
+def make_pdf_bytes(page_count: int) -> bytes:
+    writer = PdfWriter()
+    for _ in range(page_count):
+        writer.add_blank_page(width=72, height=72)
+    buffer = BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+PDF_BYTES = make_pdf_bytes(1)
 
 
 def test_supported_media_type_set_contains_only_confirmed_upload_types() -> None:
@@ -170,6 +187,54 @@ def test_validate_attachment_size_rejects_above_limit() -> None:
     assert exc_info.value.code == InputProcessingErrorCode.FILE_TOO_LARGE
 
 
+def test_get_pdf_page_count_returns_page_count_from_bytes() -> None:
+    assert get_pdf_page_count(make_pdf_bytes(3)) == 3
+
+
+def test_get_pdf_page_count_wraps_unreadable_pdf_safely() -> None:
+    with pytest.raises(InputProcessingError) as exc_info:
+        get_pdf_page_count(b"%PDF-1.4\nnot a readable pdf\n%%EOF")
+
+    assert exc_info.value.code == InputProcessingErrorCode.UNREADABLE_CONTENT
+    assert exc_info.value.message == "This PDF could not be read for validation."
+
+
+def test_validate_pdf_page_count_accepts_below_limit() -> None:
+    attachment = Attachment(
+        filename="sample.pdf",
+        media_type="application/pdf",
+        content=make_pdf_bytes(MAX_PDF_PAGE_COUNT - 1),
+    )
+
+    assert validate_pdf_page_count(attachment) == InputGuardrailDecision.ALLOW
+
+
+def test_validate_pdf_page_count_accepts_at_limit() -> None:
+    attachment = Attachment(
+        filename="sample.pdf",
+        media_type="application/pdf",
+        content=make_pdf_bytes(MAX_PDF_PAGE_COUNT),
+    )
+
+    assert validate_pdf_page_count(attachment) == InputGuardrailDecision.ALLOW
+
+
+def test_validate_pdf_page_count_rejects_above_limit() -> None:
+    attachment = Attachment(
+        filename="sample.pdf",
+        media_type="application/pdf",
+        content=make_pdf_bytes(MAX_PDF_PAGE_COUNT + 1),
+    )
+
+    with pytest.raises(InputProcessingError) as exc_info:
+        validate_pdf_page_count(attachment)
+
+    assert exc_info.value.code == InputProcessingErrorCode.PDF_PAGE_LIMIT_EXCEEDED
+    assert exc_info.value.message == (
+        f"This PDF has too many pages. Upload a PDF with {MAX_PDF_PAGE_COUNT} pages or fewer."
+    )
+
+
 def test_validate_attachment_modality_rejects_oversized_file_before_signature() -> None:
     attachment = Attachment(
         filename="sample.png",
@@ -284,6 +349,19 @@ def test_validate_attachment_modality_rejects_declared_image_with_pdf_bytes() ->
         validate_attachment_modality(attachment)
 
     assert exc_info.value.code == InputProcessingErrorCode.SIGNATURE_MISMATCH
+
+
+def test_validate_attachment_modality_rejects_over_page_limit_pdf() -> None:
+    attachment = Attachment(
+        filename="sample.pdf",
+        media_type="application/pdf",
+        content=make_pdf_bytes(MAX_PDF_PAGE_COUNT + 1),
+    )
+
+    with pytest.raises(InputProcessingError) as exc_info:
+        validate_attachment_modality(attachment)
+
+    assert exc_info.value.code == InputProcessingErrorCode.PDF_PAGE_LIMIT_EXCEEDED
 
 
 @pytest.mark.parametrize(
