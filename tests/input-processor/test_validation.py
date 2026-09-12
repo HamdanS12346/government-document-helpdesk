@@ -11,12 +11,14 @@ from app.input_processing.schemas import (
 )
 from guardrails.input_processor import (
     InputGuardrailDecision,
+    MAX_ATTACHMENT_SIZE_BYTES,
     SUPPORTED_MEDIA_TYPES,
     has_jpeg_signature,
     has_pdf_signature,
     has_png_signature,
     inspect_attachment_signature,
     validate_attachment_modality,
+    validate_attachment_size,
     validate_input_presence,
     validate_supported_media_type,
 )
@@ -131,6 +133,54 @@ def test_validate_input_presence_rejects_empty_request(
     assert exc_info.value.code == InputProcessingErrorCode.INVALID_INPUT
     assert exc_info.value.message == "Provide a question, an attachment, or both."
     assert request.user_query is None
+
+
+def make_png_attachment_with_size(size: int) -> Attachment:
+    return Attachment(
+        filename="sample.png",
+        media_type="image/png",
+        content=PNG_BYTES + (b"x" * (size - len(PNG_BYTES))),
+    )
+
+
+def test_validate_attachment_size_accepts_below_limit() -> None:
+    attachment = make_png_attachment_with_size(MAX_ATTACHMENT_SIZE_BYTES - 1)
+
+    assert validate_attachment_size(attachment) == InputGuardrailDecision.ALLOW
+
+
+def test_validate_attachment_size_rejects_at_limit() -> None:
+    attachment = make_png_attachment_with_size(MAX_ATTACHMENT_SIZE_BYTES)
+
+    with pytest.raises(InputProcessingError) as exc_info:
+        validate_attachment_size(attachment)
+
+    assert exc_info.value.code == InputProcessingErrorCode.FILE_TOO_LARGE
+    assert exc_info.value.message == (
+        "This attachment is too large. Upload a file smaller than 10 MB."
+    )
+
+
+def test_validate_attachment_size_rejects_above_limit() -> None:
+    attachment = make_png_attachment_with_size(MAX_ATTACHMENT_SIZE_BYTES + 1)
+
+    with pytest.raises(InputProcessingError) as exc_info:
+        validate_attachment_size(attachment)
+
+    assert exc_info.value.code == InputProcessingErrorCode.FILE_TOO_LARGE
+
+
+def test_validate_attachment_modality_rejects_oversized_file_before_signature() -> None:
+    attachment = Attachment(
+        filename="sample.png",
+        media_type="image/png",
+        content=b"x" * MAX_ATTACHMENT_SIZE_BYTES,
+    )
+
+    with pytest.raises(InputProcessingError) as exc_info:
+        validate_attachment_modality(attachment)
+
+    assert exc_info.value.code == InputProcessingErrorCode.FILE_TOO_LARGE
 
 
 def test_png_signature_validation_accepts_only_png_header() -> None:

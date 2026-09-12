@@ -15,6 +15,8 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 PDF_SIGNATURE = b"%PDF-"
 PDF_EOF_MARKER = b"%%EOF"
+ONE_MEGABYTE = 1024 * 1024
+MAX_ATTACHMENT_SIZE_BYTES = 10 * ONE_MEGABYTE
 
 MEDIA_TYPE_MODALITIES = {
     "image/png": InputModality.PNG,
@@ -99,9 +101,22 @@ def validate_supported_media_type(attachment: Attachment) -> InputModality:
     return declared_modality
 
 
+def validate_attachment_size(attachment: Attachment) -> InputGuardrailDecision:
+    """Enforce the confirmed upload requirement: file size must be below 10 MB."""
+
+    if len(attachment.content) < MAX_ATTACHMENT_SIZE_BYTES:
+        return InputGuardrailDecision.ALLOW
+
+    raise InputProcessingError(
+        InputProcessingErrorCode.FILE_TOO_LARGE,
+        "This attachment is too large. Upload a file smaller than 10 MB.",
+    )
+
+
 def validate_attachment_modality(attachment: Attachment) -> ValidatedAttachment:
     """Validate declared media type against the attachment byte signature."""
 
+    validate_attachment_size(attachment)
     declared_modality = validate_supported_media_type(attachment)
     actual_modality = inspect_attachment_signature(attachment.content)
     if actual_modality != declared_modality:
@@ -115,11 +130,13 @@ def validate_attachment_modality(attachment: Attachment) -> ValidatedAttachment:
 
 __all__ = [
     "InputGuardrailDecision",
+    "MAX_ATTACHMENT_SIZE_BYTES",
     "SUPPORTED_MEDIA_TYPES",
     "has_jpeg_signature",
     "has_pdf_signature",
     "has_png_signature",
     "inspect_attachment_signature",
+    "validate_attachment_size",
     "validate_attachment_modality",
     "validate_input_presence",
     "validate_post_extraction_boundary",
