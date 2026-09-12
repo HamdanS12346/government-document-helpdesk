@@ -26,4 +26,16 @@ Milestone 2 validation fixtures:
 - `pdfs/text/one_page_fixture.pdf`: small one-page synthetic PDF.
 - `pdfs/invalid/not_a_pdf.pdf`: invalid bytes using a `.pdf` name.
 
+Milestone 3 image fixtures:
+
+- `images/valid/img_001_clear_form.png`: IMG-001 clear readable synthetic government-style text.
+- `images/blank/img_002_blank_no_text.png`: IMG-002 clear image with no meaningful text.
+- `images/blurry/img_003_blurry_form.png`: IMG-003 blurry synthetic form image.
+- `images/unreadable/img_004_severely_unreadable.png`: IMG-004 severely unreadable synthetic image.
+- `images/pii/img_005_fictional_pii.png`: IMG-005 synthetic image with fictional PII-like values.
+- `images/instructions/img_006_legitimate_instructions.png`: IMG-006 normal form instructions.
+- `images/injection/img_007_ai_directed_text.png`: IMG-007 injection-like document text.
+- `images/invalid/img_008_invalid_image_bytes.png`: IMG-008 invalid image bytes.
+- `images/unsupported/img_008_unsupported_format.gif`: IMG-008 unsupported image format sample.
+
 Oversized upload fixtures should be generated in test code rather than committed.

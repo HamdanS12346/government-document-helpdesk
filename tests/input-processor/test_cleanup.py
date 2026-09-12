@@ -43,6 +43,11 @@ class RaisingOCRProvider:
         raise RuntimeError("ocr failed")
 
 
+class MalformedOCRProvider:
+    def extract_text(self, image_content: bytes) -> object:
+        return {"status": "success", "text": "not validated"}
+
+
 def make_validated_image() -> ValidatedAttachment:
     return ValidatedAttachment(
         attachment=Attachment(
@@ -89,6 +94,42 @@ def test_image_handle_is_closed_after_ocr_failure(monkeypatch: pytest.MonkeyPatc
 
     assert result.error is not None
     assert result.error.code == InputProcessingErrorCode.OCR_FAILURE
+    assert events == ["enter", "verify", "exit"]
+
+
+def test_image_handle_is_closed_after_empty_ocr(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[str] = []
+    patch_tracked_image_open(monkeypatch, events)
+
+    result = image_processor.process_image_attachment(
+        make_validated_image(),
+        StaticOCRProvider(
+            OCRResult(
+                status=OCRStatus.EMPTY,
+                message="No readable text was found in this image.",
+            )
+        ),
+    )
+
+    assert result.error is not None
+    assert result.error.code == InputProcessingErrorCode.UNREADABLE_CONTENT
+    assert events == ["enter", "verify", "exit"]
+
+
+def test_image_handle_is_closed_after_malformed_provider_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    patch_tracked_image_open(monkeypatch, events)
+
+    result = image_processor.process_image_attachment(
+        make_validated_image(),
+        MalformedOCRProvider(),
+    )
+
+    assert result.error is not None
+    assert result.error.code == InputProcessingErrorCode.OCR_FAILURE
+    assert result.error.message == "OCR provider returned an invalid result."
     assert events == ["enter", "verify", "exit"]
 
 

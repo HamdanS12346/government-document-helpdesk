@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.contracts.normalized_input import ImageContent
-from app.input_processing.errors import InputProcessingErrorCode
+from app.input_processing.errors import InputProcessingError, InputProcessingErrorCode
 from app.input_processing.image_processor import (
     IMAGE_QUALITY_THRESHOLD,
     ImageProcessingResult,
@@ -21,11 +21,18 @@ from app.input_processing.schemas import (
     InputModality,
     ValidatedAttachment,
 )
+from guardrails.input_processor import validate_attachment_modality
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
 VALID_IMAGE = FIXTURES / "images" / "valid" / "fictional_form.png"
+VALID_JPEG_IMAGE = FIXTURES / "images" / "valid" / "fictional_form.jpg"
+IMG_001_CLEAR_FORM = FIXTURES / "images" / "valid" / "img_001_clear_form.png"
+IMG_002_BLANK = FIXTURES / "images" / "blank" / "img_002_blank_no_text.png"
+IMG_005_PII = FIXTURES / "images" / "pii" / "img_005_fictional_pii.png"
+IMG_008_UNSUPPORTED = FIXTURES / "images" / "unsupported" / "img_008_unsupported_format.gif"
 INVALID_IMAGE = FIXTURES / "images" / "invalid" / "not_an_image.png"
+IMG_008_INVALID = FIXTURES / "images" / "invalid" / "img_008_invalid_image_bytes.png"
 
 
 class StaticOCRProvider:
@@ -69,6 +76,21 @@ def make_validated_image(filename: str = "fictional_form.png") -> ValidatedAttac
     )
 
 
+def make_validated_image_from_path(
+    path: Path,
+    media_type: str = "image/png",
+    modality: InputModality = InputModality.PNG,
+) -> ValidatedAttachment:
+    return ValidatedAttachment(
+        attachment=Attachment(
+            filename=path.name,
+            media_type=media_type,
+            content=path.read_bytes(),
+        ),
+        modality=modality,
+    )
+
+
 def test_image_processor_builds_image_content_from_successful_ocr() -> None:
     provider = StaticOCRProvider(
         OCRResult(
@@ -88,6 +110,35 @@ def test_image_processor_builds_image_content_from_successful_ocr() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("path", "media_type", "modality"),
+    [
+        (IMG_001_CLEAR_FORM, "image/png", InputModality.PNG),
+        (VALID_JPEG_IMAGE, "image/jpeg", InputModality.JPEG),
+    ],
+)
+def test_accepted_supported_images_become_image_content(
+    path: Path,
+    media_type: str,
+    modality: InputModality,
+) -> None:
+    provider = StaticOCRProvider(
+        OCRResult(status=OCRStatus.SUCCESS, text="Synthetic readable image text")
+    )
+
+    result = process_image_attachment(
+        make_validated_image_from_path(path, media_type, modality),
+        provider,
+    )
+
+    assert provider.calls == 1
+    assert result.error is None
+    assert result.image_content is not None
+    assert result.image_content.image_name == path.name
+    assert result.image_content.extracted_text == "Synthetic readable image text"
+    assert result.image_content.preview == "Synthetic readable image text"
+
+
 def test_image_processor_masks_pii_after_ocr() -> None:
     provider = StaticOCRProvider(
         OCRResult(
@@ -102,6 +153,29 @@ def test_image_processor_masks_pii_after_ocr() -> None:
     assert result.image_content.extracted_text == "PAN [REDACTED] phone [REDACTED]"
     assert "ABCDE1234F" not in result.image_content.preview
     assert "9876543210" not in result.image_content.preview
+
+
+def test_image_processor_masks_pii_from_fixture_ocr_text() -> None:
+    provider = StaticOCRProvider(
+        OCRResult(
+            status=OCRStatus.SUCCESS,
+            text="Applicant PAN ABCDE1234F phone 9876543210 email citizen@example.test",
+        )
+    )
+
+    result = process_image_attachment(
+        make_validated_image_from_path(IMG_005_PII),
+        provider,
+    )
+
+    assert result.image_content is not None
+    assert result.image_content.image_name == IMG_005_PII.name
+    assert "ABCDE1234F" not in result.image_content.extracted_text
+    assert "9876543210" not in result.image_content.extracted_text
+    assert "citizen@example.test" not in result.image_content.extracted_text
+    assert result.image_content.extracted_text == (
+        "Applicant PAN [REDACTED] phone [REDACTED] email [REDACTED]"
+    )
 
 
 @pytest.mark.parametrize(
@@ -233,6 +307,26 @@ def test_empty_ocr_output_does_not_fabricate_image_content() -> None:
     assert "guessed" not in result.error.message.lower()
 
 
+def test_blank_fixture_with_empty_ocr_returns_controlled_failure() -> None:
+    provider = StaticOCRProvider(
+        OCRResult(
+            status=OCRStatus.EMPTY,
+            message="No readable text was found in this image.",
+        )
+    )
+
+    result = process_image_attachment(
+        make_validated_image_from_path(IMG_002_BLANK),
+        provider,
+    )
+
+    assert provider.calls == 1
+    assert result.image_content is None
+    assert result.error is not None
+    assert result.error.code == InputProcessingErrorCode.UNREADABLE_CONTENT
+    assert result.error.message == UNUSABLE_OCR_MESSAGE
+
+
 def test_unreadable_image_failure_does_not_fabricate_image_content() -> None:
     provider = StaticOCRProvider(OCRResult(status=OCRStatus.SUCCESS, text="unused"))
     validated = ValidatedAttachment(
@@ -327,6 +421,56 @@ def test_image_processor_inspects_image_before_ocr() -> None:
     assert result.error is not None
     assert result.error.code == InputProcessingErrorCode.UNREADABLE_CONTENT
     assert result.error.message == UNREADABLE_IMAGE_MESSAGE
+
+
+@pytest.mark.parametrize("path", [INVALID_IMAGE, IMG_008_INVALID])
+def test_invalid_images_never_reach_ocr(path: Path) -> None:
+    provider = StaticOCRProvider(OCRResult(status=OCRStatus.SUCCESS, text="unused"))
+
+    result = process_image_attachment(
+        make_validated_image_from_path(path),
+        provider,
+    )
+
+    assert provider.calls == 0
+    assert result.image_content is None
+    assert result.error is not None
+    assert result.error.code == InputProcessingErrorCode.UNREADABLE_CONTENT
+
+
+def test_non_image_validated_attachment_never_reaches_ocr() -> None:
+    provider = StaticOCRProvider(OCRResult(status=OCRStatus.SUCCESS, text="unused"))
+    validated = ValidatedAttachment(
+        attachment=Attachment(
+            filename="sample.pdf",
+            media_type="application/pdf",
+            content=b"%PDF-1.4\n%%EOF",
+        ),
+        modality=InputModality.PDF,
+    )
+
+    result = process_image_attachment(validated, provider)
+
+    assert provider.calls == 0
+    assert result.image_content is None
+    assert result.error is not None
+    assert result.error.code == InputProcessingErrorCode.UNSUPPORTED_FORMAT
+    assert result.error.message == "This attachment is not a supported image."
+
+
+def test_unsupported_image_format_is_rejected_before_ocr() -> None:
+    provider = StaticOCRProvider(OCRResult(status=OCRStatus.SUCCESS, text="unused"))
+    attachment = Attachment(
+        filename=IMG_008_UNSUPPORTED.name,
+        media_type="image/gif",
+        content=IMG_008_UNSUPPORTED.read_bytes(),
+    )
+
+    with pytest.raises(InputProcessingError) as exc_info:
+        validate_attachment_modality(attachment)
+
+    assert provider.calls == 0
+    assert getattr(exc_info.value, "code") == InputProcessingErrorCode.UNSUPPORTED_FORMAT
 
 
 def test_image_quality_threshold_remains_tbd_until_finalized() -> None:

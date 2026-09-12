@@ -9,7 +9,11 @@ from app.contracts.normalized_input import ImageContent
 from app.input_processing.errors import InputProcessingError, InputProcessingErrorCode
 from app.input_processing.ocr_provider import OCRProvider, OCRResult, OCRStatus
 from app.input_processing.preview import build_image_preview
-from app.input_processing.schemas import AttachmentProcessingError, ValidatedAttachment
+from app.input_processing.schemas import (
+    AttachmentProcessingError,
+    InputModality,
+    ValidatedAttachment,
+)
 from guardrails.input_processor import (
     mark_document_text_untrusted,
     mask_pii_in_text,
@@ -43,6 +47,14 @@ def process_image_attachment(
     """Process already-validated image bytes into normalized image content."""
 
     attachment = validated_attachment.attachment
+    if validated_attachment.modality not in {InputModality.PNG, InputModality.JPEG}:
+        return ImageProcessingResult(
+            error=AttachmentProcessingError(
+                filename=attachment.filename,
+                code=InputProcessingErrorCode.UNSUPPORTED_FORMAT,
+                message="This attachment is not a supported image.",
+            )
+        )
 
     try:
         with Image.open(BytesIO(attachment.content)) as image:
