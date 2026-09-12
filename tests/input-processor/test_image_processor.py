@@ -48,6 +48,16 @@ class RaisingOCRProvider:
         raise RuntimeError("provider internals should not leak")
 
 
+class MalformedOCRProvider:
+    def __init__(self, result: object) -> None:
+        self.result = result
+        self.calls = 0
+
+    def extract_text(self, image_content: bytes) -> object:
+        self.calls += 1
+        return self.result
+
+
 def make_validated_image(filename: str = "fictional_form.png") -> ValidatedAttachment:
     return ValidatedAttachment(
         attachment=Attachment(
@@ -275,6 +285,28 @@ def test_image_processor_returns_controlled_failure_for_provider_exception() -> 
     assert result.error is not None
     assert result.error.code == InputProcessingErrorCode.OCR_FAILURE
     assert result.error.message == "OCR could not be completed for this image."
+
+
+@pytest.mark.parametrize(
+    "malformed_result",
+    [
+        None,
+        {"status": "success", "text": "not a validated OCRResult"},
+        object(),
+    ],
+)
+def test_image_processor_returns_controlled_failure_for_malformed_provider_response(
+    malformed_result: object,
+) -> None:
+    provider = MalformedOCRProvider(malformed_result)
+
+    result = process_image_attachment(make_validated_image(), provider)
+
+    assert provider.calls == 1
+    assert result.image_content is None
+    assert result.error is not None
+    assert result.error.code == InputProcessingErrorCode.OCR_FAILURE
+    assert result.error.message == "OCR provider returned an invalid result."
 
 
 def test_image_processor_inspects_image_before_ocr() -> None:

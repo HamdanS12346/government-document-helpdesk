@@ -7,7 +7,7 @@ from PIL import Image, UnidentifiedImageError
 
 from app.contracts.normalized_input import ImageContent
 from app.input_processing.errors import InputProcessingError, InputProcessingErrorCode
-from app.input_processing.ocr_provider import OCRProvider, OCRStatus
+from app.input_processing.ocr_provider import OCRProvider, OCRResult, OCRStatus
 from app.input_processing.preview import build_image_preview
 from app.input_processing.schemas import AttachmentProcessingError, ValidatedAttachment
 from guardrails.input_processor import (
@@ -64,6 +64,15 @@ def process_image_attachment(
                 filename=attachment.filename,
                 code=InputProcessingErrorCode.OCR_FAILURE,
                 message="OCR could not be completed for this image.",
+            )
+        )
+
+    if not isinstance(ocr_result, OCRResult):
+        return ImageProcessingResult(
+            error=AttachmentProcessingError(
+                filename=attachment.filename,
+                code=InputProcessingErrorCode.OCR_FAILURE,
+                message="OCR provider returned an invalid result.",
             )
         )
 

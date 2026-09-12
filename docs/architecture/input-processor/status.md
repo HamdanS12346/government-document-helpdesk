@@ -4,6 +4,8 @@
 
 Milestone 1 and Milestone 2 are complete for the Input Processor scope.
 
+Current implementation position: Milestone 3 is complete through Task 9; next task is Task 10 image fixture files.
+
 Current branch:
 
 ```text
@@ -14,7 +16,7 @@ Current verified test result:
 
 ```text
 .venv\Scripts\python.exe -m pytest
-97 passed
+155 passed
 ```
 
 ## Milestone 1 Completed
