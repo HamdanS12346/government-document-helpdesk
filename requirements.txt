@@ -1,11 +1,13 @@
 fastapi
 uvicorn
+python-multipart
 
 langchain
 langchain-community
 langchain-openai
 langgraph
 openai
+cohere
 
 pydantic
 pydantic-settings
@@ -13,6 +15,7 @@ python-dotenv
 
 chromadb
 faiss-cpu
+rank-bm25
 
 pypdf
 pdfplumber
