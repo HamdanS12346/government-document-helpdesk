@@ -3,7 +3,7 @@ import pytest
 
 from app.contracts.intent_decision import IntentDecision
 from app.contracts.normalized_input import ImageContent, NormalizedInput, PDFContent
-from app.intent.classifier import OpenAIIntentClassifier
+from app.intent.classifier import CLASSIFICATION_SYSTEM_PROMPT, OpenAIIntentClassifier
 from app.intent.node import classify_intent
 from app.intent.query_builder import build_classification_query
 
@@ -83,6 +83,17 @@ def test_openai_classifier_rejects_blank_query():
 
     with pytest.raises(ValueError, match="query must not be empty"):
         classifier.classify("  ")
+
+
+def test_system_prompt_keeps_uploaded_government_like_documents_in_document_info():
+    assert "uploaded documents" in CLASSIFICATION_SYSTEM_PROMPT
+    assert "forms, notices, circulars, IDs, benefits, records" in (
+        CLASSIFICATION_SYSTEM_PROMPT
+    )
+    assert "Synthetic or test-document disclaimers" in CLASSIFICATION_SYSTEM_PROMPT
+    assert "Use general_chat only for casual or non-document conversation." in (
+        CLASSIFICATION_SYSTEM_PROMPT
+    )
 
 
 def test_query_builder_uses_input_previews_and_conversation_context():

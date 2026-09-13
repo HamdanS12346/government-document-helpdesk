@@ -185,7 +185,7 @@ They are not LLM-generated.
 Current preview rules:
 
 - Image preview: first 500 characters of extracted image text.
-- PDF preview: first 200 characters per page.
+- PDF preview: first 500 characters per page.
 
 Previews are useful for:
 

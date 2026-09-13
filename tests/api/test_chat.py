@@ -5,6 +5,7 @@ import pytest
 
 from app.api import routes
 from app.api.main import app
+from app.contracts.intent_decision import IntentDecision
 from app.contracts.normalized_input import NormalizedInput
 from app.input_processing.errors import InputProcessingErrorCode
 from app.input_processing.schemas import (
@@ -14,6 +15,24 @@ from app.input_processing.schemas import (
     InputProcessingResult,
     InputRequest,
 )
+
+
+class FakeIntentClassifier:
+    def classify(self, query: str) -> IntentDecision:
+        return IntentDecision(
+            query=query,
+            intent_type="document_info",
+            confidence_score=0.9,
+        )
+
+
+@pytest.fixture(autouse=True)
+def fake_intent_classifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        routes,
+        "_build_intent_classifier",
+        lambda: FakeIntentClassifier(),
+    )
 
 
 def test_chat_allows_local_frontend_origin() -> None:
@@ -38,6 +57,13 @@ def test_chat_accepts_text_only_input() -> None:
 
     assert response.status_code == 200
     payload = response.json()
+    assert set(payload) == {
+        "success",
+        "message",
+        "attachment_statuses",
+        "warnings",
+        "normalized_input",
+    }
     assert payload["success"] is True
     assert payload["message"] == "Input processed successfully."
     assert payload["attachment_statuses"] == []
@@ -48,6 +74,59 @@ def test_chat_accepts_text_only_input() -> None:
         "pdf_content": [],
         "combined_text": "<USER_QUERY>\nPlease explain this notice.",
     }
+
+
+def test_chat_invokes_intent_graph_after_successful_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_result: InputProcessingResult | None = None
+    captured_classifier: object | None = None
+
+    def fake_invoke_input_intent_graph(
+        result: InputProcessingResult,
+        classifier: object,
+    ) -> dict[str, IntentDecision]:
+        nonlocal captured_result, captured_classifier
+        captured_result = result
+        captured_classifier = classifier
+        return {
+            "intent_decision": IntentDecision(
+                query="User Query:\nPlease explain this notice.",
+                intent_type="document_info",
+                confidence_score=0.9,
+            )
+        }
+
+    monkeypatch.setattr(
+        routes,
+        "invoke_input_intent_graph",
+        fake_invoke_input_intent_graph,
+    )
+    client = TestClient(app)
+
+    response = client.post("/chat", data={"message": "Please explain this notice."})
+
+    assert response.status_code == 200
+    assert captured_result is not None
+    assert captured_result.success is True
+    assert captured_result.normalized_input is not None
+    assert captured_result.normalized_input.user_query == "Please explain this notice."
+    assert isinstance(captured_classifier, FakeIntentClassifier)
+
+
+def test_chat_prints_normalized_input_and_intent_decision(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = TestClient(app)
+
+    response = client.post("/chat", data={"message": "Please explain this notice."})
+
+    assert response.status_code == 200
+    output = capsys.readouterr().out
+    assert "Normalized input:" in output
+    assert '"user_query": "Please explain this notice."' in output
+    assert "Intent decision:" in output
+    assert '"intent_type": "document_info"' in output
 
 
 def test_chat_masks_pii_in_text_only_input() -> None:
@@ -275,6 +354,14 @@ def test_chat_returns_safe_input_processor_failures(
         )
 
     monkeypatch.setattr(routes, "process_input", fake_process_input)
+
+    def fail_if_invoked(
+        result: InputProcessingResult,
+        classifier: object,
+    ) -> dict[str, IntentDecision]:
+        raise AssertionError("intent graph should not run after failed input")
+
+    monkeypatch.setattr(routes, "invoke_input_intent_graph", fail_if_invoked)
     client = TestClient(app)
 
     response = client.post(
@@ -331,3 +418,33 @@ def test_chat_hides_unexpected_exception_details(
     assert "secret_token" not in response_text
     assert "C:\\private" not in response_text
     assert "provider.py" not in response_text
+
+
+def test_chat_returns_safe_response_when_intent_classification_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingIntentClassifier:
+        def classify(self, query: str) -> IntentDecision:
+            raise RuntimeError("OPENAI_API_KEY secret provider traceback")
+
+    monkeypatch.setattr(
+        routes,
+        "_build_intent_classifier",
+        lambda: FailingIntentClassifier(),
+    )
+    client = TestClient(app)
+
+    response = client.post("/chat", data={"message": "Please explain this notice."})
+
+    assert response.status_code == 502
+    assert response.json() == {
+        "success": False,
+        "message": "The request could not be classified right now. Please try again.",
+        "attachment_statuses": [],
+        "warnings": [],
+        "normalized_input": None,
+    }
+    response_text = response.text
+    assert "OPENAI_API_KEY" not in response_text
+    assert "secret" not in response_text
+    assert "provider traceback" not in response_text

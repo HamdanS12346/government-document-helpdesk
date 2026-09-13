@@ -318,7 +318,7 @@ of the extracted image text.
 ## PDF preview
 The PDF preview uses:
 ```text
-200 characters per page
+500 characters per page
 ```
 The preview exists primarily as lightweight normalized information for downstream processing such as intent classification.
 The preview must not require an LLM call.
@@ -498,7 +498,7 @@ PDFContent
 The OCR provider should process scanned content at page level.
 This also supports the deterministic preview rule:
 ```text
-200 characters per page
+500 characters per page
 ```
 # 27. Mixed PDF
 Mixed PDFs are supported.

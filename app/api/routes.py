@@ -1,14 +1,17 @@
 """HTTP routes for the FastAPI application."""
 
 from dataclasses import dataclass
+from functools import cache
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
+from app.graph.graph import invoke_input_intent_graph
 from app.input_processing.processors import process_input
 from app.input_processing.schemas import Attachment, InputProcessingResult, InputRequest
+from app.intent.classifier import OpenAIIntentClassifier
 
 
 router = APIRouter()
@@ -34,8 +37,21 @@ async def chat(
         attachments = _build_attachments(uploaded_files)
         request = InputRequest(user_query=message, attachments=attachments)
         result = process_input(request)
-        if result.normalized_input is not None:
-            print(result.normalized_input.model_dump_json(indent=2))
+        if result.success and result.normalized_input is not None:
+            print("Normalized input:", flush=True)
+            print(result.normalized_input.model_dump_json(indent=2), flush=True)
+            try:
+                graph_state = invoke_input_intent_graph(
+                    result,
+                    _build_intent_classifier(),
+                )
+            except Exception:
+                return JSONResponse(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    content=_build_classification_error_payload(),
+                )
+            print("\nIntent decision:", flush=True)
+            print(graph_state["intent_decision"].model_dump_json(indent=2), flush=True)
         else:
             print(result.model_dump_json(indent=2))
     except Exception:
@@ -74,6 +90,11 @@ def _build_attachments(uploaded_files: list[UploadedFileBytes]) -> list[Attachme
     ]
 
 
+@cache
+def _build_intent_classifier() -> OpenAIIntentClassifier:
+    return OpenAIIntentClassifier()
+
+
 def _build_response_payload(result: InputProcessingResult) -> dict[str, object]:
     return jsonable_encoder(
         {
@@ -105,6 +126,16 @@ def _build_internal_error_payload() -> dict[str, object]:
     return {
         "success": False,
         "message": "The input could not be processed safely.",
+        "attachment_statuses": [],
+        "warnings": [],
+        "normalized_input": None,
+    }
+
+
+def _build_classification_error_payload() -> dict[str, object]:
+    return {
+        "success": False,
+        "message": "The request could not be classified right now. Please try again.",
         "attachment_statuses": [],
         "warnings": [],
         "normalized_input": None,

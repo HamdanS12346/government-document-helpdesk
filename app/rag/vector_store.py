@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 import numpy as np
 from app.contracts.retrieval import RetrievedDocument
 
