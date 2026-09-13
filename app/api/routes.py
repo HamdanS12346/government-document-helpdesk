@@ -2,13 +2,14 @@
 
 from dataclasses import dataclass
 from functools import cache
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
-from app.graph.graph import invoke_input_intent_graph
+from app.graph.graph import invoke_intent_retriever_graph
 from app.input_processing.processors import process_input
 from app.input_processing.schemas import Attachment, InputProcessingResult, InputRequest
 from app.intent.classifier import OpenAIIntentClassifier
@@ -41,7 +42,7 @@ async def chat(
             print("Normalized input:", flush=True)
             print(result.normalized_input.model_dump_json(indent=2), flush=True)
             try:
-                graph_state = invoke_input_intent_graph(
+                graph_state = invoke_intent_retriever_graph(
                     result,
                     _build_intent_classifier(),
                 )
@@ -52,6 +53,24 @@ async def chat(
                 )
             print("\nIntent decision:", flush=True)
             print(graph_state["intent_decision"].model_dump_json(indent=2), flush=True)
+            if "documents" in graph_state:
+                print("\nDocuments:", flush=True)
+                print(
+                    json.dumps(
+                        jsonable_encoder(graph_state["documents"]),
+                        indent=2,
+                    ),
+                    flush=True,
+                )
+            if "retrieved_context" in graph_state:
+                print("\nRetrieved context:", flush=True)
+                print(
+                    json.dumps(
+                        jsonable_encoder(graph_state["retrieved_context"]),
+                        indent=2,
+                    ),
+                    flush=True,
+                )
         else:
             print(result.model_dump_json(indent=2))
     except Exception:

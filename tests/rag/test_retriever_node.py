@@ -5,8 +5,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 from app.contracts.intent_decision import IntentDecision
 from app.contracts.normalized_input import ImageContent, NormalizedInput, PDFContent
 from app.contracts.retrieval import ChunkMetadata, RetrievedDocument
-from app.rag.hybrid_fusion import reciprocal_rank_fusion
 from app.rag.lexical_search import BM25LexicalSearcher
+from app.rag.metadata_extractor import MetadataFilterDecision
 from app.rag.node import RetrieverPipeline, retriever_node, set_default_retriever_pipeline
 from app.rag.query_rewriter import QueryRewriter
 from app.rag.reranker import CohereReranker
@@ -144,7 +144,7 @@ def test_retriever_node_multi_turn_with_cohere_rerank():
 
 
 def test_retriever_node_with_multimodal_attachments():
-    """Attached images and PDFs have their previews incorporated in query rewriting."""
+    """Combined text lets attached images and PDFs inform query rewriting."""
     corpus = get_mock_corpus()
 
     mock_llm = MagicMock()
@@ -195,3 +195,95 @@ def test_retriever_node_with_multimodal_attachments():
     doc = result["documents"][0]
     assert doc.id == "identity-documents__passport__india__source-002__chunk-0001"
     assert "passport" in doc.text_content.lower()
+
+
+class RecordingQueryRewriter:
+    def __init__(self) -> None:
+        self.user_query = None
+        self.messages = None
+        self.conversation_summary = None
+        self.attachment_previews = None
+
+    def rewrite(
+        self,
+        user_query,
+        messages=None,
+        conversation_summary=None,
+        attachment_previews=None,
+    ):
+        self.user_query = user_query
+        self.messages = messages
+        self.conversation_summary = conversation_summary
+        self.attachment_previews = attachment_previews
+        return "rewritten retrieval query"
+
+
+class FakeMetadataExtractor:
+    def extract(self, query):
+        return MetadataFilterDecision(
+            category=None,
+            document_name=None,
+            is_confident=False,
+            reasoning="test",
+        )
+
+
+class EmptyVectorRetriever:
+    def search(self, query, top_k=25, where=None):
+        return []
+
+
+class EmptyLexicalSearcher:
+    def search(self, query, top_k=25, filter_criteria=None):
+        return []
+
+
+class PassthroughReranker:
+    def rerank(self, query, documents, top_n=5):
+        return documents[:top_n], False
+
+
+def test_retriever_pipeline_rewrites_from_combined_text_not_intent_query():
+    """Retriever query rewriting starts from normalized combined_text."""
+    query_rewriter = RecordingQueryRewriter()
+    pipeline = RetrieverPipeline(
+        query_rewriter=query_rewriter,
+        metadata_extractor=FakeMetadataExtractor(),
+        lexical_searcher=EmptyLexicalSearcher(),
+        vector_retriever=EmptyVectorRetriever(),
+        reranker=PassthroughReranker(),
+    )
+    combined_text = (
+        "<USER_QUERY>\nCan I use this for passport?\n\n"
+        "<IMAGE_CONTENT>\nCertificate of Residence extracted from image."
+    )
+    state = {
+        "normalized_input": NormalizedInput(
+            user_query="Can I use this for passport?",
+            image_content=[
+                ImageContent(
+                    image_name="residence.jpg",
+                    extracted_text="Certificate of Residence extracted from image.",
+                    preview="Certificate of Residence",
+                )
+            ],
+            pdf_content=[],
+            combined_text=combined_text,
+        ),
+        "intent_decision": IntentDecision(
+            query="classifier preview query",
+            intent_type="document_info",
+            confidence_score=0.93,
+        ),
+        "messages": [{"role": "human", "content": "Previous turn"}],
+        "conversation_summary": "Earlier passport address proof question.",
+    }
+
+    result = pipeline.execute(state)
+
+    assert result == {"documents": []}
+    assert query_rewriter.user_query == combined_text
+    assert query_rewriter.user_query != state["intent_decision"].query
+    assert query_rewriter.messages == state["messages"]
+    assert query_rewriter.conversation_summary == state["conversation_summary"]
+    assert query_rewriter.attachment_previews == []
