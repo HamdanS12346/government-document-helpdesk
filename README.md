@@ -29,7 +29,7 @@ Govt Doc Helpdesk is a document-focused assistant architecture for processing us
 
 ## Current Local Flow
 
-The current frontend integration stops at the Input Processor:
+The current frontend integration runs the Input Processor and the first intent graph slice:
 
 ```text
 Next.js frontend
@@ -37,9 +37,14 @@ Next.js frontend
   -> InputRequest
   -> Input Processor
   -> NormalizedInput
+  -> input-intent graph
+  -> IntentDecision
 ```
 
-LangGraph, RAG, and LLM response generation will be connected later.
+The API response still returns the input-processing payload. For local debugging,
+the FastAPI terminal prints `NormalizedInput` first, then `IntentDecision` after
+classification. RAG, routing, memory, and final response generation will be
+connected later.
 
 Local development uses two servers:
 
@@ -132,7 +137,8 @@ On Windows PowerShell, you can use:
 Copy-Item .env.example .env
 ```
 
-Then fill in the required values in `.env`.
+Then fill in the required values in `.env`. The backend loads this file at
+startup for local development. Intent classification requires `OPENAI_API_KEY`.
 
 ## Frontend Setup
 
@@ -164,7 +170,7 @@ Open the browser at:
 http://localhost:3000
 ```
 
-Submit a message, supported document attachment, or both. The frontend sends a multipart request to FastAPI, and the backend prints the `NormalizedInput` JSON in the terminal for local verification.
+Submit a message, supported document attachment, or both. The frontend sends a multipart request to FastAPI, and the backend prints the `NormalizedInput` JSON and then the `IntentDecision` JSON in the terminal for local verification.
 
 ## Test Commands
 
