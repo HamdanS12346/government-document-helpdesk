@@ -29,3 +29,5 @@ dist/
 .DS_Store
 Thumbs.db
 
+# Local Folders for Managing specs
+.specs
