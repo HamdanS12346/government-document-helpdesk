@@ -7,6 +7,7 @@ from app.contracts.normalized_input import NormalizedInput
 from app.contracts.retrieval import RetrievedDocument
 from app.rag.hybrid_fusion import reciprocal_rank_fusion
 from app.rag.lexical_search import BM25LexicalSearcher
+from app.rag.metadata_extractor import MetadataExtractor, MetadataFilterDecision
 from app.rag.query_rewriter import QueryRewriter
 from app.rag.reranker import CohereReranker
 from app.rag.vector_store import VectorStoreRetriever
@@ -15,11 +16,12 @@ logger = logging.getLogger(__name__)
 
 
 class RetrieverPipeline:
-    """Configurable pipeline orchestrating query rewriting, hybrid search, RRF, and reranking."""
+    """Configurable pipeline orchestrating query rewriting, metadata filtering, hybrid search, RRF, and reranking."""
 
     def __init__(
         self,
         query_rewriter: Optional[QueryRewriter] = None,
+        metadata_extractor: Optional[MetadataExtractor] = None,
         lexical_searcher: Optional[BM25LexicalSearcher] = None,
         vector_retriever: Optional[VectorStoreRetriever] = None,
         reranker: Optional[CohereReranker] = None,
@@ -30,6 +32,7 @@ class RetrieverPipeline:
         rrf_k: int = 60,
     ):
         self.query_rewriter = query_rewriter or QueryRewriter()
+        self.metadata_extractor = metadata_extractor or MetadataExtractor()
         self.lexical_searcher = lexical_searcher or BM25LexicalSearcher()
         self.vector_retriever = vector_retriever or VectorStoreRetriever()
         self.reranker = reranker or CohereReranker()
@@ -78,9 +81,29 @@ class RetrieverPipeline:
 
         logger.info("Original query: '%s' -> Rewritten query: '%s'", user_query, rewritten_query)
 
-        # 3. Dual Hybrid Retrieval
-        dense_results = self.vector_retriever.search(rewritten_query, top_k=self.dense_top_k)
-        lexical_results = self.lexical_searcher.search(rewritten_query, top_k=self.bm25_top_k)
+        # 3. High-Confidence Metadata Filtering
+        meta_decision = self.metadata_extractor.extract(rewritten_query)
+        chroma_where = MetadataExtractor.build_chroma_filter(meta_decision)
+        bm25_filter = MetadataExtractor.build_criteria(meta_decision)
+
+        logger.info(
+            "Metadata filter decision: confident=%s, category=%s, subcategory=%s",
+            meta_decision.is_confident,
+            meta_decision.category,
+            meta_decision.document_name,
+        )
+
+        # 4. Dual Hybrid Retrieval (with metadata filtering)
+        dense_results = self.vector_retriever.search(
+            rewritten_query,
+            top_k=self.dense_top_k,
+            where=chroma_where,
+        )
+        lexical_results = self.lexical_searcher.search(
+            rewritten_query,
+            top_k=self.bm25_top_k,
+            filter_criteria=bm25_filter,
+        )
 
         # 4. Reciprocal Rank Fusion (RRF)
         fused_results = reciprocal_rank_fusion(
