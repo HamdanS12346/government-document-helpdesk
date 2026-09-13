@@ -1,14 +1,24 @@
 """Intent decision contract definitions."""
 
+from enum import StrEnum
+
 from pydantic import BaseModel, Field
 
 
+class IntentType(StrEnum):
+	"""Supported workflow intents."""
+
+	DOCUMENT_INFO = "document_info"
+	GENERAL_CHAT = "general_chat"
+	AMBIGUOUS = "ambiguous"
+
+
 class IntentDecision(BaseModel):
-    """Intent classification result."""
+	"""Validated result produced by the intent classifier."""
 
-    query: str = Field(description="Query evaluated for classification")
-    intent_type: str = Field(description="Detected intent type: document_info, general_chat, or ambiguous")
-    confidence_score: float = Field(ge=0.0, le=1.0, description="Confidence score between 0.0 and 1.0")
+	query: str = Field(min_length=1)
+	intent_type: IntentType
+	confidence_score: float = Field(ge=0.0, le=1.0)
 
 
-__all__ = ["IntentDecision"]
+__all__ = ["IntentDecision", "IntentType"]

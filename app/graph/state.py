@@ -2,6 +2,7 @@
 
 from typing import Any, NotRequired, TypedDict
 
+from app.contracts.intent_decision import IntentDecision
 from app.contracts.normalized_input import NormalizedInput
 
 
@@ -13,11 +14,13 @@ class GraphState(TypedDict, total=False):
     """
 
     normalized_input: NotRequired[NormalizedInput]
-    intent_decision: NotRequired[Any]
+    intent_decision: NotRequired[IntentDecision]
     documents: NotRequired[list[Any]]
     retrieved_context: NotRequired[Any]
     messages: NotRequired[list[Any]]
     conversation_summary: NotRequired[str]
 
 
-__all__ = ["GraphState"]
+State = GraphState
+
+__all__ = ["GraphState", "State"]
