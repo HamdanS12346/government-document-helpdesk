@@ -10,6 +10,7 @@ from app.input_processing.processors import build_graph_state_update
 from app.input_processing.schemas import InputProcessingResult
 from app.intent.classifier import IntentClassifier
 from app.intent.node import classify_intent
+from app.observability import start_observation
 from app.rag.context_builder.node import context_builder_node
 from app.rag.node import retriever_node
 
@@ -24,12 +25,22 @@ CLARIFICATION_PLACEHOLDER_NODE = "clarification_placeholder"
 def general_chat_placeholder(state: State) -> dict[str, Any]:
     """Placeholder branch until the Response Node is implemented."""
 
+    with start_observation(
+        GENERAL_CHAT_PLACEHOLDER_NODE,
+        input={"status": "placeholder"},
+    ) as observation:
+        observation.update(output={"status": "general_chat_placeholder"})
     return {}
 
 
 def clarification_placeholder(state: State) -> dict[str, Any]:
     """Placeholder branch until the Clarification Node is implemented."""
 
+    with start_observation(
+        CLARIFICATION_PLACEHOLDER_NODE,
+        input={"status": "placeholder"},
+    ) as observation:
+        observation.update(output={"status": "clarification_placeholder"})
     return {}
 
 

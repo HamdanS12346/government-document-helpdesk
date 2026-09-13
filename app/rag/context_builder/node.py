@@ -24,6 +24,11 @@ from typing import Any, Dict, Optional
 
 from app.rag.context_builder.builder import ContextBuilder
 from app.contracts.response import RetrievedContext
+from app.observability import start_observation
+from app.observability.metadata import (
+    build_documents_metadata,
+    build_retrieved_context_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +83,12 @@ def context_builder_node(
 
     # Delegate all transformation to ContextBuilder — normalization, dedup,
     # filter, sort, budget enforcement, formatting, and citation assembly.
-    retrieved_context: RetrievedContext = active_builder.build_context(raw_documents)
+    with start_observation(
+        "context_builder",
+        input=build_documents_metadata(raw_documents or []),
+    ) as observation:
+        retrieved_context: RetrievedContext = active_builder.build_context(raw_documents)
+        observation.update(output=build_retrieved_context_metadata(retrieved_context))
 
     logger.info(
         "context_builder_node: complete — documents_used=%d, truncated=%s, "
