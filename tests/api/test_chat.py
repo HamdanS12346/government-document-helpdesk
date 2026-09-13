@@ -28,6 +28,7 @@ class FakeIntentClassifier:
 
 @pytest.fixture(autouse=True)
 def fake_intent_classifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routes, "flush_langfuse", lambda: None)
     monkeypatch.setattr(
         routes,
         "_build_intent_classifier",

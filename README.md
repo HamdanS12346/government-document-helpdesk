@@ -139,6 +139,9 @@ Copy-Item .env.example .env
 
 Then fill in the required values in `.env`. The backend loads this file at
 startup for local development. Intent classification requires `OPENAI_API_KEY`.
+Langfuse tracing is optional. To enable it locally, set `LANGFUSE_ENABLED=true`
+and provide `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and
+`LANGFUSE_BASE_URL`.
 
 ## Frontend Setup
 
@@ -206,6 +209,7 @@ The project currently uses dependencies for:
 - API serving: `fastapi`, `uvicorn`
 - Multipart upload handling: `python-multipart`
 - LLM and graph workflow: `openai`, `langchain`, `langgraph`
+- Observability: `langfuse`
 - Configuration and validation: `python-dotenv`, `pydantic`, `pydantic-settings`
 - Retrieval/vector storage: `chromadb`, `faiss-cpu`
 - PDF/image processing: `pypdf`, `pdfplumber`, `pillow`, `pytesseract`

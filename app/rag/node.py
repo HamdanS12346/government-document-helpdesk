@@ -2,15 +2,21 @@
 
 import logging
 from typing import Any, Dict, List, Optional
-from app.contracts.intent_decision import IntentDecision
 from app.contracts.normalized_input import NormalizedInput
 from app.contracts.retrieval import RetrievedDocument
 from app.rag.hybrid_fusion import reciprocal_rank_fusion
 from app.rag.lexical_search import BM25LexicalSearcher
-from app.rag.metadata_extractor import MetadataExtractor, MetadataFilterDecision
+from app.rag.metadata_extractor import MetadataExtractor
 from app.rag.query_rewriter import QueryRewriter
 from app.rag.reranker import CohereReranker
 from app.rag.vector_store import VectorStoreRetriever
+from app.observability import start_observation
+from app.observability.metadata import (
+    build_documents_metadata,
+    build_normalized_input_metadata,
+    build_query_rewrite_input_metadata,
+    build_query_rewrite_output_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +55,6 @@ class RetrieverPipeline:
 
     def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Execute the end-to-end retriever pipeline on a LangGraph state dictionary."""
-        # 1. Parse NormalizedInput
         raw_norm_input = state.get("normalized_input")
         if isinstance(raw_norm_input, dict):
             norm_input = NormalizedInput.model_validate(raw_norm_input)
@@ -59,67 +64,159 @@ class RetrieverPipeline:
             norm_input = NormalizedInput(user_query=str(raw_norm_input or ""))
 
         retrieval_input = norm_input.combined_text.strip() or norm_input.user_query
+        used_combined_text = bool(norm_input.combined_text.strip())
         messages = state.get("messages", [])
         summary = state.get("conversation_summary")
 
-        # 2. Query Rewriting
-        rewritten_query = self.query_rewriter.rewrite(
-            user_query=retrieval_input,
-            messages=messages,
-            conversation_summary=summary,
-            attachment_previews=[],
-        )
+        with start_observation(
+            "retriever",
+            input={
+                **build_normalized_input_metadata(
+                    norm_input,
+                    messages=messages,
+                    conversation_summary=summary,
+                ),
+                "intent_type": str(
+                    getattr(state.get("intent_decision"), "intent_type", "")
+                ),
+            },
+        ) as retriever_observation:
+            with start_observation(
+                "query_rewrite",
+                input=build_query_rewrite_input_metadata(
+                    retrieval_input,
+                    used_combined_text=used_combined_text,
+                    messages=messages,
+                    conversation_summary=summary,
+                    attachment_preview_count=0,
+                ),
+            ) as query_observation:
+                rewritten_query = self.query_rewriter.rewrite(
+                    user_query=retrieval_input,
+                    messages=messages,
+                    conversation_summary=summary,
+                    attachment_previews=[],
+                )
+                query_observation.update(
+                    output=build_query_rewrite_output_metadata(
+                        retrieval_input,
+                        rewritten_query,
+                    )
+                )
 
-        logger.info(
-            "Retrieval input: '%s' -> Rewritten query: '%s'",
-            retrieval_input,
-            rewritten_query,
-        )
+            logger.info(
+                "Retrieval input: '%s' -> Rewritten query: '%s'",
+                retrieval_input,
+                rewritten_query,
+            )
 
-        # 3. High-Confidence Metadata Filtering
-        meta_decision = self.metadata_extractor.extract(rewritten_query)
-        chroma_where = MetadataExtractor.build_chroma_filter(meta_decision)
-        bm25_filter = MetadataExtractor.build_criteria(meta_decision)
+            with start_observation(
+                "metadata_filter",
+                input={"rewritten_query_length": len(rewritten_query)},
+            ) as metadata_observation:
+                meta_decision = self.metadata_extractor.extract(rewritten_query)
+                chroma_where = MetadataExtractor.build_chroma_filter(meta_decision)
+                bm25_filter = MetadataExtractor.build_criteria(meta_decision)
+                metadata_observation.update(
+                    output={
+                        "is_confident": meta_decision.is_confident,
+                        "category": meta_decision.category,
+                        "document_name": meta_decision.document_name,
+                        "chroma_filter_applied": chroma_where is not None,
+                        "bm25_filter_applied": bm25_filter is not None,
+                    }
+                )
 
-        logger.info(
-            "Metadata filter decision: confident=%s, category=%s, subcategory=%s",
-            meta_decision.is_confident,
-            meta_decision.category,
-            meta_decision.document_name,
-        )
+            logger.info(
+                "Metadata filter decision: confident=%s, category=%s, subcategory=%s",
+                meta_decision.is_confident,
+                meta_decision.category,
+                meta_decision.document_name,
+            )
 
-        # 4. Dual Hybrid Retrieval (with metadata filtering)
-        dense_results = self.vector_retriever.search(
-            rewritten_query,
-            top_k=self.dense_top_k,
-            where=chroma_where,
-        )
-        lexical_results = self.lexical_searcher.search(
-            rewritten_query,
-            top_k=self.bm25_top_k,
-            filter_criteria=bm25_filter,
-        )
+            with start_observation(
+                "dense_retrieval",
+                input={
+                    "method": "dense_vector",
+                    "top_k": self.dense_top_k,
+                    "filter_applied": chroma_where is not None,
+                    "rewritten_query_length": len(rewritten_query),
+                },
+            ) as dense_observation:
+                dense_results = self.vector_retriever.search(
+                    rewritten_query,
+                    top_k=self.dense_top_k,
+                    where=chroma_where,
+                )
+                dense_observation.update(output=build_documents_metadata(dense_results))
 
-        # 4. Reciprocal Rank Fusion (RRF)
-        fused_results = reciprocal_rank_fusion(
-            dense_results=dense_results,
-            lexical_results=lexical_results,
-            k=self.rrf_k,
-            top_n=self.rrf_top_n,
-        )
+            with start_observation(
+                "lexical_retrieval",
+                input={
+                    "method": "bm25_lexical",
+                    "top_k": self.bm25_top_k,
+                    "filter_applied": bm25_filter is not None,
+                    "rewritten_query_length": len(rewritten_query),
+                },
+            ) as lexical_observation:
+                lexical_results = self.lexical_searcher.search(
+                    rewritten_query,
+                    top_k=self.bm25_top_k,
+                    filter_criteria=bm25_filter,
+                )
+                lexical_observation.update(
+                    output=build_documents_metadata(lexical_results)
+                )
 
-        # 5. Cohere Cross-Encoder Reranking (with automated circuit-breaker fallback)
-        final_documents, applied_fallback = self.reranker.rerank(
-            query=rewritten_query,
-            documents=fused_results,
-            top_n=self.final_top_k,
-        )
+            with start_observation(
+                "reciprocal_rank_fusion",
+                input={
+                    "dense_result_count": len(dense_results),
+                    "lexical_result_count": len(lexical_results),
+                    "rrf_k": self.rrf_k,
+                    "rrf_top_n": self.rrf_top_n,
+                },
+            ) as rrf_observation:
+                fused_results = reciprocal_rank_fusion(
+                    dense_results=dense_results,
+                    lexical_results=lexical_results,
+                    k=self.rrf_k,
+                    top_n=self.rrf_top_n,
+                )
+                rrf_observation.update(output=build_documents_metadata(fused_results))
 
-        logger.info(
-            "Retrieved %d final documents (fallback applied: %s)",
-            len(final_documents),
-            applied_fallback,
-        )
+            with start_observation(
+                "reranking",
+                input={
+                    "reranker_provider": "cohere",
+                    "input_document_count": len(fused_results),
+                    "top_n": self.final_top_k,
+                },
+            ) as rerank_observation:
+                final_documents, applied_fallback = self.reranker.rerank(
+                    query=rewritten_query,
+                    documents=fused_results,
+                    top_n=self.final_top_k,
+                )
+                rerank_observation.update(
+                    output={
+                        **build_documents_metadata(final_documents),
+                        "fallback_applied": applied_fallback,
+                    }
+                )
+
+            logger.info(
+                "Retrieved %d final documents (fallback applied: %s)",
+                len(final_documents),
+                applied_fallback,
+            )
+
+            retriever_observation.update(
+                output={
+                    **build_documents_metadata(final_documents),
+                    "fallback_applied": applied_fallback,
+                }
+            )
 
         return {"documents": final_documents}
 
