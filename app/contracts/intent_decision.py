@@ -1,4 +1,4 @@
-"""Intent decision contract."""
+"""Intent decision contract definitions."""
 
 from enum import StrEnum
 
@@ -20,3 +20,5 @@ class IntentDecision(BaseModel):
 	intent_type: IntentType
 	confidence_score: float = Field(ge=0.0, le=1.0)
 
+
+__all__ = ["IntentDecision", "IntentType"]
