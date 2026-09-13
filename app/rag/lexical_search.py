@@ -31,8 +31,13 @@ class BM25LexicalSearcher:
         else:
             self._bm25 = None
 
-    def search(self, query: str, top_k: int = 25) -> List[RetrievedDocument]:
-        """Search documents using BM25 scoring and return top_k candidates."""
+    def search(
+        self,
+        query: str,
+        top_k: int = 25,
+        filter_criteria: Optional[dict] = None,
+    ) -> List[RetrievedDocument]:
+        """Search documents using BM25 scoring and return top_k candidates with optional metadata filtering."""
         if not self._bm25 or not self._documents:
             return []
 
@@ -44,15 +49,27 @@ class BM25LexicalSearcher:
 
         # Pair documents with scores
         scored_docs = []
+        filtered_docs = []
         for doc, score in zip(self._documents, scores):
-            if score > 0.0:  # Only return documents that have non-zero keyword match
-                # Create a copy with the score populated
+            if score > 0.0:
                 doc_copy = doc.model_copy(update={"score": float(score)})
                 scored_docs.append(doc_copy)
+                if self._matches_filter(doc_copy, filter_criteria):
+                    filtered_docs.append(doc_copy)
+
+        # If filter was provided and produced results, use them; otherwise fall back to all scored documents
+        active_pool = filtered_docs if (filter_criteria and filtered_docs) else scored_docs
 
         # Sort descending by BM25 score
-        scored_docs.sort(key=lambda d: d.score or 0.0, reverse=True)
-        return scored_docs[:top_k]
+        active_pool.sort(key=lambda d: d.score or 0.0, reverse=True)
+        return active_pool[:top_k]
+
+    @staticmethod
+    def _matches_filter(doc: RetrievedDocument, filter_criteria: Optional[dict]) -> bool:
+        if not filter_criteria:
+            return True
+        meta = doc.metadata.model_dump()
+        return all(meta.get(k) == v for k, v in filter_criteria.items())
 
 
 __all__ = ["BM25LexicalSearcher"]

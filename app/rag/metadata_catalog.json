@@ -1,0 +1,49 @@
+{
+  "business-and-registration-documents": [
+    "certificate-of-incorporation",
+    "gst-registration-certificate",
+    "udyam-registration-certificate"
+  ],
+  "food-and-public-distribution-documents": [
+    "ration-card"
+  ],
+  "health-related-documents": [
+    "abha-health-account",
+    "disability-udid-certificate",
+    "mother-and-child-protection-card"
+  ],
+  "caste-documents": [
+    "sc-caste-certificate",
+    "st-caste-certificate",
+    "obc-caste-certificate"
+  ],
+  "income-documents": [
+    "pan-card",
+    "income-certificate-goa",
+    "ews-certificate",
+    "income-tax-return-and-related-forms"
+  ],
+  "vehicle-documents": [
+    "vehicle-registration-certificate-rc",
+    "driving-license"
+  ],
+  "travel-immigration-documents": [
+    "indian-passport",
+    "oci-documents",
+    "visa-for-entering-india"
+  ],
+  "identity-documents": [
+    "aadhaar-card",
+    "voter-id-epic"
+  ],
+  "civil-registration-documents": [
+    "adoption-order-adoption-deed",
+    "birth-death-stillbirth-certificates",
+    "marriage-certificate-divorce-decree"
+  ],
+  "residence-documents": [
+    "domicile-certificate",
+    "residence-certificate",
+    "residential-certificate"
+  ]
+}

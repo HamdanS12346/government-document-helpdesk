@@ -133,8 +133,13 @@ class VectorStoreRetriever:
                 exc,
             )
 
-    def search(self, query: str, top_k: int = 25) -> List[RetrievedDocument]:
-        """Retrieve top_k documents via dense semantic similarity."""
+    def search(
+        self,
+        query: str,
+        top_k: int = 25,
+        where: Optional[Dict[str, Any]] = None,
+    ) -> List[RetrievedDocument]:
+        """Retrieve top_k documents via dense semantic similarity with optional metadata filtering."""
         if not query.strip():
             return []
 
@@ -146,11 +151,22 @@ class VectorStoreRetriever:
             if collection is not None:
                 total_count = collection.count() if hasattr(collection, "count") else len(self._documents) or 25
                 n_res = min(top_k, max(1, total_count))
-                results = collection.query(
-                    query_embeddings=[query_embedding],
-                    n_results=n_res,
-                    include=["documents", "metadatas", "distances"],
-                )
+                query_kwargs: Dict[str, Any] = {
+                    "query_embeddings": [query_embedding],
+                    "n_results": n_res,
+                    "include": ["documents", "metadatas", "distances"],
+                }
+                if where:
+                    query_kwargs["where"] = where
+
+                results = collection.query(**query_kwargs)
+
+                # Zero-recall circuit breaker: if filtered search produced 0 hits, retry unconstrained
+                if where and (not results or not results.get("ids") or not results["ids"][0]):
+                    logger.info("Filtered vector search returned 0 results; falling back to unconstrained search.")
+                    query_kwargs.pop("where", None)
+                    results = collection.query(**query_kwargs)
+
                 retrieved = []
                 if (
                     results
@@ -196,10 +212,22 @@ class VectorStoreRetriever:
                 if q_norm > 0:
                     q_emb = q_emb / q_norm
                 sims = np.dot(self._fallback_embeddings, q_emb)
-                top_indices = np.argsort(sims)[::-1][:top_k]
+                sorted_indices = np.argsort(sims)[::-1]
+
+                # Filter by metadata if where is provided
+                matching_indices = []
+                for idx in sorted_indices:
+                    doc = self._documents[idx]
+                    if self._matches_in_memory_where(doc, where):
+                        matching_indices.append(idx)
+
+                # Fallback if filtered in-memory search has 0 matches
+                if where and not matching_indices:
+                    matching_indices = list(sorted_indices)
+
                 return [
                     self._documents[idx].model_copy(update={"score": float(sims[idx])})
-                    for idx in top_indices
+                    for idx in matching_indices[:top_k]
                 ]
 
         except Exception as exc:
@@ -208,20 +236,40 @@ class VectorStoreRetriever:
 
         return []
 
+    @staticmethod
+    def _matches_in_memory_where(doc: RetrievedDocument, where: Optional[Dict[str, Any]]) -> bool:
+        if not where:
+            return True
+        meta = doc.metadata.model_dump()
+        if "$and" in where:
+            return all(meta.get(k) == v for condition in where["$and"] for k, v in condition.items())
+        return all(meta.get(k) == v for k, v in where.items())
+
     def get_all_documents(self, limit: Optional[int] = None) -> List[RetrievedDocument]:
-        """Fetch all documents directly from Chroma Cloud."""
+        """Fetch all documents directly from Chroma Cloud with pagination to respect quota limits."""
         collection = self._get_collection()
         if collection is None:
             return self._documents
 
         try:
-            kwargs = {"include": ["documents", "metadatas"]}
-            if limit:
-                kwargs["limit"] = limit
-            data = collection.get(**kwargs)
+            total_count = collection.count() if hasattr(collection, "count") else 0
+            if total_count == 0:
+                return self._documents
+
+            target_total = min(limit, total_count) if limit else total_count
+            batch_size = 300  # Chroma Cloud enforces max 300 per Get request
             docs = []
-            if data and data.get("ids"):
-                for doc_id, text, meta in zip(data["ids"], data.get("documents", []), data.get("metadatas", [])):
+
+            for offset in range(0, target_total, batch_size):
+                current_limit = min(batch_size, target_total - offset)
+                batch = collection.get(
+                    limit=current_limit,
+                    offset=offset,
+                    include=["documents", "metadatas"],
+                )
+                if not batch or not batch.get("ids"):
+                    break
+                for doc_id, text, meta in zip(batch["ids"], batch.get("documents", []), batch.get("metadatas", [])):
                     docs.append(
                         RetrievedDocument(
                             id=doc_id,
