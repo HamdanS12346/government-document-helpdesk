@@ -31,3 +31,6 @@ Thumbs.db
 
 # Local Folders for Managing specs
 .specs
+
+# Generated evaluation reports
+evaluation/reports/
