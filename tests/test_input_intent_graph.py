@@ -1,7 +1,7 @@
 import pytest
 
 from app.contracts.intent_decision import IntentDecision
-from app.contracts.normalized_input import NormalizedInput, PDFContent
+from app.contracts.normalized_input import ImageContent, NormalizedInput, PDFContent
 from app.graph.graph import build_input_intent_graph, invoke_input_intent_graph
 from app.input_processing.schemas import InputProcessingResult
 
@@ -24,7 +24,13 @@ def _successful_result() -> InputProcessingResult:
         success=True,
         normalized_input=NormalizedInput(
             user_query="What does this notice mean?",
-            image_content=[],
+            image_content=[
+                ImageContent(
+                    image_name="notice.png",
+                    extracted_text="Full extracted image text stays outside intent query.",
+                    preview="Photo preview: appointment date is listed.",
+                )
+            ],
             pdf_content=[
                 PDFContent(
                     pdf_name="notice.pdf",
@@ -34,6 +40,7 @@ def _successful_result() -> InputProcessingResult:
             ],
             combined_text=(
                 "<USER_QUERY>\nWhat does this notice mean?\n\n"
+                "<IMAGE_CONTENT>\nFull extracted image text stays outside intent query.\n\n"
                 "<PDF_CONTENT>\nFull extracted PDF text stays outside intent query."
             ),
         ),
@@ -53,8 +60,27 @@ def test_input_intent_graph_classifies_successful_normalized_input() -> None:
     assert result["normalized_input"] == state["normalized_input"]
     assert result["intent_decision"].intent_type == "document_info"
     assert result["intent_decision"].query == classifier.query
+    assert "Image Preview 1:" in classifier.query
+    assert "Photo preview: appointment date is listed." in classifier.query
     assert "PDF Preview 1:" in classifier.query
+    assert "Renewal notice: submit documents by June 30." in classifier.query
+    assert "Full extracted image text" not in classifier.query
     assert "Full extracted PDF text" not in classifier.query
+    assert "<IMAGE_CONTENT>" not in classifier.query
+    assert "<PDF_CONTENT>" not in classifier.query
+
+
+def test_input_intent_graph_runs_with_only_normalized_input() -> None:
+    classifier = FakeClassifier()
+    graph = build_input_intent_graph(classifier)
+    state = {"normalized_input": _successful_result().normalized_input}
+
+    result = graph.invoke(state)
+
+    assert set(result) == {"normalized_input", "intent_decision"}
+    assert result["intent_decision"].query == classifier.query
+    assert "Recent Conversation:" not in classifier.query
+    assert "Older Conversation Summary:" not in classifier.query
 
 
 def test_input_intent_graph_bridge_uses_input_processor_state_update() -> None:
