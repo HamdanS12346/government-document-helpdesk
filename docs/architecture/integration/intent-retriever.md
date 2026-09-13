@@ -7,8 +7,7 @@ existing Input Processor and Intent Classifier graph slice to the Retriever.
 
 The goal for this phase is not to finish the whole helpdesk workflow.
 
-The goal is to extend the graph far enough that a frontend chat request can
-flow through:
+The current integrated slice lets a frontend chat request flow through:
 
 ```text
 Frontend chat
@@ -20,6 +19,8 @@ Frontend chat
   -> routing
   -> Retriever, only for document_info
   -> documents
+  -> Context Builder
+  -> retrieved_context
 ```
 
 For now, `general_chat` and `ambiguous` are placeholder branches because the
@@ -31,6 +32,7 @@ The terminal debugging output for the connected path should show:
 Normalized input
 Intent decision
 Documents
+Retrieved context
 ```
 
 The API response can remain focused on the current input-processing payload
@@ -54,9 +56,9 @@ START
   -> END
 ```
 
-The graph assumes input processing has already completed.
+Both graph bridges assume input processing has already completed.
 
-The bridge function:
+The preserved input-intent bridge function:
 
 ```python
 invoke_input_intent_graph(result, classifier, messages=None, conversation_summary=None)
@@ -71,16 +73,19 @@ does the following:
 5. Invokes the graph.
 6. Returns state containing `normalized_input` and `intent_decision`.
 
-The FastAPI route currently does this after successful input processing:
+The active FastAPI route now does this after successful input processing:
 
 ```text
 process_input(request)
   -> print normalized_input
-  -> invoke_input_intent_graph(...)
+  -> invoke_intent_retriever_graph(...)
   -> print intent_decision
+  -> print documents, when present
+  -> print retrieved_context, when present
 ```
 
-The current implementation stops there.
+The document-info branch now stops after `retrieved_context`; Response Node
+generation is still later work.
 
 ## Existing State Contract
 
@@ -104,11 +109,12 @@ For this phase, only these fields are required:
 normalized_input
 intent_decision
 documents
+retrieved_context
 messages, optional and usually empty for now
 conversation_summary, optional and usually absent for now
 ```
 
-No state schema change is required to store retriever output.
+No state schema change is required to store retriever or context-builder output.
 
 `documents` already exists as:
 
@@ -121,6 +127,14 @@ The retrieval contract describes the intended concrete item type as:
 ```text
 List[RetrievedDocument]
 ```
+
+The Context Builder consumes `documents` and writes:
+
+```python
+{"retrieved_context": retrieved_context}
+```
+
+where `retrieved_context` follows the `RetrievedContext` response contract.
 
 ## Intent Decision Contract
 
@@ -363,7 +377,7 @@ The route table for this phase:
 
 | Intent | Route | Status |
 | --- | --- | --- |
-| `document_info` | Retriever Node | Implement now |
+| `document_info` | Retriever Node -> Context Builder Node | Implemented |
 | `general_chat` | Response placeholder | Placeholder |
 | `ambiguous` | Clarification placeholder | Placeholder |
 
@@ -372,6 +386,7 @@ Expected behavior:
 ```text
 document_info
   -> retriever
+  -> context_builder
   -> END for now
 
 general_chat
@@ -402,7 +417,11 @@ name.
 Recommended function:
 
 ```python
-build_intent_retriever_graph(classifier, retriever=retriever_node)
+build_intent_retriever_graph(
+    classifier,
+    retriever=retriever_node,
+    context_builder=context_builder_node,
+)
 ```
 
 Recommended bridge:
@@ -412,6 +431,7 @@ invoke_intent_retriever_graph(
     result,
     classifier,
     retriever=retriever_node,
+    context_builder=context_builder_node,
     messages=None,
     conversation_summary=None,
 )
@@ -429,7 +449,7 @@ route_after_intent:
   general_chat  -> general_chat_placeholder
   ambiguous     -> clarification_placeholder
 
-retriever -> END
+retriever -> context_builder -> END
 general_chat_placeholder -> END
 clarification_placeholder -> END
 ```
@@ -472,6 +492,7 @@ Recommended constants:
 ```python
 INTENT_CLASSIFIER_NODE = "intent_classifier"
 RETRIEVER_NODE = "retriever"
+CONTEXT_BUILDER_NODE = "context_builder"
 GENERAL_CHAT_PLACEHOLDER_NODE = "general_chat_placeholder"
 CLARIFICATION_PLACEHOLDER_NODE = "clarification_placeholder"
 ```
@@ -524,11 +545,15 @@ Intent decision:
 
 Documents:
 <documents json or jsonable dump>
+
+Retrieved context:
+<retrieved_context json or jsonable dump>
 ```
 
-Only print `Documents` when the key exists.
+Only print `Documents` and `Retrieved context` when those keys exist.
 
-For `general_chat` and `ambiguous`, the graph should end without `documents`.
+For `general_chat` and `ambiguous`, the graph should end without `documents` or
+`retrieved_context`.
 
 Expected terminal behavior:
 
@@ -537,6 +562,7 @@ document_info request:
   prints normalized_input
   prints intent_decision
   prints documents
+  prints retrieved_context
 
 general_chat request:
   prints normalized_input
@@ -572,16 +598,20 @@ Use fake classifiers and fake retriever nodes.
 Recommended graph tests:
 
 1. `document_info` routes to Retriever and writes `documents`.
-2. `general_chat` routes to the general chat placeholder and does not write
-   `documents`.
-3. `ambiguous` routes to the clarification placeholder and does not write
-   `documents`.
-4. Missing `normalized_input` still fails before classification.
-5. Missing `intent_decision` in routing raises a clear error.
-6. Existing conversation fields are preserved in graph state.
-7. Retriever receives the same `normalized_input` object that came from input
+2. `document_info` routes from Retriever to Context Builder and writes
+   `retrieved_context`.
+3. `general_chat` routes to the general chat placeholder and does not write
+   `documents` or `retrieved_context`.
+4. `ambiguous` routes to the clarification placeholder and does not write
+   `documents` or `retrieved_context`.
+5. Missing `normalized_input` still fails before classification.
+6. Missing `intent_decision` in routing raises a clear error.
+7. Existing conversation fields are preserved in graph state.
+8. Retriever receives the same `normalized_input` object that came from input
    processing.
-8. Retriever uses `normalized_input.combined_text`, not
+9. Context Builder receives the same state, including `documents`, from the
+   Retriever branch.
+10. Retriever uses `normalized_input.combined_text`, not
    `intent_decision.query`, as its retrieval input.
 
 The eighth test may be easiest at the RetrieverPipeline level with a fake query
@@ -603,8 +633,8 @@ intent_decision.query
 Recommended API tests:
 
 1. Patch input processing to return a successful `InputProcessingResult`.
-2. Patch the graph bridge to return `normalized_input`, `intent_decision`, and
-   fake `documents`.
+2. Patch the graph bridge to return `normalized_input`, `intent_decision`,
+   fake `documents`, and fake `retrieved_context`.
 3. Assert `/chat` still returns the current public response shape.
 4. Assert graph bridge errors return the existing classification error payload.
 
@@ -623,7 +653,8 @@ Intent Classifier creates intent_decision
 Router sends document_info to Retriever
 Retriever queries Chroma/vector + BM25 path
 Retriever writes documents
-FastAPI terminal prints normalized_input, intent_decision, documents
+Context Builder writes retrieved_context
+FastAPI terminal prints normalized_input, intent_decision, documents, retrieved_context
 ```
 
 Manual document-info query example:
@@ -635,7 +666,7 @@ What documents are required for PAN application?
 Expected route:
 
 ```text
-document_info -> retriever -> END
+document_info -> retriever -> context_builder -> END
 ```
 
 Manual general-chat query example:
@@ -675,9 +706,12 @@ Recommended order:
 7. Update the RetrieverPipeline to rewrite from `combined_text`.
 8. Update `/chat` to invoke the new graph bridge.
 9. Print `documents` in the terminal when present.
-10. Add routing tests with fake classifier and fake retriever.
-11. Add retriever query-source test with a fake query rewriter.
-12. Run focused tests first, then run `pytest`.
+10. Wire `retriever -> context_builder -> END`.
+11. Print `retrieved_context` in the terminal when present.
+12. Add routing tests with fake classifier, fake retriever, and fake context
+    builder.
+13. Add retriever query-source test with a fake query rewriter.
+14. Run focused tests first, then run `pytest`.
 
 ## Boundary Rules
 

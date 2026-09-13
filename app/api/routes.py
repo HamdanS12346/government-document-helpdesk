@@ -62,6 +62,15 @@ async def chat(
                     ),
                     flush=True,
                 )
+            if "retrieved_context" in graph_state:
+                print("\nRetrieved context:", flush=True)
+                print(
+                    json.dumps(
+                        jsonable_encoder(graph_state["retrieved_context"]),
+                        indent=2,
+                    ),
+                    flush=True,
+                )
         else:
             print(result.model_dump_json(indent=2))
     except Exception:

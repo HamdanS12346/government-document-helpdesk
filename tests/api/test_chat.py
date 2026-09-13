@@ -172,6 +172,28 @@ def test_chat_prints_documents_when_graph_state_contains_documents(
                     "score": 0.91,
                 }
             ],
+            "retrieved_context": {
+                "formatted_context": (
+                    "[Document 1]\n"
+                    "Document: pan-card\n"
+                    "Category: identity-documents\n"
+                    "Content:\n"
+                    "PAN application requires proof of identity."
+                ),
+                "sources": [
+                    {
+                        "index": 1,
+                        "chunk_id": "identity-documents__pan-card__chunk-0001",
+                        "document_name": "pan-card",
+                        "score": 0.91,
+                    }
+                ],
+                "total_documents_retrieved": 1,
+                "documents_used": 1,
+                "has_relevant_documents": True,
+                "truncated": False,
+                "fallback_applied": False,
+            },
         }
 
     monkeypatch.setattr(
@@ -196,9 +218,12 @@ def test_chat_prints_documents_when_graph_state_contains_documents(
         "normalized_input",
     }
     assert "documents" not in payload
+    assert "retrieved_context" not in payload
     output = capsys.readouterr().out
     assert "Documents:" in output
     assert '"id": "identity-documents__pan-card__chunk-0001"' in output
+    assert "Retrieved context:" in output
+    assert '"formatted_context": "[Document 1]\\nDocument: pan-card' in output
 
 
 @pytest.mark.parametrize("intent_type", ["general_chat", "ambiguous"])
@@ -238,10 +263,12 @@ def test_chat_accepts_non_document_graph_states_without_documents(
         "normalized_input",
     }
     assert "documents" not in payload
+    assert "retrieved_context" not in payload
     output = capsys.readouterr().out
     assert "Intent decision:" in output
     assert f'"intent_type": "{intent_type}"' in output
     assert "Documents:" not in output
+    assert "Retrieved context:" not in output
 
 
 def test_chat_masks_pii_in_text_only_input() -> None:
