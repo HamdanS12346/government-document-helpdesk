@@ -58,28 +58,23 @@ class RetrieverPipeline:
         else:
             norm_input = NormalizedInput(user_query=str(raw_norm_input or ""))
 
-        user_query = norm_input.user_query
+        retrieval_input = norm_input.combined_text.strip() or norm_input.user_query
         messages = state.get("messages", [])
         summary = state.get("conversation_summary")
 
-        # Extract attachment previews
-        previews = []
-        for img in norm_input.image_content:
-            if getattr(img, "preview", None):
-                previews.append(f"Image {img.image_name}: {img.preview}")
-        for pdf in norm_input.pdf_content:
-            if getattr(pdf, "preview", None):
-                previews.append(f"PDF {pdf.pdf_name}: {pdf.preview}")
-
         # 2. Query Rewriting
         rewritten_query = self.query_rewriter.rewrite(
-            user_query=user_query,
+            user_query=retrieval_input,
             messages=messages,
             conversation_summary=summary,
-            attachment_previews=previews,
+            attachment_previews=[],
         )
 
-        logger.info("Original query: '%s' -> Rewritten query: '%s'", user_query, rewritten_query)
+        logger.info(
+            "Retrieval input: '%s' -> Rewritten query: '%s'",
+            retrieval_input,
+            rewritten_query,
+        )
 
         # 3. High-Confidence Metadata Filtering
         meta_decision = self.metadata_extractor.extract(rewritten_query)
