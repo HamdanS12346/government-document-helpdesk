@@ -42,23 +42,25 @@ Implemented:
 response generation without retrieval, and `ambiguous` should route toward
 clarification.
 
-### 2. Provisional normalized-input contract
+### 2. Final normalized-input contract
 
 File: `app/contracts/normalized_input.py`
 
-The current provisional model contains:
+The Input Processor now provides:
 
 ```text
 NormalizedInput
 ├── user_query: str
-├── image_preview: list
-├── pdf_preview: list
-└── context: Any | None
+├── image_content: list[ImageContent]
+├── pdf_content: list[PDFContent]
+└── combined_text: str
 ```
 
-The preview lists currently use flexible item types because the Input Processor owner
-has not yet confirmed whether each item will be a string or a structured object. The
-exact item schema must be confirmed before final integration.
+Each image/PDF content item contains its source name, full extracted text, and a
+deterministic preview. The intent classifier uses only the preview fields. Full
+`combined_text` remains available to downstream retrieval and response workflows and
+is intentionally excluded from the classification query to keep it bounded and avoid
+passing unnecessary document text to the classifier.
 
 ### 3. Shared graph state
 
@@ -86,18 +88,17 @@ File: `app/intent/query_builder.py`
 `build_classification_query()` constructs the query given to the classifier from:
 
 1. `normalized_input.user_query`.
-2. Every item in `normalized_input.image_preview`.
-3. Every item in `normalized_input.pdf_preview`.
-4. `normalized_input.context`, when present.
-5. The latest 10 entries from `messages`.
-6. `conversation_summary`, when present.
+2. The `preview` and source name from every item in `normalized_input.image_content`.
+3. The `preview` and source name from every item in `normalized_input.pdf_content`.
+4. The latest 10 entries from `messages`.
+5. `conversation_summary`, when present.
 
 The latest 10 messages represent 5 human/agent conversation cycles. Older turns are
 represented by the summary.
 
 The query builder also:
 
-- Handles empty previews and optional context.
+- Handles empty preview lists.
 - Supports dictionary messages with `role` and `content`.
 - Supports message-like objects with `type` and `content`.
 - Limits each attachment preview to 4,000 characters.
@@ -122,8 +123,10 @@ class IntentClassifier(Protocol):
 This keeps the LLM/provider implementation separate from state orchestration and makes
 unit tests independent of external APIs.
 
-An actual OpenAI/LangChain implementation has not yet been added. The provider should
-return structured data that can be validated as an `IntentDecision`.
+`OpenAIIntentClassifier` is implemented in `app/intent/classifier.py` using
+`ChatOpenAI.with_structured_output(IntentDecision)`. It defaults to `gpt-4o-mini`,
+uses `OPENAI_API_KEY` through the LangChain client, and accepts an injected model for
+tests. Blank queries and malformed provider output produce clear validation errors.
 
 ### 6. Intent classifier node
 
@@ -174,29 +177,7 @@ The current result is 4 passing tests.
 When the Input Processor owner confirms the final contract, make these changes before
 integration:
 
-### 1. Update the normalized-input model
-
-Update `app/contracts/normalized_input.py` to use the agreed exact names and types.
-Possible changes include:
-
-- `image_preview` becoming `image_previews`.
-- `pdf_preview` becoming `pdf_previews`.
-- Preview list items changing from strings to typed preview models.
-- `context` becoming a string, list, or structured context model.
-- Empty values being represented by `[]`, `None`, or another agreed convention.
-
-Do not add compatibility aliases without coordinating the shared contract. If a gradual
-migration is required, use an explicit compatibility layer and tests.
-
-### 2. Update the query builder in one location
-
-Change only `app/intent/query_builder.py` for the mapping from normalized input to the
-classifier query. Keep the node interface unchanged where possible.
-
-If previews become structured objects, render only the agreed fields and preserve the
-4,000-character bound per preview. Add tests for the final item shape.
-
-### 3. Update fixtures and contract tests
+### 1. Update fixtures and contract tests
 
 Update `tests/test_intent_classifier.py` and add fixtures matching the final
 `NormalizedInput` model. Verify:
@@ -207,25 +188,15 @@ Update `tests/test_intent_classifier.py` and add fixtures matching the final
 - Empty or missing context.
 - Preview text and metadata are rendered correctly.
 
-### 4. Resolve context ownership
+### 2. Resolve context ownership
 
-Confirm whether `NormalizedInput.context` duplicates or complements graph-level
-`messages` and `conversation_summary`.
+Graph-level `messages` represent the latest conversation turns, and
+`conversation_summary` represents older conversation history. Attachment-derived text
+belongs to `NormalizedInput`; the classifier consumes its bounded previews only.
 
-Recommended responsibility:
+## Provider Integration
 
-- `NormalizedInput.context`: context extracted or normalized directly from the current
-  input and attachments.
-- `messages`: latest 10 conversation messages.
-- `conversation_summary`: older conversation history.
-
-If the team assigns a different meaning, update the query builder and documentation so
-the same context is not passed twice or omitted.
-
-## Provider Integration Still Needed
-
-Add a concrete classifier implementation after the model/provider configuration is
-agreed. It should:
+The concrete provider is implemented and should continue to:
 
 1. Read the model configuration from the existing settings/environment pattern.
 2. Use `OPENAI_API_KEY` only through the configured client.
@@ -346,9 +317,8 @@ and context building.
 
 ## Current Limitations
 
-- The final Input Processor schema is not confirmed.
-- Preview item structures are intentionally flexible.
-- No concrete LLM provider implementation has been added.
+- The finalized Input Processor schema is now used by the classifier.
+- The classifier uses bounded attachment previews instead of full extracted text.
 - Graph registration and routing are not yet connected.
 - The intent evaluation dataset is not available on this branch.
 - The current node expects the caller to inject a classifier instance.

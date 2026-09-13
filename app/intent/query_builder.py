@@ -54,9 +54,6 @@ def build_classification_query(
     """Build a deterministic, bounded classification query."""
 
     sections = [f"User Query:\n{normalized_input.user_query.strip()}"]
-    if normalized_input.combined_text:
-        sections.append(f"Normalized Attachment Text:\n{normalized_input.combined_text}")
-
     sections.extend(_render_items(normalized_input.image_content, "Image Preview"))
     sections.extend(_render_items(normalized_input.pdf_content, "PDF Preview"))
 

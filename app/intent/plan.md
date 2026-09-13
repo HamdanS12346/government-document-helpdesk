@@ -80,7 +80,8 @@ while the summary preserves older intent and facts after turns leave the message
 
 ### 4. Implement classification separately from orchestration
 
-Status: injectable `IntentClassifier` protocol implemented; provider integration remains.
+Status: injectable protocol and `OpenAIIntentClassifier` provider implemented and
+covered by focused tests.
 
 Keep the LLM/provider call separate from the LangGraph node function:
 
