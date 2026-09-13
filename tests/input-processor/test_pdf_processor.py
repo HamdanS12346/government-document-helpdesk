@@ -695,7 +695,7 @@ def test_process_text_based_pdf_builds_pdf_content_without_extractor(
     )
 
 
-def test_text_based_pdf_preview_limits_each_page_to_200_characters(
+def test_text_based_pdf_preview_limits_each_page_to_500_characters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     extractor = CountingPDFExtractor(
@@ -931,7 +931,7 @@ def test_scanned_pdf_path_masks_pii_after_ocr() -> None:
     assert "9876543210" not in result.extracted_text
 
 
-def test_scanned_pdf_preview_limits_each_ocr_page_to_200_characters() -> None:
+def test_scanned_pdf_preview_limits_each_ocr_page_to_500_characters() -> None:
     ocr_provider = StaticOCRProvider(
         [
             OCRResult(
@@ -1219,7 +1219,7 @@ def test_mixed_pdf_path_treats_ai_directed_ocr_text_as_document_data() -> None:
     assert not hasattr(result, "developer_instruction")
 
 
-def test_mixed_pdf_preview_limits_machine_and_ocr_pages_to_200_characters() -> None:
+def test_mixed_pdf_preview_limits_machine_and_ocr_pages_to_500_characters() -> None:
     ocr_provider = StaticOCRProvider(
         [
             OCRResult(

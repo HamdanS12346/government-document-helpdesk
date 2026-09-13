@@ -1,7 +1,7 @@
 """Deterministic preview helpers for normalized attachment content."""
 
 IMAGE_PREVIEW_CHARACTER_LIMIT = 500
-PDF_PREVIEW_CHARACTERS_PER_PAGE = 200
+PDF_PREVIEW_CHARACTERS_PER_PAGE = 500
 
 
 def build_image_preview(extracted_text: str) -> str:

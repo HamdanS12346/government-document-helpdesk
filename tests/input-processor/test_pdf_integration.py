@@ -15,6 +15,7 @@ from app.input_processing.pdf_processor import (
     get_pdf_page_count,
     process_pdf_attachment,
 )
+from app.input_processing.preview import PDF_PREVIEW_CHARACTERS_PER_PAGE
 from app.input_processing.schemas import Attachment, InputModality, ValidatedAttachment
 
 
@@ -91,7 +92,9 @@ def test_pdf_processor_builds_pdf_content_with_real_text_pdf() -> None:
     assert result.pdf_content is not None
     assert result.pdf_content.pdf_name == "synthetic-text.pdf"
     assert "Fictional certificate request" in result.pdf_content.extracted_text
-    assert result.pdf_content.preview == result.pdf_content.extracted_text[:200]
+    assert result.pdf_content.preview == result.pdf_content.extracted_text[
+        :PDF_PREVIEW_CHARACTERS_PER_PAGE
+    ]
 
 
 def test_pdf_processor_returns_controlled_failure_for_real_invalid_pdf_fixture() -> None:
