@@ -34,6 +34,23 @@ def fake_intent_classifier(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda: FakeIntentClassifier(),
     )
 
+    def fake_invoke_intent_retriever_graph(
+        result: InputProcessingResult,
+        classifier: object,
+    ) -> dict[str, IntentDecision]:
+        assert result.normalized_input is not None
+        return {
+            "intent_decision": classifier.classify(
+                result.normalized_input.combined_text
+            )
+        }
+
+    monkeypatch.setattr(
+        routes,
+        "invoke_intent_retriever_graph",
+        fake_invoke_intent_retriever_graph,
+    )
+
 
 def test_chat_allows_local_frontend_origin() -> None:
     client = TestClient(app)
@@ -76,13 +93,13 @@ def test_chat_accepts_text_only_input() -> None:
     }
 
 
-def test_chat_invokes_intent_graph_after_successful_input(
+def test_chat_invokes_intent_retriever_graph_after_successful_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured_result: InputProcessingResult | None = None
     captured_classifier: object | None = None
 
-    def fake_invoke_input_intent_graph(
+    def fake_invoke_intent_retriever_graph(
         result: InputProcessingResult,
         classifier: object,
     ) -> dict[str, IntentDecision]:
@@ -99,8 +116,8 @@ def test_chat_invokes_intent_graph_after_successful_input(
 
     monkeypatch.setattr(
         routes,
-        "invoke_input_intent_graph",
-        fake_invoke_input_intent_graph,
+        "invoke_intent_retriever_graph",
+        fake_invoke_intent_retriever_graph,
     )
     client = TestClient(app)
 
@@ -127,6 +144,104 @@ def test_chat_prints_normalized_input_and_intent_decision(
     assert '"user_query": "Please explain this notice."' in output
     assert "Intent decision:" in output
     assert '"intent_type": "document_info"' in output
+
+
+def test_chat_prints_documents_when_graph_state_contains_documents(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_invoke_intent_retriever_graph(
+        result: InputProcessingResult,
+        classifier: object,
+    ) -> dict[str, object]:
+        return {
+            "intent_decision": IntentDecision(
+                query="What documents are required for PAN application?",
+                intent_type="document_info",
+                confidence_score=0.92,
+            ),
+            "documents": [
+                {
+                    "id": "identity-documents__pan-card__chunk-0001",
+                    "text_content": "PAN application requires proof of identity.",
+                    "metadata": {
+                        "document_id": "identity-documents__pan-card",
+                        "category": "identity-documents",
+                        "document_name": "pan-card",
+                    },
+                    "score": 0.91,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        routes,
+        "invoke_intent_retriever_graph",
+        fake_invoke_intent_retriever_graph,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/chat",
+        data={"message": "What documents are required for PAN application?"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {
+        "success",
+        "message",
+        "attachment_statuses",
+        "warnings",
+        "normalized_input",
+    }
+    assert "documents" not in payload
+    output = capsys.readouterr().out
+    assert "Documents:" in output
+    assert '"id": "identity-documents__pan-card__chunk-0001"' in output
+
+
+@pytest.mark.parametrize("intent_type", ["general_chat", "ambiguous"])
+def test_chat_accepts_non_document_graph_states_without_documents(
+    intent_type: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_invoke_intent_retriever_graph(
+        result: InputProcessingResult,
+        classifier: object,
+    ) -> dict[str, IntentDecision]:
+        return {
+            "intent_decision": IntentDecision(
+                query="Hello",
+                intent_type=intent_type,
+                confidence_score=0.88,
+            )
+        }
+
+    monkeypatch.setattr(
+        routes,
+        "invoke_intent_retriever_graph",
+        fake_invoke_intent_retriever_graph,
+    )
+    client = TestClient(app)
+
+    response = client.post("/chat", data={"message": "Hello"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {
+        "success",
+        "message",
+        "attachment_statuses",
+        "warnings",
+        "normalized_input",
+    }
+    assert "documents" not in payload
+    output = capsys.readouterr().out
+    assert "Intent decision:" in output
+    assert f'"intent_type": "{intent_type}"' in output
+    assert "Documents:" not in output
 
 
 def test_chat_masks_pii_in_text_only_input() -> None:
@@ -359,9 +474,9 @@ def test_chat_returns_safe_input_processor_failures(
         result: InputProcessingResult,
         classifier: object,
     ) -> dict[str, IntentDecision]:
-        raise AssertionError("intent graph should not run after failed input")
+        raise AssertionError("intent-retriever graph should not run after failed input")
 
-    monkeypatch.setattr(routes, "invoke_input_intent_graph", fail_if_invoked)
+    monkeypatch.setattr(routes, "invoke_intent_retriever_graph", fail_if_invoked)
     client = TestClient(app)
 
     response = client.post(
@@ -420,17 +535,19 @@ def test_chat_hides_unexpected_exception_details(
     assert "provider.py" not in response_text
 
 
-def test_chat_returns_safe_response_when_intent_classification_fails(
+def test_chat_returns_safe_response_when_intent_retriever_graph_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FailingIntentClassifier:
-        def classify(self, query: str) -> IntentDecision:
-            raise RuntimeError("OPENAI_API_KEY secret provider traceback")
+    def failing_graph_bridge(
+        result: InputProcessingResult,
+        classifier: object,
+    ) -> dict[str, object]:
+        raise RuntimeError("OPENAI_API_KEY secret provider traceback")
 
     monkeypatch.setattr(
         routes,
-        "_build_intent_classifier",
-        lambda: FailingIntentClassifier(),
+        "invoke_intent_retriever_graph",
+        failing_graph_bridge,
     )
     client = TestClient(app)
 

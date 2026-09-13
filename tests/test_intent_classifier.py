@@ -96,6 +96,23 @@ def test_system_prompt_keeps_uploaded_government_like_documents_in_document_info
     )
 
 
+def test_system_prompt_treats_unresolved_document_references_as_ambiguous():
+    assert '"this document", "that document", "it", "this", or' in (
+        CLASSIFICATION_SYSTEM_PROMPT
+    )
+    assert "no attachment preview and no conversation context" in (
+        CLASSIFICATION_SYSTEM_PROMPT
+    )
+    assert 'User: "what\'s that document about"; no attachments; no prior context;' in (
+        CLASSIFICATION_SYSTEM_PROMPT
+    )
+    assert 'intent: ambiguous.' in CLASSIFICATION_SYSTEM_PROMPT
+    assert 'User: "what\'s this document about"; attached PDF preview is present;' in (
+        CLASSIFICATION_SYSTEM_PROMPT
+    )
+    assert 'intent: document_info.' in CLASSIFICATION_SYSTEM_PROMPT
+
+
 def test_query_builder_uses_input_previews_and_conversation_context():
     normalized_input = NormalizedInput(
         user_query="Can I use this document?",
