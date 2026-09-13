@@ -1,15 +1,37 @@
 """Normalized input contract."""
 
-from typing import Any
+from pydantic import BaseModel, ConfigDict
 
-from pydantic import BaseModel, Field
+
+class ImageContent(BaseModel):
+    """Processed content extracted from one uploaded image."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    image_name: str
+    extracted_text: str
+    preview: str
+
+
+class PDFContent(BaseModel):
+    """Processed content extracted from one uploaded PDF."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pdf_name: str
+    extracted_text: str
+    preview: str
 
 
 class NormalizedInput(BaseModel):
-	"""Normalized user input consumed by downstream nodes."""
+    """Normalized user text and successfully processed attachments."""
 
-	user_query: str = Field(min_length=1)
-	image_preview: list[Any] = Field(default_factory=list)
-	pdf_preview: list[Any] = Field(default_factory=list)
-	context: Any | None = None
+    model_config = ConfigDict(extra="forbid")
 
+    user_query: str
+    image_content: list[ImageContent]
+    pdf_content: list[PDFContent]
+    combined_text: str
+
+
+__all__ = ["ImageContent", "NormalizedInput", "PDFContent"]

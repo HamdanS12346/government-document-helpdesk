@@ -2,7 +2,7 @@ from pydantic import ValidationError
 import pytest
 
 from app.contracts.intent_decision import IntentDecision
-from app.contracts.normalized_input import NormalizedInput
+from app.contracts.normalized_input import ImageContent, NormalizedInput, PDFContent
 from app.intent.node import classify_intent
 from app.intent.query_builder import build_classification_query
 
@@ -35,9 +35,21 @@ def test_intent_decision_validates_supported_values_and_confidence():
 def test_query_builder_uses_input_previews_and_conversation_context():
     normalized_input = NormalizedInput(
         user_query="Can I use this document?",
-        image_preview=["identity card preview"],
-        pdf_preview=["application requirements preview"],
-        context="The user is applying for a passport.",
+        image_content=[
+            ImageContent(
+                image_name="identity-card.jpg",
+                extracted_text="Identity card text",
+                preview="identity card preview",
+            )
+        ],
+        pdf_content=[
+            PDFContent(
+                pdf_name="requirements.pdf",
+                extracted_text="Application requirements text",
+                preview="application requirements preview",
+            )
+        ],
+        combined_text="The user is applying for a passport.",
     )
     messages = [{"role": "human", "content": f"turn {index}"} for index in range(12)]
 
@@ -58,7 +70,12 @@ def test_query_builder_uses_input_previews_and_conversation_context():
 
 
 def test_node_returns_validated_decision_with_constructed_query_only():
-    normalized_input = NormalizedInput(user_query="What documents do I need?")
+    normalized_input = NormalizedInput(
+        user_query="What documents do I need?",
+        image_content=[],
+        pdf_content=[],
+        combined_text="",
+    )
     classifier = FakeClassifier(
         IntentDecision(
             query="provider query",
