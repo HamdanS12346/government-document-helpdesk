@@ -8,6 +8,7 @@ langchain-openai
 langgraph
 openai
 cohere
+langfuse
 
 pydantic
 pydantic-settings

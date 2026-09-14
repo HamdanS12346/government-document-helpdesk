@@ -2,16 +2,24 @@
 
 from dataclasses import dataclass
 from functools import cache
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
-from app.graph.graph import invoke_input_intent_graph
+from app.graph.graph import invoke_intent_retriever_graph
 from app.input_processing.processors import process_input
 from app.input_processing.schemas import Attachment, InputProcessingResult, InputRequest
 from app.intent.classifier import OpenAIIntentClassifier
+from app.observability import flush_langfuse, start_observation
+from app.observability.metadata import (
+    build_chat_request_metadata,
+    build_graph_state_metadata,
+    build_input_processing_result_metadata,
+    build_input_request_metadata,
+)
 
 
 router = APIRouter()
@@ -32,33 +40,79 @@ async def chat(
     files: Annotated[list[UploadFile] | None, File()] = None,
 ) -> JSONResponse:
     """Process frontend chat input through the Input Processor boundary."""
-    try:
-        uploaded_files = await _read_uploaded_files(files or [])
-        attachments = _build_attachments(uploaded_files)
-        request = InputRequest(user_query=message, attachments=attachments)
-        result = process_input(request)
-        if result.success and result.normalized_input is not None:
-            print("Normalized input:", flush=True)
-            print(result.normalized_input.model_dump_json(indent=2), flush=True)
-            try:
-                graph_state = invoke_input_intent_graph(
-                    result,
-                    _build_intent_classifier(),
+    incoming_files = files or []
+    with start_observation(
+        "chat_request",
+        input=build_chat_request_metadata(message, incoming_files),
+    ) as trace:
+        try:
+            uploaded_files = await _read_uploaded_files(incoming_files)
+            attachments = _build_attachments(uploaded_files)
+            request = InputRequest(user_query=message, attachments=attachments)
+            with start_observation(
+                "input_processor",
+                input=build_input_request_metadata(request),
+            ) as input_observation:
+                result = process_input(request)
+                input_observation.update(
+                    output=build_input_processing_result_metadata(result)
                 )
-            except Exception:
-                return JSONResponse(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    content=_build_classification_error_payload(),
+            if result.success and result.normalized_input is not None:
+                print("Normalized input:", flush=True)
+                print(result.normalized_input.model_dump_json(indent=2), flush=True)
+                try:
+                    graph_state = invoke_intent_retriever_graph(
+                        result,
+                        _build_intent_classifier(),
+                    )
+                except Exception:
+                    trace.update(output={"status": "classification_error"})
+                    return JSONResponse(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        content=_build_classification_error_payload(),
+                    )
+                print("\nIntent decision:", flush=True)
+                print(graph_state["intent_decision"].model_dump_json(indent=2), flush=True)
+                if "documents" in graph_state:
+                    print("\nDocuments:", flush=True)
+                    print(
+                        json.dumps(
+                            jsonable_encoder(graph_state["documents"]),
+                            indent=2,
+                        ),
+                        flush=True,
+                    )
+                if "retrieved_context" in graph_state:
+                    print("\nRetrieved context:", flush=True)
+                    print(
+                        json.dumps(
+                            jsonable_encoder(graph_state["retrieved_context"]),
+                            indent=2,
+                        ),
+                        flush=True,
+                    )
+                trace.update(
+                    output={
+                        "status": "success",
+                        **build_graph_state_metadata(graph_state),
+                    }
                 )
-            print("\nIntent decision:", flush=True)
-            print(graph_state["intent_decision"].model_dump_json(indent=2), flush=True)
-        else:
-            print(result.model_dump_json(indent=2))
-    except Exception:
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content=_build_internal_error_payload(),
-        )
+            else:
+                print(result.model_dump_json(indent=2))
+                trace.update(
+                    output={
+                        "status": "input_failed",
+                        **build_input_processing_result_metadata(result),
+                    }
+                )
+        except Exception:
+            trace.update(output={"status": "system_error"})
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content=_build_internal_error_payload(),
+            )
+        finally:
+            flush_langfuse()
 
     return JSONResponse(
         status_code=status.HTTP_200_OK,
