@@ -18,6 +18,7 @@ langfuse
 chromadb
 faiss-cpu
 rank-bm25
+supabase
 
 pypdf
 pdfplumber
