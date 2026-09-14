@@ -7,6 +7,12 @@ from app.contracts.chat import (
     ChatStatus,
 )
 from app.contracts.intent_decision import IntentDecision
+from app.contracts.memory import (
+    ConversationMessage,
+    ConversationThread,
+    MemorySnapshot,
+    MessageRole,
+)
 from app.contracts.normalized_input import ImageContent, NormalizedInput, PDFContent
 from app.contracts.response import ContextSource, RetrievedContext
 from app.contracts.retrieval import ChunkMetadata, RetrievalOutput, RetrievedDocument
@@ -25,4 +31,9 @@ __all__ = [
     "RetrievalOutput",
     "RetrievedContext",
     "RetrievedDocument",
+    "MessageRole",
+    "ConversationMessage",
+    "ConversationThread",
+    "MemorySnapshot",
 ]
+
