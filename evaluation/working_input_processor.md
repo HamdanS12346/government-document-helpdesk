@@ -104,7 +104,7 @@ The adapter:
 
 This means the evaluation passes real fixture-derived files through the existing pipeline. It does not measure production OCR quality, and the current fixture directory does not contain dedicated corrupt, unreadable, oversized, or unsupported-format files for every invalid dataset case.
 
-## Metrics
+## Metrics and Separation of Concerns
 
 The evaluator is:
 
@@ -112,12 +112,22 @@ The evaluator is:
 evaluation/evaluators/input_processor/evaluator.py
 ```
 
+### Separation of Responsibilities
+- **Evaluator (`evaluator.py`)**: A pure, stateless scoring module that takes actual predictions and compares them to expected labels. It has no file I/O or fixture dependencies.
+- **Runner (`run_input_processor.py`)**: Responsible for dataset loading, loading real fixture bytes from `evaluation/fixtures/input_processor/`, wrapping requests into `Attachment` objects, executing `process_input()`, and passing results to the evaluator.
+
 It reports two separate accuracy values:
 
 ```text
 valid_accuracy = cases where actual success/failure matches expected validity / total cases
 modality_accuracy = cases where actual modality list matches expected modality list / total cases
 ```
+
+Current baseline scores on the 50 dataset cases:
+- `valid_accuracy`: **78.0%** (39 / 50 cases match)
+- `modality_accuracy`: **70.0%** (35 / 50 cases match)
+- `passed_cases`: **35** (both validity and modality match)
+- `failed_cases`: **15** (known dataset labeling differences, such as unsupported `.webp`/`.tif` in `IP-008`/`IP-040` and partial-success edge cases)
 
 The report also includes:
 
@@ -198,11 +208,21 @@ It stores:
 - A `case_passed` score for every case.
 - The case ID as the score comment.
 - The evaluation name and total case count as observation input.
-- Aggregate metrics and passed-case count as observation output.
-
-Raw case input, upload bytes, extracted document text, and private document content are not sent to Langfuse.
+- The entire evaluation report content (all metrics, case evaluations, and modality match details) as observation output.
 
 The reporter calls `flush()` after publishing so queued Langfuse events are sent before the process exits.
+
+### Publishing Existing Saved Reports
+
+You can also publish saved report files from `evaluation/reports/` directly to Langfuse without re-running the evaluation:
+
+```powershell
+# Publish all report files in evaluation/reports/
+.\.venv\Scripts\python.exe evaluation\langfuse_reporting.py
+
+# Or publish a specific report file:
+.\.venv\Scripts\python.exe evaluation\langfuse_reporting.py evaluation\reports\input_processor.json
+```
 
 ## Langfuse Configuration
 
@@ -222,28 +242,40 @@ Check configuration without printing secrets:
 .\.venv\Scripts\python.exe -c "import os; from dotenv import load_dotenv; load_dotenv(); print({name: bool(os.getenv(name)) for name in ['LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'LANGFUSE_BASE_URL']})"
 ```
 
-All three values must be present before using `--langfuse`.
+All three values must be present before using Langfuse publishing.
 
 ## Current Limitations
 
-- The dataset contains descriptive attachment content rather than actual upload bytes.
-- The fixture adapter provides deterministic modality/provider behavior.
-- The evaluation does not measure production OCR accuracy.
-- Dataset labels for unsupported extensions and partial-success cases need review.
-- Langfuse publishing requires valid project credentials and network access.
+- **Descriptive dataset attachments bridged by fixtures**: In `cases.json`, attachment `content` fields are text descriptions (e.g. `"content": "Government identity card image"`) rather than actual binary uploads. The runner bridges this by injecting real bytes from `evaluation/fixtures/`, but it reuses the same 2 sample images and 2 sample PDFs across all cases rather than testing case-specific, unique, or realistic corrupted/oversized documents.
+- **Deterministic OCR/PDF extraction**: The fixture adapter uses deterministic mock providers, meaning evaluation measures input routing and modality classification, not production OCR extraction accuracy.
+- **Dataset labeling nuances**: Labels for unsupported extensions (`.webp` in `IP-008`, `.tif` in `IP-040`) and partial-success edge cases should be reviewed before enforcing strict pass thresholds.
+- **Network / Credentials**: Langfuse publishing requires valid credentials and active network access.
 
 ## Useful Commands
 
-Run without Langfuse:
+Run with automatic Langfuse publishing (default when credentials exist):
 
 ```powershell
 .\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py
 ```
 
-Run with Langfuse:
+Run purely locally without Langfuse:
 
 ```powershell
-.\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py --langfuse
+.\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py --no-langfuse
+```
+
+Save report locally while publishing:
+
+```powershell
+.\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py `
+  --output evaluation\reports\input_processor.json
+```
+
+Publish saved report to Langfuse:
+
+```powershell
+.\.venv\Scripts\python.exe evaluation\langfuse_reporting.py evaluation\reports\input_processor.json
 ```
 
 Run focused tests:

@@ -106,11 +106,24 @@ LANGFUSE_BASE_URL=https://cloud.langfuse.com
 
 The reporter creates one evaluator observation per run and publishes:
 
-- Aggregate scalar metrics such as accuracy and F1.
+- The entire report content (aggregate metrics and per-case evaluation details) stored in the observation `output`.
+- Aggregate scalar metrics such as accuracy and F1 recorded as numeric scores.
 - One `case_passed` score per case.
 - The run name and case count.
 
-Raw case inputs, uploaded bytes, and generated document content are not sent to Langfuse. Publishing fails clearly when credentials are missing. Use `--no-langfuse` when evaluation must remain local.
+Publishing fails clearly when credentials are missing. Use `--no-langfuse` when evaluation must remain local.
+
+### Publishing Existing Saved Reports
+
+You can also publish saved report files from `evaluation/reports/` directly to Langfuse without re-running evaluations:
+
+```powershell
+# Publish all report files in evaluation/reports/
+.\.venv\Scripts\python.exe evaluation\langfuse_reporting.py
+
+# Or publish a specific report file:
+.\.venv\Scripts\python.exe evaluation\langfuse_reporting.py evaluation\reports\input_processor.json
+```
 
 ## Output Reports
 

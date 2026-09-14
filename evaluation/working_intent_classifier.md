@@ -179,12 +179,38 @@ The confusion matrix has expected intent as rows and predicted intent as columns
 ```json
 {
   "document_info": {
-    "document_info": 10,
-    "general_chat": 1,
-    "ambiguous": 2
+    "document_info": 18,
+    "general_chat": 2,
+    "ambiguous": 0
+  },
+  "general_chat": {
+    "document_info": 0,
+    "general_chat": 15,
+    "ambiguous": 0
+  },
+  "ambiguous": {
+    "document_info": 3,
+    "general_chat": 2,
+    "ambiguous": 10
   }
 }
 ```
+
+### Baseline Benchmark Results
+
+1. **Offline Heuristic Baseline (`--offline`)**:
+   - Accuracy: **76.0%** (38 / 50 cases)
+   - Macro F1: **0.698**
+   - Intended solely as a zero-cost deterministic baseline for pipeline testing.
+
+2. **OpenAI `gpt-4o-mini` Evaluation**:
+   - Accuracy: **86.0%** (43 / 50 cases)
+   - Macro F1: **0.853**
+   - Macro Precision: **0.882**, Macro Recall: **0.856**
+   - Class breakdown:
+     - `general_chat`: 100.0% recall, 78.9% precision (F1: 0.882)
+     - `document_info`: 90.0% recall, 85.7% precision (F1: 0.878)
+     - `ambiguous`: 66.7% recall, 100.0% precision (F1: 0.800)
 
 ## Local Report Storage
 
@@ -223,10 +249,26 @@ The offline evaluation publishes automatically when Langfuse credentials are con
 The real OpenAI evaluation also publishes automatically when credentials are configured:
 
 ```powershell
+.\.venv\Scripts\python.exe evaluation\runners\run_intent.py
+```
+
+Use `--no-langfuse` for an intentional local-only run:
+
+```powershell
 .\.venv\Scripts\python.exe evaluation\runners\run_intent.py --no-langfuse
 ```
 
-Use `--no-langfuse` for an intentional local-only run.
+### Publishing Existing Saved Reports
+
+You can also publish saved report files from `evaluation/reports/` directly to Langfuse without re-running the evaluation:
+
+```powershell
+# Publish all report files in evaluation/reports/
+.\.venv\Scripts\python.exe evaluation\langfuse_reporting.py
+
+# Or publish a specific report file:
+.\.venv\Scripts\python.exe evaluation\langfuse_reporting.py evaluation\reports\intent_openai.json
+```
 
 The run name is:
 
@@ -253,9 +295,7 @@ The reporter stores:
 - One `case_passed` score per dataset case.
 - The case ID as the score comment.
 - Evaluation name and total case count as observation input.
-- Aggregate metrics and passed-case count as observation output.
-
-The current reporter intentionally does not send the raw user query, raw attachments, or full document text to Langfuse.
+- The entire evaluation report content (all metrics, confusion matrix, per-class metrics, and per-case predictions) as observation output.
 
 `flush()` is called after publishing so queued events are sent before the runner exits.
 
@@ -377,16 +417,22 @@ Offline evaluation with Langfuse:
 .\.venv\Scripts\python.exe evaluation\runners\run_intent.py --offline --langfuse
 ```
 
-Real OpenAI evaluation:
+Real OpenAI evaluation (publishes to Langfuse by default when credentials exist):
 
 ```powershell
 .\.venv\Scripts\python.exe evaluation\runners\run_intent.py
 ```
 
-Real OpenAI evaluation with Langfuse:
+Real OpenAI evaluation purely local (without Langfuse):
 
 ```powershell
-.\.venv\Scripts\python.exe evaluation\runners\run_intent.py --langfuse
+.\.venv\Scripts\python.exe evaluation\runners\run_intent.py --no-langfuse
+```
+
+Publish saved report to Langfuse:
+
+```powershell
+.\.venv\Scripts\python.exe evaluation\langfuse_reporting.py evaluation\reports\intent_openai.json
 ```
 
 Focused tests:
@@ -394,3 +440,4 @@ Focused tests:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests\test_intent_classifier.py tests\test_evaluators.py tests\test_langfuse_reporting.py
 ```
+

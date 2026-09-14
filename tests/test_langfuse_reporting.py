@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import json
 
 import pytest
 
@@ -40,7 +41,7 @@ class FakeLangfuse:
         self.flushed = True
 
 
-def test_reporter_publishes_metrics_and_case_scores_without_case_inputs():
+def test_reporter_publishes_entire_report_and_case_scores():
     client = FakeLangfuse()
     report = {
         "metrics": {
@@ -49,8 +50,8 @@ def test_reporter_publishes_metrics_and_case_scores_without_case_inputs():
             "per_class": {"document_info": {"precision": 1.0}},
         },
         "cases": [
-            {"id": "INT-001", "passed": True, "input": "private query"},
-            {"id": "INT-002", "passed": False, "input": "private query 2"},
+            {"id": "INT-001", "passed": True, "input": "sample query 1"},
+            {"id": "INT-002", "passed": False, "input": "sample query 2"},
         ],
     }
 
@@ -62,9 +63,48 @@ def test_reporter_publishes_metrics_and_case_scores_without_case_inputs():
         "accuracy",
         "case_passed",
     }
-    assert all("private query" not in str(score) for score in client.scores)
+    # Observation output contains the entire report structure
+    assert client.observation.output == report
+    assert client.observation.output["cases"] == report["cases"]
     assert client.observation.output["metrics"]["accuracy"] == 0.5
     assert client.flushed is True
+
+
+def test_reporter_publishes_file(tmp_path):
+    client = FakeLangfuse()
+    report = {
+        "metrics": {"total_cases": 1, "accuracy": 1.0},
+        "cases": [{"id": "CASE-1", "passed": True}],
+    }
+    file_path = tmp_path / "custom_eval.json"
+    file_path.write_text(json.dumps(report), encoding="utf-8")
+
+    reporter = LangfuseReporter(client)
+    reporter.publish_file(file_path)
+
+    assert client.inputs == [{"evaluation": "custom_eval", "total_cases": 1}]
+    assert client.observation.output == report
+
+
+def test_reporter_publishes_directory(tmp_path):
+    client = FakeLangfuse()
+    report_a = {
+        "metrics": {"total_cases": 1, "accuracy": 1.0},
+        "cases": [{"id": "A-1", "passed": True}],
+    }
+    report_b = {
+        "metrics": {"total_cases": 2, "accuracy": 0.5},
+        "cases": [{"id": "B-1", "passed": True}, {"id": "B-2", "passed": False}],
+    }
+    (tmp_path / "eval_a.json").write_text(json.dumps(report_a), encoding="utf-8")
+    (tmp_path / "eval_b.json").write_text(json.dumps(report_b), encoding="utf-8")
+    (tmp_path / "ignore.txt").write_text("not json", encoding="utf-8")
+
+    reporter = LangfuseReporter(client)
+    published = reporter.publish_directory(tmp_path)
+
+    assert published == ["eval_a.json", "eval_b.json"]
+    assert len(client.inputs) == 2
 
 
 def test_reporter_requires_langfuse_environment(monkeypatch):
@@ -75,3 +115,4 @@ def test_reporter_requires_langfuse_environment(monkeypatch):
 
     with pytest.raises(RuntimeError, match="LANGFUSE_PUBLIC_KEY"):
         LangfuseReporter.from_environment()
+
