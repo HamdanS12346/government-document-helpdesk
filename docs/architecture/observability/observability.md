@@ -670,18 +670,18 @@ For `general_chat`, the trace should show that retrieval was skipped and the Res
 
 Do not capture full prompts or full final answers by default.
 
-## TODO: Clarification Node Observability
+## Clarification Node Observability
 
-When the Clarification Node replaces `clarification_placeholder`, trace the interrupt flow.
+The Clarification Node traces the current milestone behavior: the graph writes a clarification `AIMessage` and returns a completed graph result. Durable interrupt/resume and cross-request memory linkage remain part of the later memory/checkpoint work.
 
 Expected trace shape:
 
 ```text
 chat_request
-  -> clarification_node
-       input: normalized input metadata, intent decision, memory metadata
+  -> clarification
+       input: intent decision metadata and conversation metadata
        output: clarification question metadata
-       status: waiting_for_user
+       status: clarification_required
 ```
 
 Clarification input metadata:
@@ -689,36 +689,28 @@ Clarification input metadata:
 ```text
 intent_type
 confidence_score
-normalized_user_query_length
-image_content_count
-pdf_content_count
+classification_query_length
 messages_count
 has_conversation_summary
+conversation_summary_length
+clarification_round_count
+max_clarification_rounds
 ```
 
 Clarification output metadata:
 
 ```text
 clarification_required
-clarification_reason_code
+reason_code
+missing_dimension_count
+missing_dimensions
 question_length
-interrupt_created
 next_node_after_user_reply = "intent_classifier"
 ```
 
-When the user replies, the follow-up trace should either:
+Do not capture full messages, full summaries, full classification queries, or full clarification questions by default. If `LANGFUSE_CAPTURE_TEXT=true`, only capture bounded redacted previews through the shared safe text preview helper.
 
-```text
-link to the original trace/session
-```
-
-or:
-
-```text
-continue the same LangGraph thread if the runtime supports it
-```
-
-The trace must make it clear that the graph paused for clarification and then returns to intent classification.
+When the user replies in a later request, the memory/checkpoint branch should link or reload the conversation state so the next trace makes it clear that classification runs again after clarification.
 
 ## TODO: Memory Observability
 

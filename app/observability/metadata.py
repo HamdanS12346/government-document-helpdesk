@@ -204,6 +204,58 @@ def build_intent_decision_metadata(decision: IntentDecision) -> dict[str, Any]:
     return metadata
 
 
+def build_clarification_input_metadata(
+    decision: IntentDecision,
+    *,
+    messages: Iterable[Any] | None = None,
+    conversation_summary: str | None = None,
+    clarification_round_count: int = 0,
+    max_clarification_rounds: int = 3,
+) -> dict[str, Any]:
+    """Build safe metadata for clarification input."""
+
+    message_list = list(messages or [])
+    metadata = {
+        "intent_type": str(decision.intent_type),
+        "confidence_score": decision.confidence_score,
+        "classification_query_length": len(decision.query),
+        "messages_count": len(message_list),
+        "has_conversation_summary": bool(conversation_summary),
+        "conversation_summary_length": len(conversation_summary or ""),
+        "clarification_round_count": clarification_round_count,
+        "max_clarification_rounds": max_clarification_rounds,
+    }
+    _add_text_preview(metadata, "classification_query_preview", decision.query)
+    _add_text_preview(
+        metadata,
+        "conversation_summary_preview",
+        conversation_summary or "",
+    )
+    return metadata
+
+
+def build_clarification_output_metadata(
+    *,
+    clarification_required: bool,
+    reason_code: str,
+    missing_dimensions: Iterable[str],
+    question: str,
+) -> dict[str, Any]:
+    """Build safe metadata for clarification output."""
+
+    dimension_list = list(missing_dimensions or [])
+    metadata = {
+        "clarification_required": clarification_required,
+        "reason_code": reason_code,
+        "missing_dimension_count": len(dimension_list),
+        "missing_dimensions": dimension_list,
+        "question_length": len(question),
+        "next_node_after_user_reply": "intent_classifier",
+    }
+    _add_text_preview(metadata, "question_preview", question)
+    return metadata
+
+
 def build_documents_metadata(documents: Iterable[Any]) -> dict[str, Any]:
     """Build safe metadata from retrieved documents without document text."""
 
@@ -338,6 +390,8 @@ def _safe_text_preview(text: str) -> str:
 
 __all__ = [
     "build_chat_request_metadata",
+    "build_clarification_input_metadata",
+    "build_clarification_output_metadata",
     "build_documents_metadata",
     "build_graph_state_metadata",
     "build_intent_decision_metadata",
