@@ -1,0 +1,117 @@
+.wrapper {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  animation: fadeSlideIn 220ms ease both;
+  max-width: 78%;
+}
+
+/* Bot — left aligned */
+.bot { align-self: flex-start; }
+
+/* User — right aligned */
+.user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+/* ---- Avatar ---- */
+.avatar {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background: var(--accent-light);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-xs);
+  align-self: flex-end;
+}
+
+.userAvatar {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  background: var(--navy-light);
+}
+
+/* ---- Content column ---- */
+.contentCol {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.user .contentCol { align-items: flex-end; }
+.bot  .contentCol { align-items: flex-start; }
+
+/* ---- Role label ---- */
+.roleLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ---- Bubble ---- */
+.bubble {
+  padding: 12px 16px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  line-height: 1.6;
+}
+
+/* Bot bubble */
+.bot .bubble {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+  color: var(--text-primary);
+}
+
+/* User bubble */
+.user .bubble {
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-bottom-right-radius: 4px;
+  color: #fff;
+}
+
+/* Error state */
+.errorBubble {
+  background: var(--error-bg) !important;
+  border-color: var(--error-border) !important;
+  color: var(--text-primary) !important;
+}
+
+/* ---- Text content ---- */
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.text p { margin: 0; }
+
+/* ---- File chips ---- */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,0.2);
+}
+
+.bot .chips {
+  border-top-color: var(--border);
+}
+
+/* ---- Timestamp ---- */
+.timestamp {
+  font-size: 11px;
+  color: var(--text-muted);
+}

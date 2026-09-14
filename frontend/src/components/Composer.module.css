@@ -1,0 +1,128 @@
+.outer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.fileRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.error {
+  font-size: 12px;
+  color: var(--error);
+  font-weight: 500;
+}
+
+/* ---- Input bar ---- */
+.bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 6px 6px 6px 12px;
+  transition: border-color var(--t-base), box-shadow var(--t-base);
+}
+
+.bar:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.barLoading {
+  opacity: 0.75;
+}
+
+/* ---- Attach button ---- */
+.attachBtn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  transition: color var(--t-fast), background var(--t-fast);
+}
+
+.attachBtn:hover:not(:disabled) {
+  color: var(--accent);
+  background: var(--accent-light);
+}
+
+.attachBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.hiddenInput { display: none; }
+
+/* ---- Textarea ---- */
+.textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  min-height: 24px;
+  max-height: 160px;
+  padding: 6px 0;
+  overflow-y: auto;
+}
+
+.textarea::placeholder { color: var(--text-muted); }
+
+.textarea:disabled { cursor: not-allowed; }
+
+/* ---- Send button ---- */
+.sendBtn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--border);
+  color: var(--text-muted);
+  transition: background var(--t-base), color var(--t-base), transform var(--t-fast), box-shadow var(--t-base);
+}
+
+.sendBtnActive {
+  background: var(--accent);
+  color: #fff;
+}
+
+.sendBtnActive:hover {
+  background: var(--accent-hover);
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px var(--accent-glow);
+}
+
+/* ---- Hint ---- */
+.hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.hint kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  background: var(--border-light);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: inherit;
+}
