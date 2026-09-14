@@ -15,7 +15,8 @@ State
 |-- documents
 |-- retrieved_context
 |-- messages
-`-- conversation_summary
+|-- conversation_summary
+`-- clarification_round_count
 ```
 
 ## 1. Input Processor Node
@@ -96,20 +97,25 @@ intent_decision.intent_type == "ambiguous"
 
 ### Receives
 
-- `normalized_input`
-- `intent_decision`
+- `intent_decision.intent_type`
+- `intent_decision.query`
 - `messages`
 - `conversation_summary`
 
-The node uses the current request and conversation context to determine what clarification is needed.
+The node uses the classifier-facing query and conversation context to determine what clarification is needed.
 
-It uses LangGraph interrupt to pause the workflow and wait for the user's clarification.
+The Clarification Node does not inspect `normalized_input` directly. Attachment context reaches clarification through `intent_decision.query`, because the Intent Classifier has already incorporated relevant image/PDF previews into that query.
+
+For the current backend milestone, the node writes a completed graph state result with a clarification message instead of relying on durable interrupt/resume behavior. Durable conversation persistence across HTTP requests is left to the memory/checkpoint branch.
 
 ### Writes
 
 The clarification interaction is added to:
 
 - `messages`
+- `clarification_round_count`
+
+Optional workflow outcome/status metadata may also be written when needed by the API boundary.
 
 After the user provides clarification, the workflow returns to the Intent Classifier.
 
@@ -267,7 +273,7 @@ messages
 | --- | --- | --- |
 | Input Processor | Raw user input, attachments | `normalized_input` |
 | Intent Classifier | `normalized_input`, `messages`, `conversation_summary` | `intent_decision` |
-| Clarification Node | `normalized_input`, `intent_decision`, `messages`, `conversation_summary` | `messages` |
+| Clarification Node | `intent_decision.intent_type`, `intent_decision.query`, `messages`, `conversation_summary` | `messages`, `clarification_round_count` |
 | Retriever | `normalized_input`, `intent_decision`, `messages`, `conversation_summary` | `documents` |
 | Context Builder | `normalized_input`, `intent_decision`, `documents`, `messages`, `conversation_summary` | `retrieved_context` |
 | Response Node | `normalized_input`, `intent_decision`, `retrieved_context`, `messages`, `conversation_summary` | `messages` |
