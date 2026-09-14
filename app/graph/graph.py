@@ -105,12 +105,12 @@ def build_full_graph(
     retriever: Callable[[State], dict[str, Any]] = retriever_node,
     context_builder: Callable[[State], dict[str, Any]] = context_builder_node,
     responder: Callable[[State], dict[str, Any]] = response_node,
+    clarification: Callable[[State], dict[str, Any]] = clarification_node,
 ) -> Any:
     """Build the complete graph: Intent → [Retriever → Context Builder →] Response.
 
     Both document_info and general_chat paths converge at the Response Node.
-    The clarification path still terminates at a placeholder until that node
-    is implemented.
+    The clarification path routes to the Clarification Node.
     """
 
     from app.graph.routing import route_after_intent_full
@@ -120,10 +120,13 @@ def build_full_graph(
         INTENT_CLASSIFIER_NODE,
         lambda state: classify_intent(state, classifier),
     )
-    graph.add_node(RETRIEVER_NODE, retriever)
+    graph.add_node(
+        RETRIEVER_NODE,
+        lambda state: _run_retriever_and_reset_clarification(state, retriever),
+    )
     graph.add_node(CONTEXT_BUILDER_NODE, context_builder)
     graph.add_node(RESPONSE_NODE, responder)
-    graph.add_node(CLARIFICATION_PLACEHOLDER_NODE, clarification_placeholder)
+    graph.add_node(CLARIFICATION_NODE, clarification)
 
     graph.add_edge(START, INTENT_CLASSIFIER_NODE)
     graph.add_conditional_edges(
@@ -132,13 +135,13 @@ def build_full_graph(
         {
             RETRIEVER_NODE: RETRIEVER_NODE,
             RESPONSE_NODE: RESPONSE_NODE,
-            CLARIFICATION_PLACEHOLDER_NODE: CLARIFICATION_PLACEHOLDER_NODE,
+            CLARIFICATION_NODE: CLARIFICATION_NODE,
         },
     )
     graph.add_edge(RETRIEVER_NODE, CONTEXT_BUILDER_NODE)
     graph.add_edge(CONTEXT_BUILDER_NODE, RESPONSE_NODE)
     graph.add_edge(RESPONSE_NODE, END)
-    graph.add_edge(CLARIFICATION_PLACEHOLDER_NODE, END)
+    graph.add_edge(CLARIFICATION_NODE, END)
     return graph.compile()
 
 
@@ -203,9 +206,11 @@ def invoke_full_graph(
     retriever: Callable[[State], dict[str, Any]] = retriever_node,
     context_builder: Callable[[State], dict[str, Any]] = context_builder_node,
     responder: Callable[[State], dict[str, Any]] = response_node,
+    clarification: Callable[[State], dict[str, Any]] = clarification_node,
     *,
     messages: Iterable[Any] | None = None,
     conversation_summary: str | None = None,
+    clarification_round_count: int | None = None,
 ) -> State:
     """Run the complete graph from input processing through response generation."""
 
@@ -217,8 +222,16 @@ def invoke_full_graph(
         state["messages"] = list(messages)
     if conversation_summary is not None:
         state["conversation_summary"] = conversation_summary
+    if clarification_round_count is not None:
+        state["clarification_round_count"] = clarification_round_count
 
-    graph = build_full_graph(classifier, retriever, context_builder, responder)
+    graph = build_full_graph(
+        classifier,
+        retriever,
+        context_builder,
+        responder,
+        clarification,
+    )
     return graph.invoke(state)
 
 

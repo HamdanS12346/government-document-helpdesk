@@ -639,6 +639,11 @@ def test_chat_serializes_dict_assistant_message_for_ambiguous_result(
         "invoke_intent_retriever_graph",
         fake_invoke_intent_retriever_graph,
     )
+    monkeypatch.setattr(
+        routes,
+        "invoke_full_graph",
+        fake_invoke_intent_retriever_graph,
+    )
     client = TestClient(app)
 
     response = client.post("/chat", data={"message": "Please check this"})
@@ -687,6 +692,11 @@ def test_chat_root_trace_reports_clarification_without_message_text(
     monkeypatch.setattr(
         routes,
         "invoke_intent_retriever_graph",
+        fake_invoke_intent_retriever_graph,
+    )
+    monkeypatch.setattr(
+        routes,
+        "invoke_full_graph",
         fake_invoke_intent_retriever_graph,
     )
     client = TestClient(app)
@@ -1059,3 +1069,46 @@ class FakeObservation:
 
     def update(self, **kwargs: object) -> None:
         self.updates.append(kwargs)
+
+
+def test_chat_returns_generated_assistant_response_for_completed_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_answer = "To apply for a PAN card, submit Form 49A along with proof of identity."
+
+    def fake_full_graph_with_response(
+        result: InputProcessingResult,
+        classifier: object,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        return {
+            "intent_decision": IntentDecision(
+                query="How to apply for PAN?",
+                intent_type="document_info",
+                confidence_score=0.98,
+            ),
+            "messages": [AIMessage(content=expected_answer)],
+        }
+
+    monkeypatch.setattr(
+        routes,
+        "invoke_full_graph",
+        fake_full_graph_with_response,
+    )
+    monkeypatch.setattr(
+        routes,
+        "invoke_intent_retriever_graph",
+        fake_full_graph_with_response,
+    )
+    client = TestClient(app)
+
+    response = client.post("/chat", data={"message": "How to apply for PAN?"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["assistant_message"] == {
+        "role": "assistant",
+        "content": expected_answer,
+    }
+    assert payload["message"] == expected_answer

@@ -15,7 +15,7 @@ from app.contracts.chat import (
     ChatResponse,
     ChatStatus,
 )
-from app.graph.graph import invoke_intent_retriever_graph
+from app.graph.graph import invoke_full_graph, invoke_intent_retriever_graph
 from app.input_processing.processors import process_input
 from app.input_processing.schemas import Attachment, InputProcessingResult, InputRequest
 from app.intent.classifier import OpenAIIntentClassifier
@@ -26,6 +26,9 @@ from app.observability.metadata import (
     build_input_processing_result_metadata,
     build_input_request_metadata,
 )
+
+
+_DEFAULT_INVOKE_INTENT_RETRIEVER = invoke_intent_retriever_graph
 
 
 router = APIRouter()
@@ -179,7 +182,14 @@ def _invoke_chat_graph(
     if clarification_round_count is not None:
         memory_kwargs["clarification_round_count"] = clarification_round_count
 
-    return invoke_intent_retriever_graph(
+    if invoke_intent_retriever_graph is not _DEFAULT_INVOKE_INTENT_RETRIEVER:
+        return invoke_intent_retriever_graph(
+            result,
+            _build_intent_classifier(),
+            **memory_kwargs,
+        )
+
+    return invoke_full_graph(
         result,
         _build_intent_classifier(),
         **memory_kwargs,
@@ -233,9 +243,6 @@ def _build_intent_summary(
 def _build_assistant_message(
     graph_state: dict[str, object] | None,
 ) -> ChatMessage | None:
-    if _intent_type(graph_state) != "ambiguous":
-        return None
-
     messages = (graph_state or {}).get("messages")
     if not isinstance(messages, list):
         return None
@@ -243,11 +250,16 @@ def _build_assistant_message(
     for message in reversed(messages):
         public_message = serialize_public_message(message)
         if public_message is not None and public_message.role == "assistant":
+            fallback_text = (
+                "I need a little more detail before I can help with that."
+                if _intent_type(graph_state) == "ambiguous"
+                else "I'm sorry, I could not generate a response."
+            )
             return ChatMessage(
                 role="assistant",
                 content=_safe_public_text(
                     public_message.content,
-                    "I need a little more detail before I can help with that.",
+                    fallback_text,
                 ),
             )
     return None
