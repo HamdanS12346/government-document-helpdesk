@@ -5,6 +5,7 @@ from app.contracts.intent_decision import IntentDecision, IntentType
 from app.contracts.normalized_input import NormalizedInput
 from app.contracts.response import RetrievedContext
 from app.graph.graph import invoke_intent_retriever_graph
+from app.graph.graph import CLARIFICATION_NODE, RETRIEVER_NODE
 from app.graph.routing import MAX_CLARIFICATION_ROUNDS, route_after_intent
 from app.input_processing.schemas import InputProcessingResult
 
@@ -219,6 +220,41 @@ def test_missing_normalized_input_fails_before_classification() -> None:
 def test_missing_intent_decision_in_routing_raises_clear_error() -> None:
     with pytest.raises(ValueError, match="intent_decision is required for intent routing"):
         route_after_intent({})
+
+
+@pytest.mark.parametrize("round_count", [0, 1, 2])
+def test_route_after_intent_allows_three_clarification_rounds(
+    round_count: int,
+) -> None:
+    assert (
+        route_after_intent(
+            {
+                "intent_decision": IntentDecision(
+                    query="Ambiguous query",
+                    intent_type=IntentType.AMBIGUOUS,
+                    confidence_score=0.4,
+                ),
+                "clarification_round_count": round_count,
+            }
+        )
+        == CLARIFICATION_NODE
+    )
+
+
+def test_route_after_intent_forces_retriever_after_clarification_limit() -> None:
+    assert (
+        route_after_intent(
+            {
+                "intent_decision": IntentDecision(
+                    query="Still ambiguous",
+                    intent_type=IntentType.AMBIGUOUS,
+                    confidence_score=0.4,
+                ),
+                "clarification_round_count": MAX_CLARIFICATION_ROUNDS,
+            }
+        )
+        == RETRIEVER_NODE
+    )
 
 
 def test_conversation_fields_are_preserved() -> None:

@@ -78,6 +78,43 @@ def test_node_emits_one_assistant_message_and_increments_round_count() -> None:
     assert result["messages"][0].content == "Which state are you applying in?"
 
 
+def test_node_output_is_clarification_only_without_citations() -> None:
+    result = ask_for_clarification(
+        {"intent_decision": _ambiguous_decision()},
+        _generator("Which document do you mean?"),
+    )
+
+    content = result["messages"][0].content
+
+    assert "http://" not in content
+    assert "https://" not in content
+    assert "Source:" not in content
+    assert "Citation:" not in content
+
+
+def test_node_can_represent_multiple_missing_fields_in_one_question() -> None:
+    generator = FakeClarificationGenerator(
+        ClarificationResult(
+            question=(
+                "To give you the right process, which certificate do you mean "
+                "and which state are you applying in?"
+            ),
+            reason_code=ClarificationReasonCode.UNCLEAR_REQUEST,
+            missing_dimensions=["document_type", "location"],
+        )
+    )
+
+    result = ask_for_clarification(
+        {"intent_decision": _ambiguous_decision()},
+        generator,
+    )
+
+    assert len(result["messages"]) == 1
+    assert "which certificate" in result["messages"][0].content
+    assert "which state" in result["messages"][0].content
+    assert generator.input_data is not None
+
+
 def test_node_passes_query_messages_summary_and_round_count_to_generator() -> None:
     messages = [{"role": "human", "content": "Earlier turn"}]
     generator = _generator()

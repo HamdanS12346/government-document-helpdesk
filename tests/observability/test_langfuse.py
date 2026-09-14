@@ -264,6 +264,31 @@ def test_clarification_metadata_redacts_text_when_capture_enabled(
     )
 
 
+def test_clarification_metadata_text_capture_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGFUSE_CAPTURE_TEXT", "true")
+    get_settings.cache_clear()
+    decision = IntentDecision(
+        query="x" * (TEXT_PREVIEW_MAX_CHARS + 10),
+        intent_type=IntentType.AMBIGUOUS,
+        confidence_score=0.41,
+    )
+
+    input_metadata = build_clarification_input_metadata(decision)
+    output_metadata = build_clarification_output_metadata(
+        clarification_required=True,
+        reason_code="unclear_request",
+        missing_dimensions=["request"],
+        question="y" * (TEXT_PREVIEW_MAX_CHARS + 10),
+    )
+
+    assert input_metadata["classification_query_preview"].endswith(
+        "... [truncated]"
+    )
+    assert output_metadata["question_preview"].endswith("... [truncated]")
+
+
 class FakeObservation:
     def __init__(self) -> None:
         self.updates: list[dict[str, object]] = []
