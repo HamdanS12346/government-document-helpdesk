@@ -110,6 +110,22 @@ Safe root metadata:
 
 The root trace should contain child observations for each node or major internal step. Tracing failures must not fail the chat request.
 
+For the current clarification milestone, the root `chat_request` output uses
+the same public workflow status vocabulary returned by `/chat`. When the graph
+produces a clarification question, the root output records:
+
+```text
+status = "clarification_required"
+intent_type = "ambiguous"
+clarification_round_count
+assistant_message_length
+```
+
+The full clarification question is not captured by default. If
+`LANGFUSE_CAPTURE_TEXT=true`, only a bounded redacted
+`assistant_message_preview` may be included through the shared safe text preview
+helper.
+
 ## Current Trace Shape
 
 The target trace for a `document_info` request should look like this:
@@ -711,6 +727,11 @@ next_node_after_user_reply = "intent_classifier"
 Do not capture full messages, full summaries, full classification queries, or full clarification questions by default. If `LANGFUSE_CAPTURE_TEXT=true`, only capture bounded redacted previews through the shared safe text preview helper.
 
 When the user replies in a later request, the memory/checkpoint branch should link or reload the conversation state so the next trace makes it clear that classification runs again after clarification.
+
+The root `chat_request` trace should mirror this outcome with
+`status: "clarification_required"` and safe metadata only. It must not store the
+full clarification question unless text capture is explicitly enabled, and even
+then only as a redacted bounded preview.
 
 ## TODO: Memory Observability
 

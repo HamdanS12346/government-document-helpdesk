@@ -2,9 +2,16 @@
 
 ## Current State
 
-Milestone 1 backend foundation is implemented through Task 9.
+Milestone 1 backend foundation is implemented through Task 9. Milestone 2 API
+and frontend exposure is implemented through Task 9, with manual frontend
+verification completed.
 
-Task 2, message reducer support, was intentionally skipped for now. The memory owner will handle message reducer behavior, durable message persistence, and conversation reload across HTTP requests. The Clarification Node still accepts `messages` and `conversation_summary` as placeholder/pass-through inputs so that memory can wire them later without changing the node contract.
+Task 2 from Milestone 1, message reducer support, was intentionally skipped for
+now. The memory owner will handle message reducer behavior, durable message
+persistence, and conversation reload across HTTP requests. The Clarification
+Node accepts `messages`, `conversation_summary`, and
+`clarification_round_count` so memory can wire them later without changing the
+node contract.
 
 ## Completed
 
@@ -16,6 +23,18 @@ Task 2, message reducer support, was intentionally skipped for now. The memory o
 - Task 7: Added three-round clarification routing guard.
 - Task 8: Added safe Langfuse metadata for clarification.
 - Task 9: Added focused clarification, graph, and observability tests.
+
+Milestone 2 completed so far:
+
+- Task 1: Added the typed `/chat` response contract.
+- Task 2: Exposed graph-produced clarification messages through `/chat`.
+- Task 3: Added safe public message serialization.
+- Task 4: Updated root Langfuse trace status for clarification.
+- Task 5: Updated frontend API types and rendering.
+- Task 6: Prepared the API graph invocation handoff for memory fields.
+- Task 7: Documented clarified query reconstruction as a memory dependency.
+- Task 8: Added API tests for clarification behavior and safety.
+- Task 9: Frontend/manual verification completed.
 
 ## Implementation Summary
 
@@ -101,12 +120,12 @@ Result:
 
 ## Limitations / Follow-Up
 
-- Task 2 is pending with the memory owner: `messages` is still not wired with LangGraph `add_messages`.
+- Milestone 1 Task 2 is pending with the memory owner: `messages` is still not wired with LangGraph `add_messages`.
 - Durable conversation persistence across HTTP requests is not implemented in this milestone.
-- `/chat` may still expose the older API response shape until milestone 2 connects clarification output to the API/frontend boundary.
+- `/chat` now exposes `status: "clarification_required"` and the graph-generated assistant clarification message.
 - Response generation remains separate from clarification.
 - The Clarification Node uses an OpenAI-backed generator by default, but tests inject fakes and do not require network calls.
-- Richer end-to-end API behavior should be covered in milestone 2 after the response shape is finalized.
+- Full clarified retrieval is still deferred to memory/checkpoint work. The memory branch must persist/reload `messages`, `conversation_summary`, `clarification_round_count`, and active clarification context, then reconstruct the effective query without storing raw uploaded files.
 
 ## Suggested Next Step
 

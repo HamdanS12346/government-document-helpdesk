@@ -66,6 +66,10 @@ It is used to prevent unbounded clarification loops. The counter is incremented 
 
 Durable persistence of this value across HTTP requests is part of the memory/checkpoint branch. The field is still part of graph state now so later persistence can reuse the same contract.
 
+The memory branch should persist and reload this value with `messages` and
+`conversation_summary`. It should reset when the active request resolves to a
+non-ambiguous route.
+
 ## Clarification State Boundary
 
 The Clarification Node reads only:
@@ -79,6 +83,26 @@ The Clarification Node reads only:
 It does not inspect `normalized_input` directly. Attachment context reaches clarification through `intent_decision.query`, because the Intent Classifier has already folded relevant attachment previews into the classifier-facing query.
 
 No raw uploaded bytes, raw private files, or long-term uploaded document storage enter clarification state. Clarification works from derived text context already present in the intent decision and conversation context.
+
+## Clarification Memory Handoff
+
+The current API can return a completed request response with
+`status: "clarification_required"` and the clarification assistant message. Full
+multi-turn clarified retrieval still requires the memory/checkpoint branch.
+
+That branch must load:
+
+- `messages`
+- `conversation_summary`
+- `clarification_round_count`
+- active clarification context needed to reconstruct the effective query
+
+before invoking the graph for the next `/chat` request. The effective query
+should combine the original request, assistant clarification question, user
+clarification answer, and allowed derived multimodal context.
+
+The Clarification Node must not mutate `normalized_input`, and memory must not
+persist raw uploaded files.
 
 ## State Flow
 

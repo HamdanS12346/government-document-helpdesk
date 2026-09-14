@@ -156,6 +156,31 @@ def build_graph_state_metadata(graph_state: Mapping[str, Any]) -> dict[str, Any]
     return metadata
 
 
+def build_chat_graph_response_metadata(
+    graph_state: Mapping[str, Any],
+    *,
+    status: str,
+    assistant_message_content: str | None = None,
+) -> dict[str, Any]:
+    """Build safe root /chat output metadata after graph execution."""
+
+    metadata = {
+        "status": status,
+        **build_graph_state_metadata(graph_state),
+    }
+    if assistant_message_content is not None:
+        metadata["assistant_message_length"] = len(assistant_message_content)
+        _add_text_preview(
+            metadata,
+            "assistant_message_preview",
+            assistant_message_content,
+        )
+    clarification_round_count = graph_state.get("clarification_round_count")
+    if clarification_round_count is not None:
+        metadata["clarification_round_count"] = clarification_round_count
+    return metadata
+
+
 def build_normalized_input_metadata(
     normalized_input: NormalizedInput,
     *,
@@ -389,6 +414,7 @@ def _safe_text_preview(text: str) -> str:
 
 
 __all__ = [
+    "build_chat_graph_response_metadata",
     "build_chat_request_metadata",
     "build_clarification_input_metadata",
     "build_clarification_output_metadata",

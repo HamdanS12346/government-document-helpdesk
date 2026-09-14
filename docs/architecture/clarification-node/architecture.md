@@ -815,6 +815,42 @@ It avoids holding an HTTP connection open while waiting for the user.
 
 The conversation state remains the mechanism for continuity.
 
+Current milestone implementation note:
+
+```text
+invoke_intent_retriever_graph(
+    result,
+    classifier,
+    messages=loaded_messages,
+    conversation_summary=loaded_summary,
+    clarification_round_count=loaded_round_count,
+)
+```
+
+The `/chat` API has an explicit graph invocation handoff point for these fields,
+but it passes no durable memory values yet. The response contract includes
+`conversation_id`; until the memory branch chooses and wires the session store,
+the value remains `null`.
+
+Later memory handoff:
+
+```text
+/chat request
+  -> identify conversation_id
+  -> memory_read
+  -> messages + conversation_summary + clarification_round_count
+  -> input processing for current turn
+  -> graph invoke
+  -> memory_write
+  -> /chat response
+```
+
+The backend memory layer remains authoritative for conversation continuation,
+message history, summaries, and clarification round counting. The frontend
+transcript may display the exchange, but it must not be the source of truth for
+round counting or clarified query reconstruction. Raw uploaded files must not be
+persisted as part of clarification memory.
+
 ------------------------------------------------------------------------
 
 ## 29. Interrupt Semantics
@@ -965,11 +1001,15 @@ This lets it reinterpret the request.
 The clarified request must become the effective query for downstream
 processing.
 
-The architecture uses the user's clarification answer to update the
-current request representation.
+This is a memory/checkpoint responsibility, not a Clarification Node
+responsibility.
 
-The intended behavior is to incorporate the answer into the current
-normalized query representation.
+The current milestone can display the clarification question, but full
+clarified retrieval requires persisted conversation state and active
+clarification context.
+
+The later memory branch should reconstruct the effective request before
+the second classification/retrieval pass.
 
 The goal is not to replace the original request.
 
@@ -1001,12 +1041,35 @@ It also prevents retrieval from losing information from the first turn.
 
 The effective query should therefore be a combined representation.
 
+Required later behavior:
+
+``` text
+effective query =
+original request
++
+assistant clarification question
++
+user clarification answer
++
+relevant multimodal content from the current request context
+```
+
+This reconstruction must be deterministic and idempotent. Re-running the
+same turn should not append the same clarification answer repeatedly.
+
 ------------------------------------------------------------------------
 
 ## 37. `normalized_input.user_query`
 
-After clarification, the user's answer should be incorporated into the
-current `normalized_input.user_query`.
+After clarification, the user's answer may be incorporated into an
+effective query representation used for the next classification and
+retrieval pass.
+
+The Clarification Node must not mutate `normalized_input`.
+
+The memory/checkpoint layer or a dedicated query reconstruction helper
+should combine the original request, the assistant clarification
+question, and the user clarification answer before the graph continues.
 
 Conceptually:
 
@@ -1027,13 +1090,14 @@ I mean a birth certificate for a child born in Goa."
 The exact textual formatting is an implementation detail.
 
 The semantic requirement is that the clarified request becomes the
-current user query.
+effective request.
 
 ------------------------------------------------------------------------
 
 ## 38. `normalized_input.combined_text`
 
-`combined_text` should also reflect the clarified user request.
+The effective retrieval text should also reflect the clarified user
+request.
 
 It remains the retrieval-facing multimodal representation.
 
@@ -1054,6 +1118,11 @@ PDF previews/content
 The exact separators should remain deterministic.
 
 The retriever should not have to reconstruct the conversation manually.
+
+Relevant attachment-derived context should be preserved without requiring
+the user to upload the same file again solely because clarification was
+needed. Raw uploaded bytes must not be persisted. Persist only approved
+derived context when the project privacy decision allows it.
 
 ------------------------------------------------------------------------
 
@@ -1088,6 +1157,20 @@ relevant attachment information
 ```
 
 It should not accidentally erase attachment context.
+
+Recommended later helper:
+
+``` text
+app/memory/clarification_context.py
+  -> load active clarification context
+  -> merge original request and clarification answer
+  -> expose messages/summary/counter to graph
+```
+
+If memory is not ready, the fallback is explicit: a follow-up
+clarification answer may be classified using only its own text and the
+available non-durable context. This limitation must be called out in PR
+notes rather than presented as a complete clarified retrieval loop.
 
 It should not overwrite the original request with only the answer.
 
@@ -4602,6 +4685,10 @@ treat each clarification as a distinct user turn
 
 The implementation must make query assembly deterministic.
 
+The Clarification Node remains unchanged by this implementation. It
+emits the assistant clarification message; it does not rewrite the
+current query or decide how previous multimodal context is retained.
+
 ------------------------------------------------------------------------
 
 ## 214. Message Duplication Risk
@@ -5833,12 +5920,17 @@ clarification answer
 relevant multimodal content
 ```
 
-The clarified information is represented in the current normalized
-query.
+The clarified information is represented in the current normalized query
+or equivalent effective-query representation by the later
+memory/checkpoint branch.
 
 `combined_text` remains the retrieval-facing combined representation.
 
 The Retriever receives the clarified request.
+
+This final clarified retrieval loop is not complete in the display-only
+clarification milestone. It depends on persisted conversation state,
+active clarification context, and deterministic query reconstruction.
 
 ------------------------------------------------------------------------
 

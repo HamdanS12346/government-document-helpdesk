@@ -8,6 +8,7 @@ from app.contracts.normalized_input import NormalizedInput
 from app.contracts.response import RetrievedContext
 from app.observability.metadata import (
     TEXT_PREVIEW_MAX_CHARS,
+    build_chat_graph_response_metadata,
     build_clarification_input_metadata,
     build_clarification_output_metadata,
     build_normalized_input_metadata,
@@ -287,6 +288,63 @@ def test_clarification_metadata_text_capture_is_bounded(
         "... [truncated]"
     )
     assert output_metadata["question_preview"].endswith("... [truncated]")
+
+
+def test_chat_graph_response_metadata_reports_clarification_without_text_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGFUSE_CAPTURE_TEXT", "false")
+    get_settings.cache_clear()
+    question = "Which state are you applying in? PAN ABCDE1234F"
+
+    metadata = build_chat_graph_response_metadata(
+        {
+            "intent_decision": IntentDecision(
+                query="Need PAN ABCDE1234F help",
+                intent_type=IntentType.AMBIGUOUS,
+                confidence_score=0.41,
+            ),
+            "clarification_round_count": 2,
+        },
+        status="clarification_required",
+        assistant_message_content=question,
+    )
+
+    assert metadata == {
+        "status": "clarification_required",
+        "has_intent_decision": True,
+        "has_documents": False,
+        "has_retrieved_context": False,
+        "intent_type": "ambiguous",
+        "confidence_score": 0.41,
+        "classification_query_length": len("Need PAN ABCDE1234F help"),
+        "assistant_message_length": len(question),
+        "clarification_round_count": 2,
+    }
+    assert "assistant_message_preview" not in metadata
+    assert "classification_query_preview" not in metadata
+
+
+def test_chat_graph_response_metadata_redacts_text_when_capture_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGFUSE_CAPTURE_TEXT", "true")
+    get_settings.cache_clear()
+
+    metadata = build_chat_graph_response_metadata(
+        {
+            "intent_decision": IntentDecision(
+                query="Need PAN ABCDE1234F help",
+                intent_type=IntentType.AMBIGUOUS,
+                confidence_score=0.41,
+            ),
+        },
+        status="clarification_required",
+        assistant_message_content="Which state? PAN ABCDE1234F",
+    )
+
+    assert metadata["classification_query_preview"] == "Need PAN [REDACTED] help"
+    assert metadata["assistant_message_preview"] == "Which state? PAN [REDACTED]"
 
 
 class FakeObservation:

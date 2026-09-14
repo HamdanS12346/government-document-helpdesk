@@ -318,10 +318,80 @@ Conversation context is represented by:
 
 - `messages`
 - `conversation_summary`
+- `clarification_round_count`
 
 Both can be provided to nodes where understanding the current request depends on previous conversation.
 
 The `messages` state contains the available conversation message window, while `conversation_summary` provides a compact representation of earlier relevant conversation context.
+
+`clarification_round_count` is carried alongside the conversation context so the graph can bound repeated clarification turns. The current API returns `conversation_id: null` because durable conversation storage is not implemented yet.
+
+The later memory branch must load these fields before invoking the graph:
+
+```text
+/chat request
+      |
+      v
+identify conversation_id
+      |
+      v
+memory_read
+      |
+      v
+messages + conversation_summary + clarification_round_count
+      |
+      v
+Input Processor for current turn
+      |
+      v
+invoke_intent_retriever_graph(..., messages, conversation_summary, clarification_round_count)
+      |
+      v
+memory_write
+      |
+      v
+/chat response
+```
+
+The frontend local transcript is not authoritative for round counting or conversation reconstruction. The memory branch must not persist raw uploaded files; only approved derived context may be persisted when the project privacy decision allows it.
+
+## Clarified Query Reconstruction
+
+Displaying the clarification question is available in the current
+milestone, but full clarified retrieval requires the later memory branch
+to reconstruct the effective query.
+
+Required later behavior:
+
+```text
+effective query =
+original request
++
+assistant clarification question
++
+user clarification answer
++
+relevant multimodal content from the current request context
+```
+
+The Clarification Node must not mutate `normalized_input`. Reconstruction
+should happen in the memory/checkpoint layer or a dedicated helper before
+the second classification/retrieval pass.
+
+A later helper may live at:
+
+```text
+app/memory/clarification_context.py
+  -> load active clarification context
+  -> merge original request and clarification answer
+  -> expose messages/summary/counter to graph
+```
+
+The reconstruction must be deterministic and idempotent so repeated graph
+execution does not duplicate clarification answers. It must preserve
+allowed attachment-derived context without persisting raw uploaded files
+or requiring users to re-upload the same document solely because
+clarification occurred.
 
 ## Design Principle
 
