@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { postChat, type AttachmentStatus, type ProcessingWarning } from "@/lib/api";
+import {
+  postChat,
+  type AttachmentStatus,
+  type ChatApiResponse,
+} from "@/lib/api";
 
 export type MessageRole = "user" | "bot";
 
@@ -48,13 +52,17 @@ function safeText(text: string | undefined, fallback: string): string {
 }
 
 function buildBotContent(
-  success: boolean,
-  message: string,
-  warnings: ProcessingWarning[],
-  attachmentStatuses: AttachmentStatus[]
+  data: ChatApiResponse
 ): string {
-  if (!success) {
-    return safeText(message, "Sorry, I couldn't process that request. Please try again.");
+  const warnings = data.warnings ?? [];
+  const attachmentStatuses = data.attachment_statuses ?? [];
+  const assistantContent = data.assistant_message?.content;
+
+  if (!data.success) {
+    return safeText(
+      data.message,
+      "Sorry, I couldn't process that request. Please try again."
+    );
   }
 
   const failedFiles = attachmentStatuses.filter((s) => s.status === "failed");
@@ -62,7 +70,10 @@ function buildBotContent(
     return "I received your message but couldn't process the attached files. Please check that they are valid PDF, PNG, or JPEG files.";
   }
 
-  let reply = "Thank you! I've received and processed your request successfully.";
+  let reply = assistantContent
+    ? safeText(assistantContent, data.message)
+    : "Thank you! I've received and processed your request successfully.";
+
   if (attachmentStatuses.length > 0) {
     const ok = attachmentStatuses.filter((s) => s.status === "success").length;
     reply += ` ${ok} of ${attachmentStatuses.length} attachment${attachmentStatuses.length > 1 ? "s" : ""} processed.`;
@@ -101,12 +112,7 @@ export function useChat(): UseChatReturn {
       const botMsg: ChatMessage = {
         id: uid(),
         role: "bot",
-        content: buildBotContent(
-          data.success,
-          data.message,
-          data.warnings ?? [],
-          data.attachment_statuses ?? []
-        ),
+        content: buildBotContent(data),
         timestamp: new Date(),
         attachmentStatuses: data.attachment_statuses ?? [],
         warnings: (data.warnings ?? []).map((w) =>

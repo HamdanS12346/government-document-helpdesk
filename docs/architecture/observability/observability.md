@@ -110,6 +110,22 @@ Safe root metadata:
 
 The root trace should contain child observations for each node or major internal step. Tracing failures must not fail the chat request.
 
+For the current clarification milestone, the root `chat_request` output uses
+the same public workflow status vocabulary returned by `/chat`. When the graph
+produces a clarification question, the root output records:
+
+```text
+status = "clarification_required"
+intent_type = "ambiguous"
+clarification_round_count
+assistant_message_length
+```
+
+The full clarification question is not captured by default. If
+`LANGFUSE_CAPTURE_TEXT=true`, only a bounded redacted
+`assistant_message_preview` may be included through the shared safe text preview
+helper.
+
 ## Current Trace Shape
 
 The target trace for a `document_info` request should look like this:
@@ -670,18 +686,18 @@ For `general_chat`, the trace should show that retrieval was skipped and the Res
 
 Do not capture full prompts or full final answers by default.
 
-## TODO: Clarification Node Observability
+## Clarification Node Observability
 
-When the Clarification Node replaces `clarification_placeholder`, trace the interrupt flow.
+The Clarification Node traces the current milestone behavior: the graph writes a clarification `AIMessage` and returns a completed graph result. Durable interrupt/resume and cross-request memory linkage remain part of the later memory/checkpoint work.
 
 Expected trace shape:
 
 ```text
 chat_request
-  -> clarification_node
-       input: normalized input metadata, intent decision, memory metadata
+  -> clarification
+       input: intent decision metadata and conversation metadata
        output: clarification question metadata
-       status: waiting_for_user
+       status: clarification_required
 ```
 
 Clarification input metadata:
@@ -689,36 +705,33 @@ Clarification input metadata:
 ```text
 intent_type
 confidence_score
-normalized_user_query_length
-image_content_count
-pdf_content_count
+classification_query_length
 messages_count
 has_conversation_summary
+conversation_summary_length
+clarification_round_count
+max_clarification_rounds
 ```
 
 Clarification output metadata:
 
 ```text
 clarification_required
-clarification_reason_code
+reason_code
+missing_dimension_count
+missing_dimensions
 question_length
-interrupt_created
 next_node_after_user_reply = "intent_classifier"
 ```
 
-When the user replies, the follow-up trace should either:
+Do not capture full messages, full summaries, full classification queries, or full clarification questions by default. If `LANGFUSE_CAPTURE_TEXT=true`, only capture bounded redacted previews through the shared safe text preview helper.
 
-```text
-link to the original trace/session
-```
+When the user replies in a later request, the memory/checkpoint branch should link or reload the conversation state so the next trace makes it clear that classification runs again after clarification.
 
-or:
-
-```text
-continue the same LangGraph thread if the runtime supports it
-```
-
-The trace must make it clear that the graph paused for clarification and then returns to intent classification.
+The root `chat_request` trace should mirror this outcome with
+`status: "clarification_required"` and safe metadata only. It must not store the
+full clarification question unless text capture is explicitly enabled, and even
+then only as a redacted bounded preview.
 
 ## TODO: Memory Observability
 

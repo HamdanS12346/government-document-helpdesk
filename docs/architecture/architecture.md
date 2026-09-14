@@ -64,6 +64,8 @@ Retrieved Context              |
 
 The workflow uses a shared state containing the main information required across nodes.
 
+The current state fields are `normalized_input`, `intent_decision`, `documents`, `retrieved_context`, `messages`, `conversation_summary`, and `clarification_round_count`.
+
 ```text
 State
 ├── normalized_input
@@ -163,6 +165,14 @@ It complements the `messages` window when the complete conversation history shou
 
 ---
 
+### `clarification_round_count`
+
+Tracks consecutive clarification turns for the active request.
+
+This prevents unbounded clarification loops and prepares the graph state for later durable memory/checkpoint persistence.
+
+---
+
 # Conversation Context
 
 Conversation context is represented through:
@@ -239,9 +249,28 @@ Used when:
 intent_decision.intent_type == "ambiguous"
 ```
 
-It uses the current request and conversation context to ask the user for clarification.
+Receives:
 
-The workflow pauses using LangGraph `interrupt` and resumes after the user responds.
+```text
+intent_decision.intent_type
+intent_decision.query
+messages
+conversation_summary
+clarification_round_count
+```
+
+Produces:
+
+```text
+messages
+clarification_round_count
+```
+
+It uses the classifier-facing query and conversation context to ask the user for clarification.
+
+It does not inspect `normalized_input` directly. Attachment context reaches clarification through `intent_decision.query`, because the Intent Classifier already incorporates relevant image/PDF previews into that query.
+
+For the current backend milestone, the clarification path writes the clarification `AIMessage` to graph state and returns a completed graph result. Durable conversation persistence across HTTP requests is left to the memory/checkpoint branch.
 
 The workflow then returns to the Intent Classifier.
 

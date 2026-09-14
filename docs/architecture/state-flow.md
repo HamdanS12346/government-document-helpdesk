@@ -15,7 +15,8 @@ State
 |-- documents
 |-- retrieved_context
 |-- messages
-`-- conversation_summary
+|-- conversation_summary
+`-- clarification_round_count
 ```
 
 ## 1. Input Processor Node
@@ -96,20 +97,25 @@ intent_decision.intent_type == "ambiguous"
 
 ### Receives
 
-- `normalized_input`
-- `intent_decision`
+- `intent_decision.intent_type`
+- `intent_decision.query`
 - `messages`
 - `conversation_summary`
 
-The node uses the current request and conversation context to determine what clarification is needed.
+The node uses the classifier-facing query and conversation context to determine what clarification is needed.
 
-It uses LangGraph interrupt to pause the workflow and wait for the user's clarification.
+The Clarification Node does not inspect `normalized_input` directly. Attachment context reaches clarification through `intent_decision.query`, because the Intent Classifier has already incorporated relevant image/PDF previews into that query.
+
+For the current backend milestone, the node writes a completed graph state result with a clarification message instead of relying on durable interrupt/resume behavior. Durable conversation persistence across HTTP requests is left to the memory/checkpoint branch.
 
 ### Writes
 
 The clarification interaction is added to:
 
 - `messages`
+- `clarification_round_count`
+
+Optional workflow outcome/status metadata may also be written when needed by the API boundary.
 
 After the user provides clarification, the workflow returns to the Intent Classifier.
 
@@ -267,7 +273,7 @@ messages
 | --- | --- | --- |
 | Input Processor | Raw user input, attachments | `normalized_input` |
 | Intent Classifier | `normalized_input`, `messages`, `conversation_summary` | `intent_decision` |
-| Clarification Node | `normalized_input`, `intent_decision`, `messages`, `conversation_summary` | `messages` |
+| Clarification Node | `intent_decision.intent_type`, `intent_decision.query`, `messages`, `conversation_summary` | `messages`, `clarification_round_count` |
 | Retriever | `normalized_input`, `intent_decision`, `messages`, `conversation_summary` | `documents` |
 | Context Builder | `normalized_input`, `intent_decision`, `documents`, `messages`, `conversation_summary` | `retrieved_context` |
 | Response Node | `normalized_input`, `intent_decision`, `retrieved_context`, `messages`, `conversation_summary` | `messages` |
@@ -312,10 +318,80 @@ Conversation context is represented by:
 
 - `messages`
 - `conversation_summary`
+- `clarification_round_count`
 
 Both can be provided to nodes where understanding the current request depends on previous conversation.
 
 The `messages` state contains the available conversation message window, while `conversation_summary` provides a compact representation of earlier relevant conversation context.
+
+`clarification_round_count` is carried alongside the conversation context so the graph can bound repeated clarification turns. The current API returns `conversation_id: null` because durable conversation storage is not implemented yet.
+
+The later memory branch must load these fields before invoking the graph:
+
+```text
+/chat request
+      |
+      v
+identify conversation_id
+      |
+      v
+memory_read
+      |
+      v
+messages + conversation_summary + clarification_round_count
+      |
+      v
+Input Processor for current turn
+      |
+      v
+invoke_intent_retriever_graph(..., messages, conversation_summary, clarification_round_count)
+      |
+      v
+memory_write
+      |
+      v
+/chat response
+```
+
+The frontend local transcript is not authoritative for round counting or conversation reconstruction. The memory branch must not persist raw uploaded files; only approved derived context may be persisted when the project privacy decision allows it.
+
+## Clarified Query Reconstruction
+
+Displaying the clarification question is available in the current
+milestone, but full clarified retrieval requires the later memory branch
+to reconstruct the effective query.
+
+Required later behavior:
+
+```text
+effective query =
+original request
++
+assistant clarification question
++
+user clarification answer
++
+relevant multimodal content from the current request context
+```
+
+The Clarification Node must not mutate `normalized_input`. Reconstruction
+should happen in the memory/checkpoint layer or a dedicated helper before
+the second classification/retrieval pass.
+
+A later helper may live at:
+
+```text
+app/memory/clarification_context.py
+  -> load active clarification context
+  -> merge original request and clarification answer
+  -> expose messages/summary/counter to graph
+```
+
+The reconstruction must be deterministic and idempotent so repeated graph
+execution does not duplicate clarification answers. It must preserve
+allowed attachment-derived context without persisting raw uploaded files
+or requiring users to re-upload the same document solely because
+clarification occurred.
 
 ## Design Principle
 

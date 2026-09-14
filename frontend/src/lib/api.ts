@@ -20,10 +20,25 @@ export type ProcessingWarning = {
 
 export type ChatApiResponse = {
   success: boolean;
+  status:
+    | "completed"
+    | "clarification_required"
+    | "input_failed"
+    | "classification_error"
+    | "system_error";
   message: string;
+  assistant_message: {
+    role: "assistant";
+    content: string;
+  } | null;
   attachment_statuses: AttachmentStatus[];
   warnings: ProcessingWarning[];
   normalized_input: unknown;
+  intent: {
+    type: string;
+    confidence_score: number | null;
+  } | null;
+  conversation_id: string | null;
 };
 
 /**
