@@ -7,7 +7,8 @@ Evaluation is currently implemented for:
 
 Retrieval and response evaluation are intentionally not included yet.
 
-Langfuse publishing is optional and applies to the two implemented evaluations.
+Langfuse publishing runs by default for the two implemented evaluations. Use
+`--no-langfuse` for a deliberate local-only run.
 
 ## Datasets
 
@@ -28,7 +29,7 @@ Run:
 .\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py
 ```
 
-Publish the same run to Langfuse:
+The runner publishes the same run to Langfuse automatically:
 
 ```powershell
 .\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py --langfuse
@@ -49,9 +50,9 @@ Metrics:
 - `modality_accuracy`: whether the normalized output's modality list matches the label.
 - Per-case results and mismatches.
 
-The fixture adapter supplies real image/PDF bytes because the current dataset's attachment `content` fields are descriptions, not upload bytes. This does not modify the Input Processor.
+The fixture adapter loads real image/PDF files from `evaluation/fixtures/input_processor/` because the current dataset's attachment `content` fields are descriptions, not upload bytes. The same source fixtures are reused across cases while preserving each dataset filename and declared MIME type. This does not modify the Input Processor.
 
-Important interpretation: the Input Processor intentionally supports partial success. A request with valid user text and a failed attachment can still have `success=True`. Dataset cases that expect complete failure in that situation should be reviewed against this contract.
+Evaluation validity requires `process_input()` success and every attachment status to be successful. The Input Processor itself intentionally supports partial success, so a request with valid user text and a failed attachment can still have `success=True`; the evaluator still marks that case invalid because one supplied attachment failed.
 
 ## Intent Classifier
 
@@ -61,7 +62,7 @@ Important interpretation: the Input Processor intentionally supports partial suc
 .\.venv\Scripts\python.exe evaluation\runners\run_intent.py --offline
 ```
 
-This uses a deterministic heuristic baseline. Its score measures the baseline, not OpenAI model quality.
+This uses a deterministic heuristic baseline. Its score measures the baseline, not OpenAI model quality. Langfuse publishing is automatic when credentials are configured.
 
 Publish the offline baseline scores to Langfuse:
 
@@ -77,7 +78,7 @@ Publish the offline baseline scores to Langfuse:
 
 This invokes the real `OpenAIIntentClassifier` once per case and requires a valid `OPENAI_API_KEY`. It may incur API usage.
 
-Add `--langfuse` to publish the real-model evaluation as well:
+The real-model evaluation is also published automatically when credentials are configured:
 
 ```powershell
 .\.venv\Scripts\python.exe evaluation\runners\run_intent.py --langfuse
@@ -95,7 +96,7 @@ Metrics:
 
 ## Langfuse Publishing
 
-Set these variables in `.env` before using `--langfuse`:
+Set these variables in `.env` before running a runner:
 
 ```text
 LANGFUSE_PUBLIC_KEY=...
@@ -109,7 +110,7 @@ The reporter creates one evaluator observation per run and publishes:
 - One `case_passed` score per case.
 - The run name and case count.
 
-Raw case inputs, uploaded bytes, and generated document content are not sent to Langfuse. The `--langfuse` flag fails clearly when credentials are missing. Without that flag, evaluation remains local and does not contact Langfuse.
+Raw case inputs, uploaded bytes, and generated document content are not sent to Langfuse. Publishing fails clearly when credentials are missing. Use `--no-langfuse` when evaluation must remain local.
 
 ## Output Reports
 

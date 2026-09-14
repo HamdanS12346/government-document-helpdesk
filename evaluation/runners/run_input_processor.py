@@ -10,12 +10,18 @@ import sys
 from typing import Any
 
 from PIL import Image
+from pypdf import PdfReader, PdfWriter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.input_processing.ocr_provider import OCRResult, OCRStatus  # noqa: E402
+from app.input_processing.pdf_processor import (  # noqa: E402
+    PDFExtractionResult,
+    PDFExtractionStatus,
+    classify_pdf_content,
+)
 from app.input_processing.processors import process_input  # noqa: E402
 from app.input_processing.schemas import Attachment, InputRequest  # noqa: E402
 from evaluation.case_loader import find_default_dataset, load_cases, validate_case_ids  # noqa: E402
@@ -26,11 +32,15 @@ from evaluation.evaluators.input_processor.evaluator import (  # noqa: E402
 from evaluation.langfuse_reporting import LangfuseReporter  # noqa: E402
 
 
-IMAGE_FIXTURE = PROJECT_ROOT / "tests/input-processor/fixtures/images/valid/fictional_form.png"
-PDF_FIXTURE = PROJECT_ROOT / "tests/input-processor/fixtures/pdfs/forms/pdf_004_simple_form.pdf"
-INVALID_IMAGE_FIXTURE = PROJECT_ROOT / "tests/input-processor/fixtures/images/invalid/not_an_image.png"
-INVALID_PDF_FIXTURE = PROJECT_ROOT / "tests/input-processor/fixtures/pdfs/invalid/pdf_009_corrupt.pdf"
-OVER_LIMIT_PDF_FIXTURE = PROJECT_ROOT / "tests/input-processor/fixtures/pdfs/over_page_limit/pdf_010_over_page_limit.pdf"
+FIXTURE_ROOT = PROJECT_ROOT / "evaluation/fixtures/input_processor"
+IMAGE_FIXTURES = (
+    FIXTURE_ROOT / "images/source1.jpg",
+    FIXTURE_ROOT / "images/source2.jpg",
+)
+PDF_FIXTURES = (
+    FIXTURE_ROOT / "pdfs/source1.pdf",
+    FIXTURE_ROOT / "pdfs/source2.pdf",
+)
 
 
 class EvaluationOCRProvider:
@@ -38,6 +48,18 @@ class EvaluationOCRProvider:
 
     def extract_text(self, image_content: bytes) -> OCRResult:
         return OCRResult(status=OCRStatus.SUCCESS, text="Synthetic evaluation document text")
+
+
+class EvaluationPDFExtractor:
+    """Use the Input Processor's PDF classification on fixture-derived samples."""
+
+    def extract(self, pdf_content: bytes) -> PDFExtractionResult:
+        classification = classify_pdf_content(pdf_content)
+        return PDFExtractionResult(
+            status=PDFExtractionStatus.SUCCESS,
+            document_type=classification.document_type,
+            pages=classification.pages,
+        )
 
 
 def run_dataset(dataset_path: Path) -> dict[str, Any]:
@@ -58,21 +80,27 @@ def run_dataset(dataset_path: Path) -> dict[str, Any]:
 
 def _run_case(case: dict[str, Any]) -> tuple[bool, list[str]]:
     input_data = case.get("input", {})
-    expected_valid = bool(case.get("expected", {}).get("valid", False))
     attachments = []
     try:
-        for attachment_data in input_data.get("attachments", []):
-            attachments.append(_build_attachment(attachment_data, expected_valid))
+        for index, attachment_data in enumerate(input_data.get("attachments", [])):
+            attachments.append(_build_attachment(attachment_data, index))
         request = InputRequest(
             user_query=input_data.get("text"),
             attachments=attachments,
         )
-        result = process_input(request, ocr_provider=EvaluationOCRProvider())
+        result = process_input(
+            request,
+            ocr_provider=EvaluationOCRProvider(),
+            pdf_extractor=EvaluationPDFExtractor(),
+        )
     except Exception:
         return False, []
 
-    if not result.success or result.normalized_input is None:
-        return False, []
+    actual_valid = result.success and all(
+        status.status == "success" for status in result.attachment_statuses
+    )
+    if result.normalized_input is None:
+        return actual_valid, []
 
     normalized = result.normalized_input
     modality = []
@@ -82,39 +110,54 @@ def _run_case(case: dict[str, Any]) -> tuple[bool, list[str]]:
         modality.append("image")
     if normalized.pdf_content:
         modality.append("pdf")
-    return True, modality
+    return actual_valid, modality
 
 
-def _build_attachment(data: dict[str, Any], expected_valid: bool) -> Attachment:
-    filename = str(data.get("filename", "attachment"))
+def _build_attachment(data: dict[str, Any], index: int) -> Attachment:
+    filename = data.get("filename", "")
     suffix = Path(filename).suffix.lower()
-    media_type = str(data.get("mime_type", _media_type_for_suffix(suffix)))
-    content = _content_for_attachment(filename, suffix, expected_valid)
+    media_type = data.get("mime_type", "")
+    if media_type:
+        media_type = str(media_type)
+    content = _content_for_attachment(data, suffix, index)
     return Attachment(filename=filename, media_type=media_type, content=content)
 
 
-def _content_for_attachment(filename: str, suffix: str, expected_valid: bool) -> bytes:
+def _content_for_attachment(data: dict[str, Any], suffix: str, index: int) -> bytes:
+    filename = str(data.get("filename", "attachment"))
     lowered = filename.lower()
     if "missing-content" in lowered:
         return b""
     if suffix in {".png", ".jpg", ".jpeg"}:
-        if not expected_valid or "unreadable" in lowered or "blank" in lowered:
-            return INVALID_IMAGE_FIXTURE.read_bytes()
-        return _image_bytes(suffix)
+        return _load_image_fixture(index, suffix)
     if suffix == ".pdf":
-        if "large" in lowered or "negative-size" in lowered:
-            return OVER_LIMIT_PDF_FIXTURE.read_bytes()
-        if not expected_valid or "corrupt" in lowered or "empty" in lowered or "broken" in lowered:
-            return INVALID_PDF_FIXTURE.read_bytes()
-        return PDF_FIXTURE.read_bytes()
+        return _load_pdf_fixture(index)
     return str(filename).encode("utf-8")
 
 
-def _image_bytes(suffix: str) -> bytes:
-    image = Image.new("RGB", (8, 8), color="white")
+def _load_image_fixture(index: int, suffix: str) -> bytes:
+    fixture = IMAGE_FIXTURES[index % len(IMAGE_FIXTURES)]
+    if suffix in {".jpg", ".jpeg"}:
+        return fixture.read_bytes()
+
+    image = Image.open(fixture).convert("RGB")
     buffer = io.BytesIO()
-    image.save(buffer, format="JPEG" if suffix in {".jpg", ".jpeg"} else "PNG")
+    image.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def _load_pdf_fixture(index: int) -> bytes:
+    """Load real fixture PDF bytes and retain at most five real source pages."""
+
+    fixture = PDF_FIXTURES[index % len(PDF_FIXTURES)]
+    reader = PdfReader(io.BytesIO(fixture.read_bytes()))
+    writer = PdfWriter()
+    page_numbers = range(1, 5) if fixture.name == "source1.pdf" else range(0, 5)
+    for page_number in page_numbers:
+        writer.add_page(reader.pages[page_number])
+    output = io.BytesIO()
+    writer.write(output)
+    return output.getvalue()
 
 
 def _media_type_for_suffix(suffix: str) -> str:
@@ -130,15 +173,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None)
-    parser.add_argument(
+    langfuse_group = parser.add_mutually_exclusive_group()
+    langfuse_group.add_argument(
         "--langfuse",
         action="store_true",
-        help="Publish aggregate and per-case scores to Langfuse.",
+        help="Publish results to Langfuse (the default).",
+    )
+    langfuse_group.add_argument(
+        "--no-langfuse",
+        action="store_true",
+        help="Skip Langfuse publishing for this run.",
     )
     args = parser.parse_args()
     dataset = args.dataset or find_default_dataset(PROJECT_ROOT / "evaluation/datasets/input_processor")
     report = run_dataset(dataset)
-    if args.langfuse:
+    if not args.no_langfuse:
         LangfuseReporter.from_environment().publish("input_processor", report)
     rendered = json.dumps(report, indent=2)
     if args.output:

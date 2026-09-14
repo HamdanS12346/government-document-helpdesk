@@ -214,17 +214,19 @@ The directory is ignored by Git because reports are generated artifacts. Reports
 
 ## Langfuse Storage
 
-Publish the offline evaluation:
+The offline evaluation publishes automatically when Langfuse credentials are configured:
 
 ```powershell
 .\.venv\Scripts\python.exe evaluation\runners\run_intent.py --offline --langfuse
 ```
 
-Publish the real OpenAI evaluation:
+The real OpenAI evaluation also publishes automatically when credentials are configured:
 
 ```powershell
-.\.venv\Scripts\python.exe evaluation\runners\run_intent.py --langfuse
+.\.venv\Scripts\python.exe evaluation\runners\run_intent.py --no-langfuse
 ```
+
+Use `--no-langfuse` for an intentional local-only run.
 
 The run name is:
 

@@ -93,13 +93,16 @@ That value is not actual image or PDF bytes. The runner therefore uses determini
 
 The adapter:
 
-- Uses generated valid PNG/JPEG bytes for valid image cases.
-- Uses an existing valid PDF fixture for valid PDF cases.
-- Uses invalid or over-limit fixtures for cases whose filenames indicate those failures.
+- Loads `evaluation/fixtures/input_processor/images/source1.jpg` and `source2.jpg`.
+- Reuses those real image files across image cases; PNG declarations are encoded from a real source image so the declared signature remains valid.
+- Loads `evaluation/fixtures/input_processor/pdfs/source1.pdf` and `source2.pdf`.
+- Reuses real PDF files across PDF cases and creates bounded in-memory samples from their real pages to respect the existing five-page processor limit.
 - Uses a deterministic OCR provider returning synthetic text.
+- Uses a deterministic PDF extractor backed by the Input Processor's own PDF classification.
+- Preserves dataset filenames and MIME declarations, including malformed metadata cases.
 - Does not modify the Input Processor implementation.
 
-This means the evaluation tests orchestration and validation behavior deterministically. It does not measure real OCR quality.
+This means the evaluation passes real fixture-derived files through the existing pipeline. It does not measure production OCR quality, and the current fixture directory does not contain dedicated corrupt, unreadable, oversized, or unsupported-format files for every invalid dataset case.
 
 ## Metrics
 
@@ -142,7 +145,7 @@ Another attachment succeeds
 
 The overall result can still be successful, with only the successful content included in `NormalizedInput` and a failure status for the failed attachment.
 
-Dataset cases that expect complete failure when valid user text exists should be reviewed against this contract.
+Evaluation validity requires `process_input()` success and every attachment status to be successful. The evaluator therefore marks a case invalid when any supplied attachment fails, even if the Input Processor returns a partial-success result because valid user text or another attachment remains.
 
 ## Local Report Storage
 
@@ -164,18 +167,23 @@ The `evaluation/reports/` directory is ignored by Git because reports are genera
 
 ## Langfuse Storage
 
-Langfuse publishing is optional and is enabled explicitly with `--langfuse`:
+Langfuse publishing happens automatically when the runner is executed and credentials are configured:
 
 ```powershell
 .\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py --langfuse
 ```
 
-To save a local copy and publish to Langfuse:
+To save a local copy while publishing to Langfuse:
 
 ```powershell
 .\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py `
-  --langfuse `
   --output evaluation\reports\input_processor.json
+```
+
+Use `--no-langfuse` for a local-only run:
+
+```powershell
+.\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py --no-langfuse
 ```
 
 The reporter creates one Langfuse evaluator observation named:
@@ -206,7 +214,7 @@ LANGFUSE_SECRET_KEY=your-secret-key
 LANGFUSE_BASE_URL=https://cloud.langfuse.com
 ```
 
-The runner loads `.env` when `--langfuse` is used. Never commit `.env` or place credentials in source code.
+The runner loads `.env` before publishing. Never commit `.env` or place credentials in source code. Use `--no-langfuse` to skip publishing.
 
 Check configuration without printing secrets:
 

@@ -80,15 +80,21 @@ def main() -> int:
         action="store_true",
         help="Use a deterministic baseline instead of making OpenAI API calls.",
     )
-    parser.add_argument(
+    langfuse_group = parser.add_mutually_exclusive_group()
+    langfuse_group.add_argument(
         "--langfuse",
         action="store_true",
-        help="Publish aggregate and per-case scores to Langfuse.",
+        help="Publish results to Langfuse (the default).",
+    )
+    langfuse_group.add_argument(
+        "--no-langfuse",
+        action="store_true",
+        help="Skip Langfuse publishing for this run.",
     )
     args = parser.parse_args()
     dataset = args.dataset or find_default_dataset(PROJECT_ROOT / "evaluation/datasets/intent")
     report = run_dataset(dataset, offline=args.offline)
-    if args.langfuse:
+    if not args.no_langfuse:
         LangfuseReporter.from_environment().publish("intent_offline" if args.offline else "intent", report)
     rendered = json.dumps(report, indent=2)
     if args.output:
