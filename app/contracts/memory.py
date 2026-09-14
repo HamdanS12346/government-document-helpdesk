@@ -3,7 +3,10 @@
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Dict, List, Optional
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+try:
+    from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+except ImportError:  # Fallback for older langchain versions
+    from langchain.schema import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field
 
 

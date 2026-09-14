@@ -63,7 +63,7 @@ class LangfuseReporter:
                 for case in cases:
                     self.client.create_score(
                         name="case_passed",
-                        value=1.0 if case["passed"] else 0.0,
+                        value=1.0 if case.get("passed", False) else 0.0,
                         trace_id=trace_id,
                         data_type="NUMERIC",
                         comment=case["id"],
@@ -78,7 +78,8 @@ class LangfuseReporter:
         if not path.is_file():
             raise FileNotFoundError(f"Report file not found: {path}")
         report = json.loads(path.read_text(encoding="utf-8"))
-        name = evaluation_name or path.stem
+        default_name = path.parent.name if path.stem == "latest" and path.parent.name != "reports" else path.stem
+        name = evaluation_name or default_name
         self.publish(name, report)
 
     def publish_directory(self, dir_path: Path | str) -> list[str]:
@@ -88,9 +89,9 @@ class LangfuseReporter:
         if not directory.is_dir():
             raise NotADirectoryError(f"Directory not found: {directory}")
         published = []
-        for file in sorted(directory.glob("*.json")):
+        for file in sorted(directory.rglob("*.json")):
             self.publish_file(file)
-            published.append(file.name)
+            published.append(str(file.relative_to(directory)))
         return published
 
 
@@ -110,12 +111,18 @@ def main() -> int:
         default=str(PROJECT_ROOT / "evaluation/reports"),
         help="Path to a report JSON file or directory of reports (default: evaluation/reports)",
     )
+    parser.add_argument(
+        "--name",
+        type=str,
+        default=None,
+        help="Custom evaluation name when publishing a single file (default: file stem or parent folder name for 'latest.json')",
+    )
     args = parser.parse_args()
     target_path = Path(args.target)
 
     reporter = LangfuseReporter.from_environment()
     if target_path.is_file():
-        reporter.publish_file(target_path)
+        reporter.publish_file(target_path, evaluation_name=args.name)
         print(f"Published report from {target_path} to Langfuse.")
     elif target_path.is_dir():
         published = reporter.publish_directory(target_path)
