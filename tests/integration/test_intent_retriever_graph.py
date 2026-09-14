@@ -1,10 +1,12 @@
 import pytest
+from langchain_core.messages import AIMessage
 
 from app.contracts.intent_decision import IntentDecision, IntentType
 from app.contracts.normalized_input import NormalizedInput
 from app.contracts.response import RetrievedContext
 from app.graph.graph import invoke_intent_retriever_graph
-from app.graph.routing import route_after_intent
+from app.graph.graph import CLARIFICATION_NODE, RETRIEVER_NODE
+from app.graph.routing import MAX_CLARIFICATION_ROUNDS, route_after_intent
 from app.input_processing.schemas import InputProcessingResult
 
 
@@ -58,6 +60,18 @@ class RecordingContextBuilder:
         }
 
 
+class RecordingClarification:
+    def __init__(self) -> None:
+        self.state = None
+
+    def __call__(self, state: dict) -> dict:
+        self.state = state
+        return {
+            "messages": [AIMessage(content="Which document do you mean?")],
+            "clarification_round_count": state.get("clarification_round_count", 0) + 1,
+        }
+
+
 def _normalized_input() -> NormalizedInput:
     return NormalizedInput(
         user_query="What documents are needed for PAN application?",
@@ -82,6 +96,10 @@ def _failing_context_builder(state: dict) -> dict:
     raise AssertionError("context builder should not be called for this intent")
 
 
+def _failing_clarification(state: dict) -> dict:
+    raise AssertionError("clarification should not be called after limit")
+
+
 def test_document_info_routes_to_retriever_context_builder_and_writes_state() -> None:
     classifier = FakeClassifier(IntentType.DOCUMENT_INFO)
     retriever = RecordingRetriever()
@@ -100,6 +118,7 @@ def test_document_info_routes_to_retriever_context_builder_and_writes_state() ->
     assert retriever.state is not None
     assert context_builder.state is not None
     assert context_builder.state["documents"] == result["documents"]
+    assert result["clarification_round_count"] == 0
 
 
 def test_document_info_default_context_builder_formats_retrieved_documents() -> None:
@@ -127,24 +146,57 @@ def test_general_chat_routes_to_placeholder_without_documents() -> None:
         FakeClassifier(IntentType.GENERAL_CHAT),
         _failing_retriever,
         _failing_context_builder,
+        clarification_round_count=2,
     )
 
     assert result["intent_decision"].intent_type == IntentType.GENERAL_CHAT
+    assert result["clarification_round_count"] == 0
     assert "documents" not in result
     assert "retrieved_context" not in result
 
 
-def test_ambiguous_routes_to_placeholder_without_documents() -> None:
+@pytest.mark.parametrize("round_count", [0, 1, 2])
+def test_ambiguous_routes_to_clarification_for_first_three_rounds(
+    round_count: int,
+) -> None:
+    clarification = RecordingClarification()
+
     result = invoke_intent_retriever_graph(
         _successful_result(),
         FakeClassifier(IntentType.AMBIGUOUS),
         _failing_retriever,
         _failing_context_builder,
+        clarification,
+        clarification_round_count=round_count,
     )
 
     assert result["intent_decision"].intent_type == IntentType.AMBIGUOUS
+    assert clarification.state is not None
+    assert isinstance(result["messages"][0], AIMessage)
+    assert result["messages"][0].content == "Which document do you mean?"
+    assert result["clarification_round_count"] == round_count + 1
     assert "documents" not in result
     assert "retrieved_context" not in result
+
+
+def test_ambiguous_routes_to_retriever_after_clarification_limit() -> None:
+    retriever = RecordingRetriever()
+    context_builder = RecordingContextBuilder()
+
+    result = invoke_intent_retriever_graph(
+        _successful_result(),
+        FakeClassifier(IntentType.AMBIGUOUS),
+        retriever,
+        context_builder,
+        _failing_clarification,
+        clarification_round_count=MAX_CLARIFICATION_ROUNDS,
+    )
+
+    assert result["intent_decision"].intent_type == IntentType.AMBIGUOUS
+    assert retriever.state is not None
+    assert context_builder.state is not None
+    assert result["documents"][0]["id"] == "identity-documents__pan-card__chunk-0001"
+    assert result["clarification_round_count"] == 0
 
 
 def test_missing_normalized_input_fails_before_classification() -> None:
@@ -168,6 +220,41 @@ def test_missing_normalized_input_fails_before_classification() -> None:
 def test_missing_intent_decision_in_routing_raises_clear_error() -> None:
     with pytest.raises(ValueError, match="intent_decision is required for intent routing"):
         route_after_intent({})
+
+
+@pytest.mark.parametrize("round_count", [0, 1, 2])
+def test_route_after_intent_allows_three_clarification_rounds(
+    round_count: int,
+) -> None:
+    assert (
+        route_after_intent(
+            {
+                "intent_decision": IntentDecision(
+                    query="Ambiguous query",
+                    intent_type=IntentType.AMBIGUOUS,
+                    confidence_score=0.4,
+                ),
+                "clarification_round_count": round_count,
+            }
+        )
+        == CLARIFICATION_NODE
+    )
+
+
+def test_route_after_intent_forces_retriever_after_clarification_limit() -> None:
+    assert (
+        route_after_intent(
+            {
+                "intent_decision": IntentDecision(
+                    query="Still ambiguous",
+                    intent_type=IntentType.AMBIGUOUS,
+                    confidence_score=0.4,
+                ),
+                "clarification_round_count": MAX_CLARIFICATION_ROUNDS,
+            }
+        )
+        == RETRIEVER_NODE
+    )
 
 
 def test_conversation_fields_are_preserved() -> None:

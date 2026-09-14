@@ -29,7 +29,8 @@ Govt Doc Helpdesk is a document-focused assistant architecture for processing us
 
 ## Current Local Flow
 
-The current frontend integration runs the Input Processor and the first intent graph slice:
+The current frontend integration runs the Input Processor and the intent graph
+slice through retrieval/context building or clarification display:
 
 ```text
 Next.js frontend
@@ -37,14 +38,21 @@ Next.js frontend
   -> InputRequest
   -> Input Processor
   -> NormalizedInput
-  -> input-intent graph
+  -> intent-retriever graph
   -> IntentDecision
+  -> document_info: Retriever -> Context Builder
+  -> ambiguous: Clarification Node
 ```
 
-The API response still returns the input-processing payload. For local debugging,
-the FastAPI terminal prints `NormalizedInput` first, then `IntentDecision` after
-classification. RAG, routing, memory, and final response generation will be
-connected later.
+The `/chat` response includes a stable `status` field. Ambiguous requests return
+`status: "clarification_required"` with the graph-generated clarification
+question in both `message` and `assistant_message.content`, so the frontend can
+display it as a normal assistant message.
+
+For local debugging, the FastAPI terminal prints `NormalizedInput` first, then
+`IntentDecision` after classification. Document-info requests also print
+retrieved documents and built context when present. Durable memory and final
+response generation will be connected later.
 
 Local development uses two servers:
 
@@ -174,6 +182,11 @@ http://localhost:3000
 ```
 
 Submit a message, supported document attachment, or both. The frontend sends a multipart request to FastAPI, and the backend prints the `NormalizedInput` JSON and then the `IntentDecision` JSON in the terminal for local verification.
+
+For ambiguous requests, the backend returns `clarification_required` and the UI
+renders the actual clarification question from the graph. The user answers
+through the same chat composer; durable cross-request continuation is deferred
+to the memory branch.
 
 ## Test Commands
 

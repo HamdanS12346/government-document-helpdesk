@@ -20,6 +20,7 @@ class GraphState(TypedDict, total=False):
     retrieved_context: NotRequired[RetrievedContext]
     messages: NotRequired[list[Any]]
     conversation_summary: NotRequired[str]
+    clarification_round_count: NotRequired[int]
 
 
 State = GraphState
