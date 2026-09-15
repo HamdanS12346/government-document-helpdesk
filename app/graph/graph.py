@@ -16,6 +16,7 @@ from app.intent.node import classify_intent
 from app.observability import start_observation
 from app.rag.context_builder.node import context_builder_node
 from app.rag.node import retriever_node
+from app.response.guardrail_node import response_guardrail_node
 from app.response.node import response_node
 
 
@@ -23,6 +24,7 @@ INTENT_CLASSIFIER_NODE = "intent_classifier"
 RETRIEVER_NODE = "retriever"
 CONTEXT_BUILDER_NODE = "context_builder"
 RESPONSE_NODE = "response"
+RESPONSE_GUARDRAIL_NODE = "response_guardrail"
 GENERAL_CHAT_PLACEHOLDER_NODE = "general_chat_placeholder"
 CLARIFICATION_NODE = "clarification"
 
@@ -142,7 +144,9 @@ def build_full_graph(
     )
     graph.add_edge(RETRIEVER_NODE, CONTEXT_BUILDER_NODE)
     graph.add_edge(CONTEXT_BUILDER_NODE, RESPONSE_NODE)
-    graph.add_edge(RESPONSE_NODE, END)
+    graph.add_node(RESPONSE_GUARDRAIL_NODE, response_guardrail_node)
+    graph.add_edge(RESPONSE_NODE, RESPONSE_GUARDRAIL_NODE)
+    graph.add_edge(RESPONSE_GUARDRAIL_NODE, END)
     graph.add_edge(CLARIFICATION_NODE, END)
     return graph.compile()
 
@@ -296,6 +300,7 @@ __all__ = [
     "CONTEXT_BUILDER_NODE",
     "GENERAL_CHAT_PLACEHOLDER_NODE",
     "INTENT_CLASSIFIER_NODE",
+    "RESPONSE_GUARDRAIL_NODE",
     "RESPONSE_NODE",
     "RETRIEVER_NODE",
     "build_full_graph",
