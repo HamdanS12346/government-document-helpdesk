@@ -22,6 +22,7 @@ class GraphState(TypedDict, total=False):
     messages: NotRequired[list[Any]]
     conversation_summary: NotRequired[str]
     clarification_round_count: NotRequired[int]
+    guardrail_flags: NotRequired[dict[str, Any]]
 
 
 State = GraphState
