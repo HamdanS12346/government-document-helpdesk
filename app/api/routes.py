@@ -73,7 +73,9 @@ async def chat(
                     output=build_input_processing_result_metadata(result)
                 )
             if result.success and result.normalized_input is not None:
-                print("Normalized input:", flush=True)
+                print(f"\n==================== Incoming Chat Request ====================", flush=True)
+                print(f"Conversation ID: {conversation_id or '(none - starting new thread)'}", flush=True)
+                print("\nNormalized input:", flush=True)
                 print(result.normalized_input.model_dump_json(indent=2), flush=True)
                 try:
                     graph_state = _invoke_chat_graph(

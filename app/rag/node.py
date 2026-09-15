@@ -110,6 +110,27 @@ class RetrieverPipeline:
                 rewritten_query,
             )
 
+            print("\n[Retriever Node] Conversation History in Memory:", flush=True)
+            if messages:
+                for idx, msg in enumerate(messages, 1):
+                    msg_type = getattr(msg, "type", "")
+                    content = getattr(msg, "content", str(msg))
+                    role_label = (
+                        "Human Message"
+                        if msg_type == "human"
+                        else ("AI Message" if msg_type == "ai" else f"{msg_type.capitalize()} Message")
+                    )
+                    print(f"  {idx}. {role_label}: {content}", flush=True)
+            else:
+                print("  (None - initial turn)", flush=True)
+
+            if summary:
+                print(f"[Retriever Node] Conversation Summary:\n  {summary}", flush=True)
+
+            print(f"[Retriever Node] Query Optimization:", flush=True)
+            print(f"  Original Query:  {retrieval_input}", flush=True)
+            print(f"  Optimized Query: {rewritten_query}\n", flush=True)
+
             with start_observation(
                 "metadata_filter",
                 input={"rewritten_query_length": len(rewritten_query)},
