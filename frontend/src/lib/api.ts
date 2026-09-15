@@ -47,7 +47,8 @@ export type ChatApiResponse = {
  */
 export async function postChat(
   message: string,
-  files: File[]
+  files: File[],
+  conversationId?: string | null
 ): Promise<ChatApiResponse> {
   const form = new FormData();
 
@@ -58,6 +59,10 @@ export async function postChat(
 
   for (const file of files) {
     form.append("files", file);
+  }
+
+  if (conversationId) {
+    form.append("conversation_id", conversationId);
   }
 
   const response = await fetch(`${API_BASE}/chat`, {

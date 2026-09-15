@@ -66,8 +66,9 @@ def route_after_intent(state: State) -> str:
 def route_after_intent_full(state: State) -> str:
     """Route to the next graph node after intent classification.
 
-    Used by build_full_graph — general_chat goes directly to the real Response Node.
-    Clarification remains on a placeholder until that node is implemented.
+    Used by build_full_graph — general_chat goes directly to the Response Node,
+    document_info routes to retriever, and ambiguous routes to the Clarification Node
+    (or retriever if max clarification rounds are reached).
     """
 
     decision = state.get("intent_decision")
@@ -81,7 +82,11 @@ def route_after_intent_full(state: State) -> str:
     elif intent_type == IntentType.GENERAL_CHAT:
         selected_node = RESPONSE_NODE
     elif intent_type == IntentType.AMBIGUOUS:
-        selected_node = CLARIFICATION_PLACEHOLDER_NODE
+        clarification_round_count = int(state.get("clarification_round_count", 0) or 0)
+        if clarification_round_count >= MAX_CLARIFICATION_ROUNDS:
+            selected_node = RETRIEVER_NODE
+        else:
+            selected_node = CLARIFICATION_NODE
     else:
         raise ValueError(f"unsupported intent_type: {intent_type}")
 
@@ -90,12 +95,20 @@ def route_after_intent_full(state: State) -> str:
         input={
             "intent_type": str(intent_type),
             "confidence_score": decision.confidence_score,
+            "clarification_round_count": int(
+                state.get("clarification_round_count", 0) or 0
+            ),
+            "max_clarification_rounds": MAX_CLARIFICATION_ROUNDS,
         },
     ) as observation:
         observation.update(
             output={
                 "selected_node": selected_node,
                 "selected_path": str(intent_type),
+                "clarification_limit_forced_retriever": (
+                    intent_type == IntentType.AMBIGUOUS
+                    and selected_node == RETRIEVER_NODE
+                ),
             }
         )
     return selected_node
