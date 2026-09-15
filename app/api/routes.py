@@ -2,7 +2,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cache
 import json
+import logging
 from typing import Annotated, Any
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, File, Form, UploadFile, status
 from fastapi.encoders import jsonable_encoder
@@ -19,6 +22,7 @@ from app.graph.graph import invoke_full_graph, invoke_intent_retriever_graph
 from app.input_processing.processors import process_input
 from app.input_processing.schemas import Attachment, InputProcessingResult, InputRequest
 from app.intent.classifier import OpenAIIntentClassifier
+from app.memory import get_default_memory_manager
 from app.observability import flush_langfuse, start_observation
 from app.observability.metadata import (
     build_chat_request_metadata,
@@ -47,6 +51,7 @@ class UploadedFileBytes:
 async def chat(
     message: Annotated[str | None, Form()] = None,
     files: Annotated[list[UploadFile] | None, File()] = None,
+    conversation_id: Annotated[str | None, Form()] = None,
 ) -> JSONResponse:
     """Process frontend chat input through the Input Processor boundary."""
     incoming_files = files or []
@@ -68,13 +73,19 @@ async def chat(
                     output=build_input_processing_result_metadata(result)
                 )
             if result.success and result.normalized_input is not None:
-                print("Normalized input:", flush=True)
+                print(f"\n==================== Incoming Chat Request ====================", flush=True)
+                print(f"Conversation ID: {conversation_id or '(none - starting new thread)'}", flush=True)
+                print("\nNormalized input:", flush=True)
                 print(result.normalized_input.model_dump_json(indent=2), flush=True)
                 try:
                     graph_state = _invoke_chat_graph(
                         result,
+                        conversation_id=conversation_id,
+                        memory_manager=get_default_memory_manager(),
                     )
-                except Exception:
+                except Exception as exc:
+                    logger.exception("Failed to invoke chat graph: %s", exc)
+                    print(f"\n[ERROR] Chat graph invocation failed: {exc}", flush=True)
                     trace.update(output={"status": "classification_error"})
                     return JSONResponse(
                         status_code=status.HTTP_502_BAD_GATEWAY,
@@ -102,6 +113,12 @@ async def chat(
                     )
                 response_status = _build_chat_status(result, graph_state)
                 assistant_message = _build_assistant_message(graph_state)
+                if assistant_message is not None:
+                    print(
+                        f"\n[Assistant response] (thread_id: {graph_state.get('thread_id')}):",
+                        flush=True,
+                    )
+                    print(assistant_message.content, flush=True)
                 trace.update(
                     output=build_chat_graph_response_metadata(
                         graph_state,
@@ -121,7 +138,9 @@ async def chat(
                         **build_input_processing_result_metadata(result),
                     }
                 )
-        except Exception:
+        except Exception as exc:
+            logger.exception("Unhandled error in chat endpoint: %s", exc)
+            print(f"\n[ERROR] Unhandled error in chat endpoint: {exc}", flush=True)
             trace.update(output={"status": "system_error"})
             return JSONResponse(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -132,7 +151,11 @@ async def chat(
 
     return JSONResponse(
         status_code=status.HTTP_200_OK,
-        content=_build_response_payload(result, graph_state),
+        content=_build_response_payload(
+            result,
+            graph_state,
+            conversation_id=conversation_id,
+        ),
     )
 
 
@@ -168,6 +191,8 @@ def _build_intent_classifier() -> OpenAIIntentClassifier:
 def _invoke_chat_graph(
     result: InputProcessingResult,
     *,
+    conversation_id: str | None = None,
+    memory_manager: Any | None = None,
     messages: Iterable[Any] | None = None,
     conversation_summary: str | None = None,
     clarification_round_count: int | None = None,
@@ -175,6 +200,8 @@ def _invoke_chat_graph(
     """Invoke the chat graph with memory fields supplied by the API boundary."""
 
     memory_kwargs: dict[str, object] = {}
+    if conversation_id is not None:
+        memory_kwargs["thread_id"] = conversation_id
     if messages is not None:
         memory_kwargs["messages"] = messages
     if conversation_summary is not None:
@@ -192,6 +219,7 @@ def _invoke_chat_graph(
     return invoke_full_graph(
         result,
         _build_intent_classifier(),
+        memory_manager=memory_manager,
         **memory_kwargs,
     )
 
@@ -199,7 +227,12 @@ def _invoke_chat_graph(
 def _build_response_payload(
     result: InputProcessingResult,
     graph_state: dict[str, object] | None = None,
+    conversation_id: str | None = None,
 ) -> dict[str, object]:
+    resolved_cid = (
+        (graph_state or {}).get("thread_id")
+        or conversation_id
+    )
     response = ChatResponse(
         success=result.success,
         status=_build_chat_status(result, graph_state),
@@ -209,6 +242,7 @@ def _build_response_payload(
         warnings=result.warnings,
         normalized_input=result.normalized_input,
         intent=_build_intent_summary(graph_state),
+        conversation_id=resolved_cid,
     )
     return jsonable_encoder(response)
 
