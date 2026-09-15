@@ -29,7 +29,7 @@ def test_build_pdf_preview_returns_page_aware_preview() -> None:
     assert build_pdf_preview(page_texts) == "page one text\npage two text"
 
 
-def test_build_pdf_preview_limits_each_page_to_200_characters() -> None:
+def test_build_pdf_preview_limits_each_page_to_500_characters() -> None:
     page_texts = [
         "a" * (PDF_PREVIEW_CHARACTERS_PER_PAGE + 10),
         "b" * (PDF_PREVIEW_CHARACTERS_PER_PAGE + 20),

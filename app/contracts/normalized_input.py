@@ -1,4 +1,4 @@
-"""Normalized input contract."""
+"""Normalized input contract definitions."""
 
 from pydantic import BaseModel, ConfigDict
 

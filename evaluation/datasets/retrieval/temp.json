@@ -1,0 +1,302 @@
+[
+  {
+    "id": "RET-001",
+    "document": "indian-passport",
+    "score": 0.237,
+    "chunk": "travel-immigration-documents__indian-passport__india__source-008__chunk-0015"
+  },
+  {
+    "id": "RET-002",
+    "document": "indian-passport",
+    "score": 0.6209,
+    "chunk": "travel-immigration-documents__indian-passport__india__source-007__chunk-0021"
+  },
+  {
+    "id": "RET-003",
+    "document": "indian-passport",
+    "score": 0.5024,
+    "chunk": "travel-immigration-documents__indian-passport__india__source-010__chunk-0003"
+  },
+  {
+    "id": "RET-004",
+    "document": "indian-passport",
+    "score": 0.3675,
+    "chunk": "travel-immigration-documents__indian-passport__india__source-007__chunk-0009"
+  },
+  {
+    "id": "RET-005",
+    "document": "indian-passport",
+    "score": 0.1216,
+    "chunk": "travel-immigration-documents__indian-passport__india__source-010__chunk-0001"
+  },
+  {
+    "id": "RET-006",
+    "document": "visa-for-entering-india",
+    "score": 0.2897,
+    "chunk": "travel-immigration-documents__visa-for-entering-india__india__source-013__chunk-0022"
+  },
+  {
+    "id": "RET-007",
+    "document": "visa-for-entering-india",
+    "score": 0.3236,
+    "chunk": "travel-immigration-documents__visa-for-entering-india__india__source-010__chunk-0009"
+  },
+  {
+    "id": "RET-008",
+    "document": "visa-for-entering-india",
+    "score": 0.2716,
+    "chunk": "travel-immigration-documents__visa-for-entering-india__india__source-013__chunk-0023"
+  },
+  {
+    "id": "RET-009",
+    "document": "visa-for-entering-india",
+    "score": 0.2076,
+    "chunk": "travel-immigration-documents__visa-for-entering-india__india__source-006__chunk-0004"
+  },
+  {
+    "id": "RET-010",
+    "document": "visa-for-entering-india",
+    "score": 0.2303,
+    "chunk": "travel-immigration-documents__visa-for-entering-india__india__source-013__chunk-0024"
+  },
+  {
+    "id": "RET-011",
+    "document": "oci-documents",
+    "score": 0.4258,
+    "chunk": "travel-immigration-documents__oci-documents__india__source-002__chunk-0002"
+  },
+  {
+    "id": "RET-012",
+    "document": "oci-documents",
+    "score": 0.5131,
+    "chunk": "travel-immigration-documents__oci-documents__india__source-002__chunk-0002"
+  },
+  {
+    "id": "RET-013",
+    "document": "oci-documents",
+    "score": 0.482,
+    "chunk": "travel-immigration-documents__oci-documents__india__source-003__chunk-0002"
+  },
+  {
+    "id": "RET-014",
+    "document": "oci-documents",
+    "score": 0.3813,
+    "chunk": "travel-immigration-documents__oci-documents__india__source-002__chunk-0002"
+  },
+  {
+    "id": "RET-015",
+    "document": "oci-documents",
+    "score": 0.3537,
+    "chunk": "travel-immigration-documents__oci-documents__india__source-002__chunk-0002"
+  },
+  {
+    "id": "RET-016",
+    "document": "aadhaar-card",
+    "score": 0.253,
+    "chunk": "identity-documents__aadhaar-card__india__source-001__chunk-031"
+  },
+  {
+    "id": "RET-017",
+    "document": "aadhaar-card",
+    "score": 0.6242,
+    "chunk": "identity-documents__aadhaar-card__india__source-009__chunk-005"
+  },
+  {
+    "id": "RET-018",
+    "document": "aadhaar-card",
+    "score": 0.3852,
+    "chunk": "identity-documents__aadhaar-card__india__source-001__chunk-011"
+  },
+  {
+    "id": "RET-019",
+    "document": "aadhaar-card",
+    "score": 0.4107,
+    "chunk": "identity-documents__aadhaar-card__india__source-001__chunk-000"
+  },
+  {
+    "id": "RET-020",
+    "document": "aadhaar-card",
+    "score": 0.3553,
+    "chunk": "identity-documents__aadhaar-card__india__source-001__chunk-003"
+  },
+  {
+    "id": "RET-021",
+    "document": "pan-card",
+    "score": 0.3564,
+    "chunk": "income-documents__pan-card__india__source-001__chunk-0015"
+  },
+  {
+    "id": "RET-022",
+    "document": "pan-card",
+    "score": 0.2566,
+    "chunk": "income-documents__pan-card__india__source-001__chunk-0014"
+  },
+  {
+    "id": "RET-023",
+    "document": "pan-card",
+    "score": 0.3891,
+    "chunk": "income-documents__pan-card__india__source-001__chunk-0012"
+  },
+  {
+    "id": "RET-024",
+    "document": "pan-card",
+    "score": 0.5253,
+    "chunk": "income-documents__pan-card__india__source-001__chunk-0001"
+  },
+  {
+    "id": "RET-025",
+    "document": "pan-card",
+    "score": 0.3013,
+    "chunk": "income-documents__pan-card__india__source-001__chunk-0014"
+  },
+  {
+    "id": "RET-026",
+    "document": "income-tax-return-and-related-forms",
+    "score": 0.363,
+    "chunk": "income-documents__income-tax-return-and-related-forms__india__source-002__chunk-0006"
+  },
+  {
+    "id": "RET-027",
+    "document": "income-tax-return-and-related-forms",
+    "score": 0.328,
+    "chunk": "income-documents__income-tax-return-and-related-forms__india__source-002__chunk-0002"
+  },
+  {
+    "id": "RET-028",
+    "document": "income-tax-return-and-related-forms",
+    "score": 0.2948,
+    "chunk": "income-documents__income-tax-return-and-related-forms__india__source-004__chunk-0005"
+  },
+  {
+    "id": "RET-029",
+    "document": "income-tax-return-and-related-forms",
+    "score": 0.1928,
+    "chunk": "income-documents__income-tax-return-and-related-forms__india__source-004__chunk-0001"
+  },
+  {
+    "id": "RET-030",
+    "document": "income-tax-return-and-related-forms",
+    "score": 0.1999,
+    "chunk": "income-documents__income-tax-return-and-related-forms__india__source-004__chunk-0001"
+  },
+  {
+    "id": "RET-031",
+    "document": "disability-udid-certificate",
+    "score": 0.2791,
+    "chunk": "health-related-documents__disability-udid-certificate__india__source-003__chunk-0001"
+  },
+  {
+    "id": "RET-032",
+    "document": "disability-udid-certificate",
+    "score": 0.3082,
+    "chunk": "health-related-documents__disability-udid-certificate__india__source-003__chunk-0001"
+  },
+  {
+    "id": "RET-033",
+    "document": "disability-udid-certificate",
+    "score": 0.1412,
+    "chunk": "health-related-documents__disability-udid-certificate__india__source-003__chunk-0003"
+  },
+  {
+    "id": "RET-034",
+    "document": "disability-udid-certificate",
+    "score": 0.22,
+    "chunk": "health-related-documents__disability-udid-certificate__india__source-001__chunk-0001"
+  },
+  {
+    "id": "RET-035",
+    "document": "disability-udid-certificate",
+    "score": 0.1636,
+    "chunk": "health-related-documents__disability-udid-certificate__india__source-003__chunk-0001"
+  },
+  {
+    "id": "RET-036",
+    "document": "voter-id-epic",
+    "score": 0.4071,
+    "chunk": "identity-documents__voter-id-epic__india__source-001__chunk-000"
+  },
+  {
+    "id": "RET-037",
+    "document": "voter-id-epic",
+    "score": 0.1952,
+    "chunk": "identity-documents__voter-id-epic__india__source-001__chunk-001"
+  },
+  {
+    "id": "RET-038",
+    "document": "voter-id-epic",
+    "score": 0.5031,
+    "chunk": "identity-documents__voter-id-epic__india__source-001__chunk-000"
+  },
+  {
+    "id": "RET-039",
+    "document": "voter-id-epic",
+    "score": 0.1164,
+    "chunk": "identity-documents__voter-id-epic__india__source-001__chunk-000"
+  },
+  {
+    "id": "RET-040",
+    "document": "voter-id-epic",
+    "score": 0.2171,
+    "chunk": "identity-documents__voter-id-epic__india__source-001__chunk-000"
+  },
+  {
+    "id": "RET-041",
+    "document": "birth-death-stillbirth-certificates",
+    "score": 0.3201,
+    "chunk": "civil-registration-documents__birth-death-stillbirth-certificates__goa__source-001__chunk-006"
+  },
+  {
+    "id": "RET-042",
+    "document": "birth-death-stillbirth-certificates",
+    "score": 0.1765,
+    "chunk": "civil-registration-documents__birth-death-stillbirth-certificates__goa__source-001__chunk-071"
+  },
+  {
+    "id": "RET-043",
+    "document": "birth-death-stillbirth-certificates",
+    "score": 0.257,
+    "chunk": "civil-registration-documents__birth-death-stillbirth-certificates__goa__source-002__chunk-011"
+  },
+  {
+    "id": "RET-044",
+    "document": "birth-death-stillbirth-certificates",
+    "score": 0.1479,
+    "chunk": "civil-registration-documents__birth-death-stillbirth-certificates__goa__source-002__chunk-015"
+  },
+  {
+    "id": "RET-045",
+    "document": "birth-death-stillbirth-certificates",
+    "score": 0.2211,
+    "chunk": "civil-registration-documents__birth-death-stillbirth-certificates__goa__source-001__chunk-004"
+  },
+  {
+    "id": "RET-046",
+    "document": "sc-caste-certificate",
+    "score": 0.2356,
+    "chunk": "caste-documents__sc-caste-certificate__india__source-003__chunk-0001"
+  },
+  {
+    "id": "RET-047",
+    "document": "sc-caste-certificate",
+    "score": 0.208,
+    "chunk": "caste-documents__sc-caste-certificate__india__source-003__chunk-0001"
+  },
+  {
+    "id": "RET-048",
+    "document": "sc-caste-certificate",
+    "score": 0.2143,
+    "chunk": "caste-documents__sc-caste-certificate__india__source-003__chunk-0004"
+  },
+  {
+    "id": "RET-049",
+    "document": "sc-caste-certificate",
+    "score": 0.2642,
+    "chunk": "caste-documents__sc-caste-certificate__india__source-003__chunk-0004"
+  },
+  {
+    "id": "RET-050",
+    "document": "sc-caste-certificate",
+    "score": 0.1793,
+    "chunk": "caste-documents__sc-caste-certificate__india__source-003__chunk-0004"
+  }
+]

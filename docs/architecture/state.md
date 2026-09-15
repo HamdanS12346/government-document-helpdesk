@@ -6,6 +6,8 @@ The LangGraph state is the shared state passed through the workflow. It stores i
 
 The state should remain simple and contain only information needed by the workflow.
 
+The current state fields are `normalized_input`, `intent_decision`, `documents`, `retrieved_context`, `messages`, `conversation_summary`, and `clarification_round_count`.
+
 ## High-Level State
 
 ```text
@@ -55,6 +57,52 @@ This supports conversation flow and LangGraph message-state handling.
 `conversation_summary` stores a compact summary of relevant previous conversation context.
 
 It is represented as a string and can be used when the full message history should not be passed directly to downstream processing.
+
+### 7. Clarification Round Count
+
+`clarification_round_count` stores the number of consecutive clarification turns for the active request.
+
+It is used to prevent unbounded clarification loops. The counter is incremented when the Clarification Node emits a clarification `AIMessage`, and it should reset when the active request resolves to a non-ambiguous route.
+
+Durable persistence of this value across HTTP requests is part of the memory/checkpoint branch. The field is still part of graph state now so later persistence can reuse the same contract.
+
+The memory branch should persist and reload this value with `messages` and
+`conversation_summary`. It should reset when the active request resolves to a
+non-ambiguous route.
+
+## Clarification State Boundary
+
+The Clarification Node reads only:
+
+- `intent_decision.intent_type`
+- `intent_decision.query`
+- `messages`
+- `conversation_summary`
+- `clarification_round_count`
+
+It does not inspect `normalized_input` directly. Attachment context reaches clarification through `intent_decision.query`, because the Intent Classifier has already folded relevant attachment previews into the classifier-facing query.
+
+No raw uploaded bytes, raw private files, or long-term uploaded document storage enter clarification state. Clarification works from derived text context already present in the intent decision and conversation context.
+
+## Clarification Memory Handoff
+
+The current API can return a completed request response with
+`status: "clarification_required"` and the clarification assistant message. Full
+multi-turn clarified retrieval still requires the memory/checkpoint branch.
+
+That branch must load:
+
+- `messages`
+- `conversation_summary`
+- `clarification_round_count`
+- active clarification context needed to reconstruct the effective query
+
+before invoking the graph for the next `/chat` request. The effective query
+should combine the original request, assistant clarification question, user
+clarification answer, and allowed derived multimodal context.
+
+The Clarification Node must not mutate `normalized_input`, and memory must not
+persist raw uploaded files.
 
 ## State Flow
 

@@ -185,7 +185,7 @@ They are not LLM-generated.
 Current preview rules:
 
 - Image preview: first 500 characters of extracted image text.
-- PDF preview: first 200 characters per page.
+- PDF preview: first 500 characters per page.
 
 Previews are useful for:
 
@@ -310,7 +310,7 @@ PII policy is currently:
 mask and continue
 ```
 
-The current masker is regex-based and deterministic. Exact PII taxonomy/provider remains TBD.
+The current masker is regex-based and deterministic. User query text and extracted attachment text both use this masking path before entering `NormalizedInput`. Exact PII taxonomy/provider remains TBD.
 
 ## Failure Behavior
 
