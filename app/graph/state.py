@@ -4,6 +4,7 @@ from typing import Any, NotRequired, TypedDict
 
 from app.contracts.intent_decision import IntentDecision
 from app.contracts.normalized_input import NormalizedInput
+from app.contracts.response import RetrievedContext
 
 
 class GraphState(TypedDict, total=False):
@@ -13,12 +14,15 @@ class GraphState(TypedDict, total=False):
     input-processing results must stay outside this shared state.
     """
 
+    thread_id: NotRequired[str]
     normalized_input: NotRequired[NormalizedInput]
     intent_decision: NotRequired[IntentDecision]
     documents: NotRequired[list[Any]]
-    retrieved_context: NotRequired[Any]
+    retrieved_context: NotRequired[RetrievedContext]
     messages: NotRequired[list[Any]]
     conversation_summary: NotRequired[str]
+    clarification_round_count: NotRequired[int]
+    guardrail_flags: NotRequired[dict[str, Any]]
 
 
 State = GraphState

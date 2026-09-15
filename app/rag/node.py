@@ -17,6 +17,7 @@ from app.observability.metadata import (
     build_query_rewrite_input_metadata,
     build_query_rewrite_output_metadata,
 )
+from guardrails.retrieval import QueryInjectionGuard, RetrievalGuardrailDecision
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,30 @@ class RetrieverPipeline:
         messages = state.get("messages", [])
         summary = state.get("conversation_summary")
 
+        # --- Query Injection Guard ---
+        # Applied before query rewrite so hostile fragments never reach the LLM
+        # query rewriter, ChromaDB, or BM25.
+        _injection_guard = QueryInjectionGuard()
+        injection_result = _injection_guard.check(
+            retrieval_input,
+            user_query=norm_input.user_query,
+        )
+        if injection_result.decision == RetrievalGuardrailDecision.REJECT:
+            logger.error(
+                "[QueryInjectionGuard] REJECT — aborting retrieval pipeline. "
+                "Matched patterns: %s.",
+                injection_result.matched_pattern_names,
+            )
+            return {"documents": []}
+        if injection_result.decision == RetrievalGuardrailDecision.SANITIZE_AND_CONTINUE:
+            logger.warning(
+                "[QueryInjectionGuard] SANITIZE — query cleaned before retrieval. "
+                "Matched patterns: %s.",
+                injection_result.matched_pattern_names,
+            )
+            retrieval_input = injection_result.sanitized_query
+        # --- End Query Injection Guard ---
+
         with start_observation(
             "retriever",
             input={
@@ -109,6 +134,27 @@ class RetrieverPipeline:
                 retrieval_input,
                 rewritten_query,
             )
+
+            print("\n[Retriever Node] Conversation History in Memory:", flush=True)
+            if messages:
+                for idx, msg in enumerate(messages, 1):
+                    msg_type = getattr(msg, "type", "")
+                    content = getattr(msg, "content", str(msg))
+                    role_label = (
+                        "Human Message"
+                        if msg_type == "human"
+                        else ("AI Message" if msg_type == "ai" else f"{msg_type.capitalize()} Message")
+                    )
+                    print(f"  {idx}. {role_label}: {content}", flush=True)
+            else:
+                print("  (None - initial turn)", flush=True)
+
+            if summary:
+                print(f"[Retriever Node] Conversation Summary:\n  {summary}", flush=True)
+
+            print(f"[Retriever Node] Query Optimization:", flush=True)
+            print(f"  Original Query:  {retrieval_input}", flush=True)
+            print(f"  Optimized Query: {rewritten_query}\n", flush=True)
 
             with start_observation(
                 "metadata_filter",
