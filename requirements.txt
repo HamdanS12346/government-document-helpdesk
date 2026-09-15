@@ -13,6 +13,7 @@ langfuse
 pydantic
 pydantic-settings
 python-dotenv
+langfuse
 
 chromadb
 faiss-cpu

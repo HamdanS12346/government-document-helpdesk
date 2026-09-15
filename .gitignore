@@ -32,6 +32,8 @@ Thumbs.db
 # Local Folders for Managing specs
 .specs
 
+# Generated evaluation reports
+evaluation/reports/
 # Local verification & flow scripts
 test_*_flow.py
 trial_*_run.py
