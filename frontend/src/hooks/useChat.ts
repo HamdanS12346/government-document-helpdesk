@@ -28,6 +28,7 @@ type UseChatReturn = {
   messages: ChatMessage[];
   isLoading: boolean;
   pendingQuery: string;
+  conversationId: string | null;
   sendMessage: (text: string, files: File[]) => Promise<void>;
   clearChat: () => void;
   setPendingQuery: (q: string) => void;
@@ -88,6 +89,7 @@ export function useChat(): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
   const [isLoading, setIsLoading] = useState(false);
   const [pendingQuery, setPendingQuery] = useState("");
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const sendMessage = useCallback(async (text: string, files: File[]) => {
@@ -107,7 +109,10 @@ export function useChat(): UseChatReturn {
     setIsLoading(true);
 
     try {
-      const data = await postChat(trimmed, files);
+      const data = await postChat(trimmed, files, conversationId);
+      if (data.conversation_id) {
+        setConversationId(data.conversation_id);
+      }
 
       const botMsg: ChatMessage = {
         id: uid(),
@@ -134,14 +139,15 @@ export function useChat(): UseChatReturn {
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading]);
+  }, [isLoading, conversationId]);
 
   const clearChat = useCallback(() => {
     abortRef.current?.abort();
     setMessages([{ ...WELCOME_MESSAGE, timestamp: new Date() }]);
     setIsLoading(false);
     setPendingQuery("");
+    setConversationId(null);
   }, []);
 
-  return { messages, isLoading, pendingQuery, sendMessage, clearChat, setPendingQuery };
+  return { messages, isLoading, pendingQuery, conversationId, sendMessage, clearChat, setPendingQuery };
 }

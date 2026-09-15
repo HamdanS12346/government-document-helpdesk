@@ -14,6 +14,7 @@ class GraphState(TypedDict, total=False):
     input-processing results must stay outside this shared state.
     """
 
+    thread_id: NotRequired[str]
     normalized_input: NotRequired[NormalizedInput]
     intent_decision: NotRequired[IntentDecision]
     documents: NotRequired[list[Any]]

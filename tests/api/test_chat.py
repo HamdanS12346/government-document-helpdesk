@@ -1112,3 +1112,51 @@ def test_chat_returns_generated_assistant_response_for_completed_query(
         "content": expected_answer,
     }
     assert payload["message"] == expected_answer
+
+
+def test_chat_generates_and_preserves_conversation_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_full_graph_capture(
+        result: InputProcessingResult,
+        classifier: object,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        captured_kwargs.update(kwargs)
+        tid = kwargs.get("thread_id") or "auto-gen-uuid-1234"
+        return {
+            "intent_decision": IntentDecision(
+                query="Query",
+                intent_type="document_info",
+                confidence_score=0.9,
+            ),
+            "messages": [AIMessage(content="Answer")],
+            "thread_id": tid,
+        }
+
+    monkeypatch.setattr(
+        routes,
+        "invoke_intent_retriever_graph",
+        routes._DEFAULT_INVOKE_INTENT_RETRIEVER,
+    )
+    monkeypatch.setattr(routes, "invoke_full_graph", fake_full_graph_capture)
+    client = TestClient(app)
+
+    # 1. First turn: no conversation_id provided
+    res1 = client.post("/chat", data={"message": "First message"})
+    assert res1.status_code == 200
+    p1 = res1.json()
+    assert p1["conversation_id"] == "auto-gen-uuid-1234"
+
+    # 2. Second turn: conversation_id passed back
+    res2 = client.post(
+        "/chat",
+        data={"message": "Second message", "conversation_id": "auto-gen-uuid-1234"},
+    )
+    assert res2.status_code == 200
+    p2 = res2.json()
+    assert p2["conversation_id"] == "auto-gen-uuid-1234"
+    assert captured_kwargs["thread_id"] == "auto-gen-uuid-1234"
+

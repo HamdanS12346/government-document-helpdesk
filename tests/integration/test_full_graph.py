@@ -1,3 +1,4 @@
+from unittest.mock import MagicMock
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -12,6 +13,9 @@ from app.graph.graph import (
 )
 from app.graph.routing import MAX_CLARIFICATION_ROUNDS, route_after_intent_full
 from app.input_processing.schemas import InputProcessingResult
+from app.memory.node import MemoryManager
+from app.memory.repository import SupabaseMemoryRepository
+from app.memory.summarizer import ConversationSummarizer
 
 
 class FakeClassifier:
@@ -254,3 +258,80 @@ def test_invoke_full_graph_preserves_messages_and_summary():
     assert result["messages"][0].content == "My name is Alex"
     assert result["messages"][1].content == "Nice to meet you Alex"
     assert result["messages"][2].content == "I remember our conversation."
+
+
+def test_invoke_full_graph_multi_turn_with_memory_manager():
+    """Verify invoke_full_graph across sequential dialogue turns persists history and triggers summarization at threshold."""
+    repo = SupabaseMemoryRepository(client=None)
+    repo._is_live_supabase = False
+
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = AIMessage(
+        content="Summary: User asked multiple questions about PAN card."
+    )
+    summarizer = ConversationSummarizer(llm=mock_llm)
+    mgr = MemoryManager(repository=repo, summarizer=summarizer)
+
+    classifier = FakeClassifier(IntentType.GENERAL_CHAT)
+
+    # Turn 1: Starts fresh session
+    responder_1 = RecordingResponder("Hello! How can I help you?")
+    res_1 = invoke_full_graph(
+        _successful_result(_normalized_input("Hello there")),
+        classifier=classifier,
+        responder=responder_1,
+        memory_manager=mgr,
+    )
+    thread_id = res_1.get("thread_id")
+    assert thread_id is not None
+    assert len(res_1["messages"]) == 2
+    assert res_1["messages"][0].content == "Hello there"
+    assert res_1["messages"][1].content == "Hello! How can I help you?"
+
+    # Turn 2: Uses existing thread_id
+    responder_2 = RecordingResponder("You need proof of identity.")
+    res_2 = invoke_full_graph(
+        _successful_result(_normalized_input("What do I need for PAN?")),
+        classifier=classifier,
+        responder=responder_2,
+        thread_id=thread_id,
+        memory_manager=mgr,
+    )
+    assert responder_2.called
+    assert len(responder_2.state["messages"]) == 2
+    assert len(res_2["messages"]) == 4
+
+    # Run turns 3 to 7 (5 more turns = 10 messages -> total 14 messages in repository)
+    for i in range(3, 8):
+        invoke_full_graph(
+            _successful_result(_normalized_input(f"Follow up {i}")),
+            classifier=classifier,
+            responder=RecordingResponder(f"Response {i}"),
+            thread_id=thread_id,
+            memory_manager=mgr,
+        )
+
+    # At 7 turns, 14 messages in repo, exactly at hard threshold
+    active_msgs, summary, watermark = repo.load_active_messages(thread_id)
+    assert len(active_msgs) == 14
+    assert watermark == 0
+    assert not mock_llm.invoke.called
+
+    # Turn 8: 16 messages breaches 14 threshold -> triggers summarization
+    responder_8 = RecordingResponder("Response 8")
+    res_8 = invoke_full_graph(
+        _successful_result(_normalized_input("Follow up 8")),
+        classifier=classifier,
+        responder=responder_8,
+        thread_id=thread_id,
+        memory_manager=mgr,
+    )
+
+    # Summarizer should have been invoked
+    assert mock_llm.invoke.called
+    assert res_8.get("conversation_summary") == "Summary: User asked multiple questions about PAN card."
+    # 4 oldest evicted, 16 - 4 = 12 active remaining
+    assert len(res_8["messages"]) == 12
+    # Full transcript in repo still retains all 16 messages
+    full_transcript = repo.get_full_transcript(thread_id)
+    assert len(full_transcript) == 16
