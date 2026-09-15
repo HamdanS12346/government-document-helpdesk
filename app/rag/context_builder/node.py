@@ -29,6 +29,7 @@ from app.observability.metadata import (
     build_documents_metadata,
     build_retrieved_context_metadata,
 )
+from guardrails.retrieval import LowConfidenceGuard
 
 logger = logging.getLogger(__name__)
 
@@ -98,4 +99,16 @@ def context_builder_node(
         retrieved_context.has_relevant_documents,
     )
 
-    return {"retrieved_context": retrieved_context}
+    # --- Low Confidence Guard ---
+    # Flags turns where no relevant documents were found so that monitoring
+    # systems can track ungrounded responses. Does NOT modify retrieved_context.
+    _lc_guard = LowConfidenceGuard()
+    lc_result = _lc_guard.check(retrieved_context)
+    existing_flags = dict(state.get("guardrail_flags") or {})
+    existing_flags["retrieval_ungrounded"] = not lc_result.is_grounded
+    # --- End Low Confidence Guard ---
+
+    return {
+        "retrieved_context": retrieved_context,
+        "guardrail_flags": existing_flags,
+    }

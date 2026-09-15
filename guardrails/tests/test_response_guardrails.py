@@ -1,0 +1,372 @@
+"""Tests for guardrails/response.py — output guardrails.
+
+Tests are grouped by guardrail class. Each class tests:
+  - The ALLOW path (clean input passes through unchanged)
+  - Each non-ALLOW decision path
+  - Edge cases (empty input, None context, etc.)
+  - The composite runner (pipeline order, short-circuit on REJECT)
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app.contracts.response import ContextSource, RetrievedContext
+from guardrails.response import (
+    CitationGroundingGuardrail,
+    CitationGroundingResult,
+    ResponseGuardrailDecision,
+    ResponseGuardrailReport,
+    ResponseLengthGuardrail,
+    ResponsePIIScanner,
+    ResponseScopeGuardrail,
+    run_response_guardrails,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_context(num_sources: int, fallback_applied: bool = False) -> RetrievedContext:
+    """Build a minimal RetrievedContext with `num_sources` sources."""
+    sources = [
+        ContextSource(index=i + 1, chunk_id=f"chunk-{i}", document_name=f"doc-{i}")
+        for i in range(num_sources)
+    ]
+    return RetrievedContext(
+        formatted_context="some context text",
+        sources=sources,
+        total_documents_retrieved=num_sources,
+        documents_used=num_sources,
+        has_relevant_documents=num_sources > 0 and not fallback_applied,
+        fallback_applied=fallback_applied,
+    )
+
+
+# ---------------------------------------------------------------------------
+# TestCitationGroundingGuardrail
+# ---------------------------------------------------------------------------
+
+class TestCitationGroundingGuardrail:
+    """Tests for CitationGroundingGuardrail."""
+
+    guardrail = CitationGroundingGuardrail()
+
+    def test_allow_when_no_citations_in_response(self):
+        """Response with no [Document N] references always ALLOWs."""
+        ctx = _make_context(2)
+        result = self.guardrail.check("Here is some guidance.", ctx)
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+        assert result.total_citations_found == 0
+        assert result.cleaned_text == "Here is some guidance."
+
+    def test_allow_when_all_citations_valid(self):
+        """All cited documents exist in sources → ALLOW."""
+        ctx = _make_context(3)
+        text = "See [Document 1] and [Document 2] for details."
+        result = self.guardrail.check(text, ctx)
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+        assert result.invalid_citation_indices == []
+
+    def test_strip_when_some_citations_invalid(self):
+        """A minority of invalid citations → STRIP_INVALID_CITATIONS."""
+        ctx = _make_context(2)  # valid: 1, 2
+        text = "See [Document 1] and [Document 5] for more."
+        result = self.guardrail.check(text, ctx)
+        assert result.decision == ResponseGuardrailDecision.STRIP_INVALID_CITATIONS
+        assert 5 in result.invalid_citation_indices
+        assert "[source unavailable]" in result.cleaned_text
+        assert "[Document 1]" in result.cleaned_text  # valid one preserved
+
+    def test_reject_when_majority_of_citations_invalid(self):
+        """More than 50% invalid → REJECT with fallback text."""
+        ctx = _make_context(1)  # valid: 1 only
+        text = "See [Document 1], [Document 2], [Document 3]."
+        result = self.guardrail.check(text, ctx)
+        assert result.decision == ResponseGuardrailDecision.REJECT
+        assert "government portals" in result.cleaned_text
+
+    def test_allow_when_no_context(self):
+        """retrieved_context=None (general_chat path) → always ALLOW."""
+        result = self.guardrail.check("Hello, how can I help?", None)
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+
+    def test_reject_when_context_has_no_sources_but_response_cites(self):
+        """Empty sources list but response cites documents → all invalid → REJECT."""
+        ctx = _make_context(0)
+        text = "According to [Document 1] and [Document 2], you must apply online."
+        result = self.guardrail.check(text, ctx)
+        assert result.decision == ResponseGuardrailDecision.REJECT
+
+    def test_case_insensitive_citation_pattern(self):
+        """Citation pattern matches [document 1] and [DOCUMENT 1]."""
+        ctx = _make_context(2)
+        text = "Refer to [document 1] for details."
+        result = self.guardrail.check(text, ctx)
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+
+    def test_allows_exact_boundary_fraction(self):
+        """Exactly 50% invalid is STRIP, not REJECT (boundary inclusive)."""
+        ctx = _make_context(2)  # valid: 1, 2
+        text = "See [Document 1] and [Document 9]."  # 1 of 2 = 50%
+        result = self.guardrail.check(text, ctx)
+        assert result.decision == ResponseGuardrailDecision.STRIP_INVALID_CITATIONS
+
+
+# ---------------------------------------------------------------------------
+# TestResponsePIIScanner
+# ---------------------------------------------------------------------------
+
+class TestResponsePIIScanner:
+    """Tests for ResponsePIIScanner."""
+
+    scanner = ResponsePIIScanner()
+
+    def test_allow_clean_text(self):
+        """Text with no PII → ALLOW with unchanged text."""
+        text = "To apply, visit the official portal and fill out Form 16."
+        result = self.scanner.scan(text)
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+        assert result.redaction_count == 0
+        assert result.cleaned_text == text
+
+    def test_redacts_pan_number(self):
+        """PAN card number (ABCDE1234F) is redacted."""
+        text = "Your PAN number ABCDE1234F has been verified."
+        result = self.scanner.scan(text)
+        assert result.decision == ResponseGuardrailDecision.REDACT_AND_CONTINUE
+        assert "ABCDE1234F" not in result.cleaned_text
+        assert "[REDACTED]" in result.cleaned_text
+        assert result.redaction_count >= 1
+
+    def test_redacts_aadhaar_number(self):
+        """12-digit Aadhaar number is redacted."""
+        text = "Aadhaar 1234 5678 9012 is linked to your account."
+        result = self.scanner.scan(text)
+        assert result.decision == ResponseGuardrailDecision.REDACT_AND_CONTINUE
+        assert result.redaction_count >= 1
+
+    def test_redacts_phone_number(self):
+        """Indian mobile number is redacted."""
+        text = "Please call 9876543210 for assistance."
+        result = self.scanner.scan(text)
+        assert result.decision == ResponseGuardrailDecision.REDACT_AND_CONTINUE
+        assert "9876543210" not in result.cleaned_text
+
+    def test_redacts_email_address(self):
+        """Email address is redacted."""
+        text = "Contact support at citizen@example.gov.in for help."
+        result = self.scanner.scan(text)
+        assert result.decision == ResponseGuardrailDecision.REDACT_AND_CONTINUE
+        assert "citizen@example.gov.in" not in result.cleaned_text
+
+    def test_multiple_pii_types_all_redacted(self):
+        """Multiple PII types in one response — all redacted."""
+        text = (
+            "Your PAN ABCDE1234F and Aadhaar 1234 5678 9012 are needed. "
+            "Call 9876543210 or email you@example.com."
+        )
+        result = self.scanner.scan(text)
+        assert result.decision == ResponseGuardrailDecision.REDACT_AND_CONTINUE
+        assert result.redaction_count >= 3
+
+    def test_redaction_count_is_accurate(self):
+        """redaction_count reflects actual number of substitutions made."""
+        text = "PAN ABCDE1234F and FGHIJ5678K are both invalid."
+        result = self.scanner.scan(text)
+        assert result.redaction_count == 2
+
+
+# ---------------------------------------------------------------------------
+# TestResponseLengthGuardrail
+# ---------------------------------------------------------------------------
+
+class TestResponseLengthGuardrail:
+    """Tests for ResponseLengthGuardrail."""
+
+    guardrail = ResponseLengthGuardrail(max_chars=100, hard_reject_chars=200)
+
+    def test_allow_under_limit(self):
+        """Text under max_chars → ALLOW unchanged."""
+        text = "Short response."
+        result = self.guardrail.check(text)
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+        assert result.cleaned_text == text
+
+    def test_allow_at_exact_limit(self):
+        """Text exactly at max_chars → ALLOW."""
+        text = "A" * 100
+        result = self.guardrail.check(text)
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+
+    def test_truncate_between_soft_and_hard_limit(self):
+        """Text between max_chars and hard_reject_chars → TRUNCATE."""
+        # Build text with a sentence boundary before char 100.
+        text = ("This is sentence one. " * 5) + ("Extra text " * 5)
+        assert len(text) > 100
+        assert len(text) <= 200
+        result = self.guardrail.check(text)
+        assert result.decision == ResponseGuardrailDecision.TRUNCATE
+        assert "shortened" in result.cleaned_text
+        assert result.final_length < result.original_length
+
+    def test_truncate_appends_suffix(self):
+        """Truncated response includes the shortening notice suffix."""
+        text = "A" * 50 + ". " + "B" * 100
+        result = self.guardrail.check(text)
+        assert result.decision == ResponseGuardrailDecision.TRUNCATE
+        assert "[Response was shortened." in result.cleaned_text
+
+    def test_reject_above_hard_limit(self):
+        """Text above hard_reject_chars → REJECT with safe fallback."""
+        text = "A" * 201
+        result = self.guardrail.check(text)
+        assert result.decision == ResponseGuardrailDecision.REJECT
+        assert "concerned department" in result.cleaned_text
+
+    def test_constructor_validates_limits(self):
+        """max_chars must be less than hard_reject_chars."""
+        with pytest.raises(ValueError):
+            ResponseLengthGuardrail(max_chars=500, hard_reject_chars=500)
+
+    def test_truncation_finds_sentence_boundary(self):
+        """Truncation cuts at the last sentence boundary, not mid-word."""
+        text = "First sentence ends here. " + "X" * 100
+        result = ResponseLengthGuardrail(max_chars=30, hard_reject_chars=200).check(text)
+        assert result.decision == ResponseGuardrailDecision.TRUNCATE
+        # The cut should be after "here." not in the middle of the X block
+        assert result.cleaned_text.startswith("First sentence ends here.")
+
+
+# ---------------------------------------------------------------------------
+# TestResponseScopeGuardrail
+# ---------------------------------------------------------------------------
+
+class TestResponseScopeGuardrail:
+    """Tests for ResponseScopeGuardrail."""
+
+    guardrail = ResponseScopeGuardrail()
+
+    def test_allow_government_response_general_chat(self):
+        """On-topic government response in general_chat → ALLOW."""
+        text = "To get your Aadhaar card, visit the UIDAI portal and complete e-KYC."
+        result = self.guardrail.check(text, intent_type="general_chat")
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+
+    def test_replace_off_topic_cricket_response(self):
+        """Response about cricket with no government signal → REPLACE_WITH_REDIRECT."""
+        text = (
+            "The IPL match scorecard shows that cricket has exciting moments. "
+            "India won the football and cricket matches this season!"
+        )
+        result = self.guardrail.check(text, intent_type="general_chat")
+        assert result.decision == ResponseGuardrailDecision.REPLACE_WITH_REDIRECT
+        assert "government documents" in result.cleaned_text
+
+    def test_allow_single_forbidden_keyword(self):
+        """One forbidden keyword alone does not trigger replacement (threshold is 2)."""
+        text = "The cricket ground lease requires a municipal permit."
+        result = self.guardrail.check(text, intent_type="general_chat")
+        # "cricket" is one forbidden match but there is also a government signal (municipal)
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+
+    def test_allow_for_document_info_intent(self):
+        """document_info intent is always skipped — even fully off-topic text passes."""
+        text = "Watch IPL cricket and Bollywood movies on OTT platforms!"
+        result = self.guardrail.check(text, intent_type="document_info")
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+
+    def test_allow_stock_market_with_government_signal(self):
+        """Stock market content with government signal → not replaced."""
+        text = "The ministry regulates the sensex and share market trading activities."
+        result = self.guardrail.check(text, intent_type="general_chat")
+        # sensex/trading are forbidden, but "ministry" is a government signal
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+
+    def test_replace_multiple_forbidden_zero_government(self):
+        """Multiple forbidden matches, no government signals → REPLACE_WITH_REDIRECT."""
+        text = "Check the horoscope and lottery results for the best gambling tips."
+        result = self.guardrail.check(text, intent_type="general_chat")
+        assert result.decision == ResponseGuardrailDecision.REPLACE_WITH_REDIRECT
+
+    def test_forbidden_matches_list_populated(self):
+        """forbidden_matches contains the actual matched strings."""
+        text = "Watch Bollywood films and check the recipe for today."
+        result = self.guardrail.check(text, intent_type="general_chat")
+        assert len(result.forbidden_matches) >= 2
+
+
+# ---------------------------------------------------------------------------
+# TestRunResponseGuardrails — composite pipeline
+# ---------------------------------------------------------------------------
+
+class TestRunResponseGuardrails:
+    """Tests for the run_response_guardrails composite runner."""
+
+    def test_clean_response_passes_with_no_trigger(self):
+        """A clean response triggers nothing — any_triggered is False."""
+        ctx = _make_context(2)
+        text = "Visit the income tax portal at incometax.gov.in for Form 16 details."
+        report = run_response_guardrails(text, ctx, intent_type="document_info")
+        assert not report.any_triggered
+        assert report.final_text == text
+
+    def test_pii_redaction_is_applied(self):
+        """PII in a clean response is redacted and any_triggered is True."""
+        ctx = _make_context(1)
+        text = "Your Aadhaar 1234 5678 9012 is linked. Visit the portal."
+        report = run_response_guardrails(text, ctx, intent_type="document_info")
+        assert report.any_triggered
+        assert "1234 5678 9012" not in report.final_text
+        assert report.pii_result.redaction_count >= 1
+
+    def test_citation_stripping_is_applied(self):
+        """Invalid citations are stripped and any_triggered is True."""
+        ctx = _make_context(1)  # only Document 1 exists
+        text = "See [Document 1] and [Document 99] for details."
+        report = run_response_guardrails(text, ctx, intent_type="document_info")
+        assert report.any_triggered
+        assert "[Document 99]" not in report.final_text
+        assert "[source unavailable]" in report.final_text
+
+    def test_citation_reject_short_circuits_pii_scan(self):
+        """On REJECT from citation guardrail, fallback text goes through PII scan."""
+        ctx = _make_context(0)  # no sources at all
+        text = "See [Document 1] and [Document 2]. Your PAN is ABCDE1234F."
+        report = run_response_guardrails(text, ctx, intent_type="document_info")
+        # Citation guardrail REJECTs → fallback text used
+        assert report.citation_result.decision == ResponseGuardrailDecision.REJECT
+        # PII scanner runs on fallback text (which has no PII)
+        assert report.pii_result.decision == ResponseGuardrailDecision.ALLOW
+        # Final text is the safe fallback
+        assert "government portals" in report.final_text
+
+    def test_pipeline_order_pii_runs_after_citation(self):
+        """PII scanner sees the output of citation guardrail, not original text."""
+        ctx = _make_context(1)
+        # [Document 9] is invalid; PAN follows in same text
+        text = "See [Document 9]. Call 9876543210 for details."
+        report = run_response_guardrails(text, ctx, intent_type="document_info")
+        assert "[Document 9]" not in report.final_text
+        assert "9876543210" not in report.final_text
+
+    def test_any_triggered_true_when_scope_replaces(self):
+        """any_triggered is True when scope guardrail fires."""
+        report = run_response_guardrails(
+            "Watch Bollywood movies and check the lottery results.",
+            retrieved_context=None,
+            intent_type="general_chat",
+        )
+        assert report.any_triggered
+        assert report.scope_result.decision == ResponseGuardrailDecision.REPLACE_WITH_REDIRECT
+
+    def test_report_fields_all_populated(self):
+        """All result fields on the report are populated regardless of decisions."""
+        ctx = _make_context(2)
+        text = "To apply for a passport, visit the passport portal."
+        report = run_response_guardrails(text, ctx, intent_type="document_info")
+        assert isinstance(report.citation_result, type(report.citation_result))
+        assert isinstance(report.pii_result.redaction_count, int)
+        assert isinstance(report.length_result.original_length, int)
+        assert isinstance(report.scope_result.forbidden_matches, list)

@@ -17,6 +17,7 @@ from app.observability.metadata import (
     build_query_rewrite_input_metadata,
     build_query_rewrite_output_metadata,
 )
+from guardrails.retrieval import QueryInjectionGuard, RetrievalGuardrailDecision
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,30 @@ class RetrieverPipeline:
         used_combined_text = bool(norm_input.combined_text.strip())
         messages = state.get("messages", [])
         summary = state.get("conversation_summary")
+
+        # --- Query Injection Guard ---
+        # Applied before query rewrite so hostile fragments never reach the LLM
+        # query rewriter, ChromaDB, or BM25.
+        _injection_guard = QueryInjectionGuard()
+        injection_result = _injection_guard.check(
+            retrieval_input,
+            user_query=norm_input.user_query,
+        )
+        if injection_result.decision == RetrievalGuardrailDecision.REJECT:
+            logger.error(
+                "[QueryInjectionGuard] REJECT — aborting retrieval pipeline. "
+                "Matched patterns: %s.",
+                injection_result.matched_pattern_names,
+            )
+            return {"documents": []}
+        if injection_result.decision == RetrievalGuardrailDecision.SANITIZE_AND_CONTINUE:
+            logger.warning(
+                "[QueryInjectionGuard] SANITIZE — query cleaned before retrieval. "
+                "Matched patterns: %s.",
+                injection_result.matched_pattern_names,
+            )
+            retrieval_input = injection_result.sanitized_query
+        # --- End Query Injection Guard ---
 
         with start_observation(
             "retriever",
