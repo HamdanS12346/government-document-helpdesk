@@ -64,10 +64,9 @@ class LangfuseReporter:
                     self.client.create_score(
                         name="case_passed",
                         value=1.0 if case.get("passed", False) else 0.0,
-                        value=1.0 if case["passed"] else 0.0,
                         trace_id=trace_id,
                         data_type="NUMERIC",
-                        comment=case["id"],
+                        comment=case.get("id"),
                     )
             observation.update(output=report)
         self.client.flush()

@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import {
   postChat,
+  fetchThreadMessages,
   type AttachmentStatus,
   type ChatApiResponse,
   type ProcessingWarning,
@@ -31,7 +32,8 @@ type UseChatReturn = {
   isLoading: boolean;
   pendingQuery: string;
   conversationId: string | null;
-  sendMessage: (text: string, files: File[]) => Promise<void>;
+  sendMessage: (text: string, files: File[], token?: string | null) => Promise<void>;
+  loadThread: (threadId: string, token: string) => Promise<void>;
   clearChat: () => void;
   setPendingQuery: (q: string) => void;
 };
@@ -90,7 +92,7 @@ export function useChat(): UseChatReturn {
   // Track conversation_id for multi-turn memory (set after first response)
   const conversationIdRef = useRef<string | null>(null);
 
-  const sendMessage = useCallback(async (text: string, files: File[]) => {
+  const sendMessage = useCallback(async (text: string, files: File[], token?: string | null) => {
     const trimmed = text.trim();
     if (!trimmed && files.length === 0) return;
     if (isLoading) return;
@@ -107,10 +109,7 @@ export function useChat(): UseChatReturn {
     setIsLoading(true);
 
     try {
-      const activeConversationId = conversationIdRef.current || conversationId;
-      const data = await postChat(trimmed, files, activeConversationId);
-
-      // Persist the conversation_id returned by the backend for session memory.
+      const data = await postChat(trimmed, files, conversationId, token);
       if (data.conversation_id) {
         conversationIdRef.current = data.conversation_id;
         setConversationId(data.conversation_id);
@@ -149,6 +148,25 @@ export function useChat(): UseChatReturn {
     }
   }, [isLoading, conversationId]);
 
+  const loadThread = useCallback(async (threadId: string, token: string) => {
+    setIsLoading(true);
+    try {
+      const threadMessages = await fetchThreadMessages(threadId, token);
+      const converted: ChatMessage[] = threadMessages.map((m) => ({
+        id: m.id || uid(),
+        role: m.role === "ai" ? "bot" : "user",
+        content: m.content,
+        timestamp: m.created_at ? new Date(m.created_at) : new Date(),
+      }));
+      setMessages(converted.length > 0 ? converted : [WELCOME_MESSAGE]);
+      setConversationId(threadId);
+    } catch (err) {
+      console.error("Failed to load thread messages:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   const clearChat = useCallback(() => {
     abortRef.current?.abort();
     setMessages([{ ...WELCOME_MESSAGE, timestamp: new Date() }]);
@@ -158,5 +176,5 @@ export function useChat(): UseChatReturn {
     setConversationId(null);
   }, []);
 
-  return { messages, isLoading, pendingQuery, conversationId, sendMessage, clearChat, setPendingQuery };
+  return { messages, isLoading, pendingQuery, conversationId, sendMessage, loadThread, clearChat, setPendingQuery };
 }
