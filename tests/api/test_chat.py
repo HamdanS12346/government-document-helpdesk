@@ -1,5 +1,6 @@
 """API boundary tests for frontend input processing."""
 
+import asyncio
 from contextlib import contextmanager
 from collections.abc import Iterator
 
@@ -8,6 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 import pytest
 
 from app.api import routes
+from app.api import main as api_main
 from app.api.main import app
 from app.api.serialization import serialize_public_message
 from app.config import get_settings
@@ -85,6 +87,39 @@ def test_chat_allows_local_frontend_origin() -> None:
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+def test_api_lifespan_warms_retriever_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePipeline:
+        def __init__(self) -> None:
+            self.dense_warm_calls = 0
+            self.warm_calls = 0
+
+        def warm_dense_resources(self) -> bool:
+            self.dense_warm_calls += 1
+            return True
+
+        def warm_lexical_index(self) -> bool:
+            self.warm_calls += 1
+            return True
+
+    pipeline = FakePipeline()
+    monkeypatch.setattr(
+        api_main,
+        "get_default_retriever_pipeline",
+        lambda: pipeline,
+    )
+
+    async def run_lifespan() -> None:
+        async with api_main.lifespan(app):
+            pass
+
+    asyncio.run(run_lifespan())
+
+    assert pipeline.dense_warm_calls == 1
+    assert pipeline.warm_calls == 1
 
 
 def test_chat_accepts_text_only_input() -> None:

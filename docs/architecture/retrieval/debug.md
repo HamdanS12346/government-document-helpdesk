@@ -77,9 +77,80 @@ If first-query latency gets worse but second/third query latency improves, the
 BM25 warm-up is confirmed as a first-query cost. The next optimization should
 move that cost out of the request path.
 
+## Step 2 Implemented: Startup BM25 Warm-Up
+
+Files changed:
+
+- `app/api/main.py`
+- `app/rag/node.py`
+- `tests/api/test_chat.py`
+- `tests/rag/test_retriever_node.py`
+
+Change:
+
+```text
+FastAPI lifespan startup
+  -> get_default_retriever_pipeline()
+  -> pipeline.warm_lexical_index()
+  -> BM25 corpus load/index build happens before serving requests
+
+RetrieverPipeline.execute()
+  -> lexical_retrieval now only runs lexical_searcher.search(...)
+  -> request path no longer warms BM25
+```
+
+Expected trace behavior after restarting the API:
+
+- The one-time Chroma corpus load and BM25 build should move from the first
+  `lexical_retrieval` span into application startup.
+- First real request should still show lexical documents when BM25 terms match.
+- `lexical_retrieval` duration should drop because it is no longer doing
+  `collection.get(...)` and BM25 construction.
+- If lexical returns zero documents on later queries, that should now mean query
+  terms/filtering did not produce BM25 hits, not that BM25 failed to load.
+
+## Step 3 Implemented: Dense Resource Warm-Up And Count Cache
+
+Files changed:
+
+- `app/api/main.py`
+- `app/rag/node.py`
+- `app/rag/vector_store.py`
+- `tests/api/test_chat.py`
+- `tests/rag/test_vector_store.py`
+
+Change:
+
+```text
+FastAPI lifespan startup
+  -> pipeline.warm_dense_resources()
+  -> initialize embedding model object
+  -> initialize Chroma client/collection
+  -> cache Chroma collection.count()
+  -> pipeline.warm_lexical_index()
+
+VectorStoreRetriever.search()
+  -> reuses cached collection count
+  -> avoids collection.count() during normal dense retrieval after startup
+```
+
+Expected trace behavior after restarting the API:
+
+- Startup may take a little longer because Chroma collection/count and embedding
+  client setup happen before the first request.
+- First real `dense_retrieval` should no longer pay Chroma client/collection
+  creation or collection count.
+- `dense_retrieval` can still be several seconds because query embedding and
+  Chroma vector query remain request-time work.
+- If `chat_request` is still much larger than the sum of child spans, the missing
+  time is probably outside retrieval spans, especially response payload
+  serialization, console printing, graph/memory wrapper work, or Langfuse flush.
+
 ## Ranked Solutions
 
 ### 1. Move BM25 Warm-Up Out Of The Request Path
+
+Status: implemented.
 
 Confidence: very high.
 
@@ -96,7 +167,7 @@ Chroma collection.get(...)
   -> BM25Okapi construction
 ```
 
-Best next implementation:
+Implemented design:
 
 ```text
 FastAPI startup
@@ -180,6 +251,8 @@ Preserve the same trace span names: `dense_retrieval`, `lexical_retrieval`,
 `reciprocal_rank_fusion`, and `reranking`.
 
 ### 4. Cache Or Avoid `collection.count()` During Dense Search
+
+Status: implemented with a cached count warmed at startup.
 
 Confidence: high.
 

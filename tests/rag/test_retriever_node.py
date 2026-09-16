@@ -302,8 +302,8 @@ def test_retriever_pipeline_rewrites_from_combined_text_not_intent_query():
     assert query_rewriter.attachment_previews == []
 
 
-def test_retriever_pipeline_warms_empty_lexical_index_from_vector_corpus_once():
-    """Default-style empty BM25 searcher can load Chroma-backed corpus and reuse it."""
+def test_retriever_pipeline_uses_startup_warmed_lexical_index():
+    """Default-style BM25 searcher can warm before requests and then search locally."""
     corpus = get_mock_corpus()
     vector_retriever = CorpusOnlyVectorRetriever(corpus)
     pipeline = RetrieverPipeline(
@@ -324,6 +324,9 @@ def test_retriever_pipeline_warms_empty_lexical_index_from_vector_corpus_once():
         "messages": [],
         "conversation_summary": None,
     }
+
+    assert pipeline.warm_lexical_index() is True
+    assert vector_retriever.get_all_documents_calls == 1
 
     first_result = pipeline.execute(state)
     second_result = pipeline.execute(state)

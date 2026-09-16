@@ -71,6 +71,16 @@ class RetrieverPipeline:
             logger.warning("BM25 lexical index is empty; lexical retrieval will return no documents.")
         return bool(loaded)
 
+    def warm_dense_resources(self) -> bool:
+        """Initialize Chroma collection, collection count, and embedding client."""
+        warm_resources = getattr(self.vector_retriever, "warm_resources", None)
+        if not callable(warm_resources):
+            return False
+        warmed = warm_resources()
+        if warmed:
+            logger.info("Initialized dense retrieval resources.")
+        return bool(warmed)
+
     def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Execute the end-to-end retriever pipeline on a LangGraph state dictionary."""
         raw_norm_input = state.get("normalized_input")
@@ -222,7 +232,6 @@ class RetrieverPipeline:
                     "rewritten_query_length": len(rewritten_query),
                 },
             ) as lexical_observation:
-                self.warm_lexical_index()
                 lexical_results = self.lexical_searcher.search(
                     rewritten_query,
                     top_k=self.bm25_top_k,
