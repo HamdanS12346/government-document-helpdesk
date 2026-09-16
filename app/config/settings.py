@@ -18,6 +18,7 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     app_name: str = "govt-doc-helpdesk"
+    chat_debug_prints: bool = Field(default=False, validation_alias="CHAT_DEBUG_PRINTS")
 
     langfuse_enabled: bool = Field(default=False, validation_alias="LANGFUSE_ENABLED")
     langfuse_public_key: Optional[str] = Field(

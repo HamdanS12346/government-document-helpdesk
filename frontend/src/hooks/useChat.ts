@@ -3,8 +3,11 @@
 import { useCallback, useRef, useState } from "react";
 import {
   postChat,
+  fetchThreadMessages,
   type AttachmentStatus,
   type ChatApiResponse,
+  type ProcessingWarning,
+  type AssistantMessage,
 } from "@/lib/api";
 
 export type MessageRole = "user" | "bot";
@@ -29,7 +32,8 @@ type UseChatReturn = {
   isLoading: boolean;
   pendingQuery: string;
   conversationId: string | null;
-  sendMessage: (text: string, files: File[]) => Promise<void>;
+  sendMessage: (text: string, files: File[], token?: string | null) => Promise<void>;
+  loadThread: (threadId: string, token: string) => Promise<void>;
   clearChat: () => void;
   setPendingQuery: (q: string) => void;
 };
@@ -53,36 +57,30 @@ function safeText(text: string | undefined, fallback: string): string {
 }
 
 function buildBotContent(
-  data: ChatApiResponse
+  success: boolean,
+  message: string,
+  assistantMessage: AssistantMessage | null,
+  warnings: ProcessingWarning[],
+  attachmentStatuses: AttachmentStatus[]
 ): string {
-  const warnings = data.warnings ?? [];
-  const attachmentStatuses = data.attachment_statuses ?? [];
-  const assistantContent = data.assistant_message?.content;
-
-  if (!data.success) {
-    return safeText(
-      data.message,
-      "Sorry, I couldn't process that request. Please try again."
-    );
+  // --- Priority 1: use the real LLM response when present ---
+  if (assistantMessage?.content) {
+    return safeText(assistantMessage.content, "Sorry, I couldn't generate a response. Please try again.");
   }
 
+  // --- Priority 2: input processing failure ---
+  if (!success) {
+    return safeText(message, "Sorry, I couldn't process that request. Please try again.");
+  }
+
+  // --- Priority 3: all attachments failed ---
   const failedFiles = attachmentStatuses.filter((s) => s.status === "failed");
   if (failedFiles.length > 0 && attachmentStatuses.every((s) => s.status === "failed")) {
     return "I received your message but couldn't process the attached files. Please check that they are valid PDF, PNG, or JPEG files.";
   }
 
-  let reply = assistantContent
-    ? safeText(assistantContent, data.message)
-    : "Thank you! I've received and processed your request successfully.";
-
-  if (attachmentStatuses.length > 0) {
-    const ok = attachmentStatuses.filter((s) => s.status === "success").length;
-    reply += ` ${ok} of ${attachmentStatuses.length} attachment${attachmentStatuses.length > 1 ? "s" : ""} processed.`;
-  }
-  if (warnings.length > 0) {
-    reply += "\n\n⚠️ Note: " + warnings.map((w) => safeText(w.message, "Processing warning.")).join("; ");
-  }
-  return reply;
+  // --- Priority 4: generic status fallback (should not normally be seen) ---
+  return safeText(message, "Your message was received. Please try asking again.");
 }
 
 export function useChat(): UseChatReturn {
@@ -91,8 +89,10 @@ export function useChat(): UseChatReturn {
   const [pendingQuery, setPendingQuery] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Track conversation_id for multi-turn memory (set after first response)
+  const conversationIdRef = useRef<string | null>(null);
 
-  const sendMessage = useCallback(async (text: string, files: File[]) => {
+  const sendMessage = useCallback(async (text: string, files: File[], token?: string | null) => {
     const trimmed = text.trim();
     if (!trimmed && files.length === 0) return;
     if (isLoading) return;
@@ -109,15 +109,22 @@ export function useChat(): UseChatReturn {
     setIsLoading(true);
 
     try {
-      const data = await postChat(trimmed, files, conversationId);
+      const data = await postChat(trimmed, files, conversationId, token);
       if (data.conversation_id) {
+        conversationIdRef.current = data.conversation_id;
         setConversationId(data.conversation_id);
       }
 
       const botMsg: ChatMessage = {
         id: uid(),
         role: "bot",
-        content: buildBotContent(data),
+        content: buildBotContent(
+          data.success,
+          data.message,
+          data.assistant_message ?? null,
+          data.warnings ?? [],
+          data.attachment_statuses ?? []
+        ),
         timestamp: new Date(),
         attachmentStatuses: data.attachment_statuses ?? [],
         warnings: (data.warnings ?? []).map((w) =>
@@ -141,13 +148,33 @@ export function useChat(): UseChatReturn {
     }
   }, [isLoading, conversationId]);
 
+  const loadThread = useCallback(async (threadId: string, token: string) => {
+    setIsLoading(true);
+    try {
+      const threadMessages = await fetchThreadMessages(threadId, token);
+      const converted: ChatMessage[] = threadMessages.map((m) => ({
+        id: m.id || uid(),
+        role: m.role === "ai" ? "bot" : "user",
+        content: m.content,
+        timestamp: m.created_at ? new Date(m.created_at) : new Date(),
+      }));
+      setMessages(converted.length > 0 ? converted : [WELCOME_MESSAGE]);
+      setConversationId(threadId);
+    } catch (err) {
+      console.error("Failed to load thread messages:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   const clearChat = useCallback(() => {
     abortRef.current?.abort();
     setMessages([{ ...WELCOME_MESSAGE, timestamp: new Date() }]);
     setIsLoading(false);
     setPendingQuery("");
+    conversationIdRef.current = null;
     setConversationId(null);
   }, []);
 
-  return { messages, isLoading, pendingQuery, conversationId, sendMessage, clearChat, setPendingQuery };
+  return { messages, isLoading, pendingQuery, conversationId, sendMessage, loadThread, clearChat, setPendingQuery };
 }

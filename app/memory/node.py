@@ -102,6 +102,8 @@ class MemoryManager:
         thread_id: Optional[str] = None,
         human_content: Optional[str] = None,
         ai_content: Optional[str] = None,
+        user_id: Optional[str] = None,
+        title: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Save dialogue turn, evaluate 14-message hard threshold, and condense summary if needed."""
         tid = resolve_thread_id(config=config, state=state, explicit_thread_id=thread_id)
@@ -129,7 +131,21 @@ class MemoryManager:
         human_msg = HumanMessage(content=human_content or "User Query")
         ai_msg = AIMessage(content=ai_content or "Response")
 
-        # 3. Append turn pair to repository
+        # 3. Ensure thread exists with user_id and title
+        resolved_user_id = user_id or state.get("user_id")
+        existing_thread = self.repository.get_thread(tid)
+        thread_title = title
+        if not thread_title and (not existing_thread or not existing_thread.title):
+            from app.memory.title_generator import generate_thread_title
+            thread_title = generate_thread_title(human_content)
+
+        self.repository.get_or_create_thread(
+            thread_id=tid,
+            title=thread_title or (existing_thread.title if existing_thread else None),
+            user_id=resolved_user_id or (existing_thread.user_id if existing_thread else None),
+        )
+
+        # 4. Append turn pair to repository
         self.repository.append_turn(tid, human_msg, ai_msg)
 
         # 4. Fetch updated active messages and evaluate thresholds

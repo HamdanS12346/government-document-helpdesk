@@ -1,17 +1,18 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cache
-import json
 import logging
 from typing import Annotated, Any
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
+from app.api.auth import AuthenticatedUser, get_optional_user, require_authenticated_user
 from app.api.serialization import serialize_public_message
+from app.config import get_settings
 from app.contracts.chat import (
     ChatIntentSummary,
     ChatMessage,
@@ -23,6 +24,7 @@ from app.input_processing.processors import process_input
 from app.input_processing.schemas import Attachment, InputProcessingResult, InputRequest
 from app.intent.classifier import OpenAIIntentClassifier
 from app.memory import get_default_memory_manager
+from app.memory.repository import get_default_memory_repository
 from app.observability import flush_langfuse, start_observation
 from app.observability.metadata import (
     build_chat_request_metadata,
@@ -36,6 +38,11 @@ _DEFAULT_INVOKE_INTENT_RETRIEVER = invoke_intent_retriever_graph
 
 
 router = APIRouter()
+
+
+def _debug_print(*args: object, **kwargs: object) -> None:
+    if get_settings().chat_debug_prints:
+        print(*args, **kwargs)
 
 
 @dataclass(frozen=True)
@@ -52,6 +59,7 @@ async def chat(
     message: Annotated[str | None, Form()] = None,
     files: Annotated[list[UploadFile] | None, File()] = None,
     conversation_id: Annotated[str | None, Form()] = None,
+    user: Annotated[AuthenticatedUser | None, Depends(get_optional_user)] = None,
 ) -> JSONResponse:
     """Process frontend chat input through the Input Processor boundary."""
     incoming_files = files or []
@@ -73,14 +81,16 @@ async def chat(
                     output=build_input_processing_result_metadata(result)
                 )
             if result.success and result.normalized_input is not None:
-                print(f"\n==================== Incoming Chat Request ====================", flush=True)
-                print(f"Conversation ID: {conversation_id or '(none - starting new thread)'}", flush=True)
-                print("\nNormalized input:", flush=True)
-                print(result.normalized_input.model_dump_json(indent=2), flush=True)
+                _debug_print(f"\n==================== Incoming Chat Request ====================", flush=True)
+                _debug_print(f"Conversation ID: {conversation_id or '(none - starting new thread)'}", flush=True)
+                _debug_print("\nNormalized input:", flush=True)
+                _debug_print(result.normalized_input.model_dump_json(indent=2), flush=True)
                 try:
+                    user_id = user.id if user else None
                     graph_state = _invoke_chat_graph(
                         result,
                         conversation_id=conversation_id,
+                        user_id=user_id,
                         memory_manager=get_default_memory_manager(),
                     )
                 except Exception as exc:
@@ -91,34 +101,16 @@ async def chat(
                         status_code=status.HTTP_502_BAD_GATEWAY,
                         content=_build_classification_error_payload(),
                     )
-                print("\nIntent decision:", flush=True)
-                print(graph_state["intent_decision"].model_dump_json(indent=2), flush=True)
-                if "documents" in graph_state:
-                    print("\nDocuments:", flush=True)
-                    print(
-                        json.dumps(
-                            jsonable_encoder(graph_state["documents"]),
-                            indent=2,
-                        ),
-                        flush=True,
-                    )
-                if "retrieved_context" in graph_state:
-                    print("\nRetrieved context:", flush=True)
-                    print(
-                        json.dumps(
-                            jsonable_encoder(graph_state["retrieved_context"]),
-                            indent=2,
-                        ),
-                        flush=True,
-                    )
+                _debug_print("\nIntent decision:", flush=True)
+                _debug_print(graph_state["intent_decision"].model_dump_json(indent=2), flush=True)
                 response_status = _build_chat_status(result, graph_state)
                 assistant_message = _build_assistant_message(graph_state)
                 if assistant_message is not None:
-                    print(
+                    _debug_print(
                         f"\n[Assistant response] (thread_id: {graph_state.get('thread_id')}):",
                         flush=True,
                     )
-                    print(assistant_message.content, flush=True)
+                    _debug_print(assistant_message.content, flush=True)
                 trace.update(
                     output=build_chat_graph_response_metadata(
                         graph_state,
@@ -131,7 +123,7 @@ async def chat(
                     )
                 )
             else:
-                print(result.model_dump_json(indent=2))
+                _debug_print(result.model_dump_json(indent=2))
                 trace.update(
                     output={
                         "status": "input_failed",
@@ -192,6 +184,7 @@ def _invoke_chat_graph(
     result: InputProcessingResult,
     *,
     conversation_id: str | None = None,
+    user_id: str | None = None,
     memory_manager: Any | None = None,
     messages: Iterable[Any] | None = None,
     conversation_summary: str | None = None,
@@ -202,6 +195,8 @@ def _invoke_chat_graph(
     memory_kwargs: dict[str, object] = {}
     if conversation_id is not None:
         memory_kwargs["thread_id"] = conversation_id
+    if user_id is not None:
+        memory_kwargs["user_id"] = user_id
     if messages is not None:
         memory_kwargs["messages"] = messages
     if conversation_summary is not None:
@@ -354,3 +349,72 @@ def _build_classification_error_payload() -> dict[str, object]:
             message="The request could not be classified right now. Please try again.",
         )
     )
+
+
+@router.get("/threads")
+async def list_threads(
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> JSONResponse:
+    """List all past conversation threads for the authenticated citizen."""
+    repo = get_default_memory_repository()
+    threads = repo.list_user_threads(user.id)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=[jsonable_encoder(t) for t in threads],
+    )
+
+
+@router.get("/threads/{thread_id}/messages")
+async def get_thread_messages(
+    thread_id: str,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> JSONResponse:
+    """Fetch full transcript of messages for an owned conversation thread."""
+    repo = get_default_memory_repository()
+    thread = repo.get_thread(thread_id)
+    if not thread:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation thread '{thread_id}' not found.",
+        )
+    if str(thread.user_id or "") != str(user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access to this conversation thread is denied.",
+        )
+    messages = repo.get_full_transcript(thread_id)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=[jsonable_encoder(m) for m in messages],
+    )
+
+
+@router.delete("/threads/{thread_id}")
+async def delete_thread(
+    thread_id: str,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> JSONResponse:
+    """Delete an owned conversation thread from history."""
+    repo = get_default_memory_repository()
+    thread = repo.get_thread(thread_id)
+    if not thread:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation thread '{thread_id}' not found.",
+        )
+    if str(thread.user_id or "") != str(user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access to this conversation thread is denied.",
+        )
+    success = repo.delete_thread(thread_id, user.id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete conversation thread.",
+        )
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"success": True, "message": "Thread deleted successfully."},
+    )
+

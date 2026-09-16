@@ -222,6 +222,7 @@ def invoke_full_graph(
     messages: Iterable[Any] | None = None,
     conversation_summary: str | None = None,
     clarification_round_count: int | None = None,
+    user_id: str | None = None,
 ) -> State:
     """Run the complete graph from input processing through response generation.
 
@@ -237,6 +238,8 @@ def invoke_full_graph(
     active_thread_id = thread_id or (str(uuid.uuid4()) if memory_manager is not None else None)
     if active_thread_id is not None:
         state["thread_id"] = active_thread_id
+    if user_id is not None:
+        state["user_id"] = user_id
 
     if memory_manager is not None and active_thread_id is not None:
         try:
@@ -276,7 +279,11 @@ def invoke_full_graph(
             human_text = result.normalized_input.user_query
             ai_message = output_messages[-1]
             try:
-                saved = memory_manager.save_turn(state=output_state, thread_id=active_thread_id)
+                saved = memory_manager.save_turn(
+                    state=output_state,
+                    thread_id=active_thread_id,
+                    user_id=user_id,
+                )
             except (TypeError, AttributeError):
                 saved = memory_manager.save_turn(
                     thread_id=active_thread_id,
@@ -291,6 +298,8 @@ def invoke_full_graph(
 
     if active_thread_id is not None:
         output_state["thread_id"] = active_thread_id
+    if user_id is not None:
+        output_state["user_id"] = user_id
 
     return output_state
 

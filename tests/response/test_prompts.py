@@ -34,6 +34,18 @@ class TestBuildSystemPrompt:
         )
         assert context_text in prompt
 
+    def test_document_info_with_context_discourages_unneeded_clarification(self):
+        prompt = build_system_prompt(
+            intent_type=IntentType.DOCUMENT_INFO,
+            has_relevant_documents=True,
+            conversation_summary=None,
+            retrieved_context_text="Document 1\n---\nPassport document evidence.",
+        )
+
+        assert "answer from it instead of asking a clarification question" in prompt
+        assert "missing, conflicting, or genuinely insufficient" in prompt
+        assert "uploaded file name/content as the document they mean" in prompt
+
     def test_document_info_no_context_uses_fallback_prompt(self):
         prompt = build_system_prompt(
             intent_type=IntentType.DOCUMENT_INFO,

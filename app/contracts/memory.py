@@ -112,9 +112,23 @@ class MemorySnapshot(BaseModel):
     )
 
 
+class ThreadSummary(BaseModel):
+    """Compact summary of a conversation thread for sidebar listing."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(description="Unique UUID identifying the conversation thread")
+    title: Optional[str] = Field(default=None, description="Thread topic or generated title")
+    conversation_summary: str = Field(default="", description="Condensed summary of discussion")
+    created_at: Optional[datetime] = Field(default=None, description="Thread creation timestamp")
+    updated_at: Optional[datetime] = Field(default=None, description="Last activity timestamp")
+
+
 __all__ = [
     "MessageRole",
     "ConversationMessage",
     "ConversationThread",
     "MemorySnapshot",
+    "ThreadSummary",
 ]
+
