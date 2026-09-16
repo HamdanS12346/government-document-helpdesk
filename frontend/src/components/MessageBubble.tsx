@@ -1,3 +1,5 @@
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import styles from "./MessageBubble.module.css";
 import FileChip from "./FileChip";
 import type { ChatMessage } from "@/hooks/useChat";
@@ -30,18 +32,57 @@ function UserIcon() {
   );
 }
 
+/** Markdown components map — each element gets a scoped CSS class. */
+const markdownComponents = {
+  p:          ({ children }: React.PropsWithChildren) => <p className={styles.mdParagraph}>{children}</p>,
+  h1:         ({ children }: React.PropsWithChildren) => <h1 className={styles.mdH1}>{children}</h1>,
+  h2:         ({ children }: React.PropsWithChildren) => <h2 className={styles.mdH2}>{children}</h2>,
+  h3:         ({ children }: React.PropsWithChildren) => <h3 className={styles.mdH3}>{children}</h3>,
+  ul:         ({ children }: React.PropsWithChildren) => <ul className={styles.mdList}>{children}</ul>,
+  ol:         ({ children }: React.PropsWithChildren) => <ol className={`${styles.mdList} ${styles.mdOrderedList}`}>{children}</ol>,
+  li:         ({ children }: React.PropsWithChildren) => <li className={styles.mdListItem}>{children}</li>,
+  strong:     ({ children }: React.PropsWithChildren) => <strong className={styles.mdBold}>{children}</strong>,
+  em:         ({ children }: React.PropsWithChildren) => <em className={styles.mdItalic}>{children}</em>,
+  blockquote: ({ children }: React.PropsWithChildren) => <blockquote className={styles.mdBlockquote}>{children}</blockquote>,
+  hr:         () => <hr className={styles.mdHr} />,
+  a:          ({ href, children }: React.AnchorHTMLAttributes<HTMLAnchorElement> & React.PropsWithChildren) => (
+    <a href={href} className={styles.mdLink} target="_blank" rel="noopener noreferrer">{children}</a>
+  ),
+  code:       ({ inline, children }: { inline?: boolean; children?: React.ReactNode }) =>
+    inline
+      ? <code className={styles.mdInlineCode}>{children}</code>
+      : <code className={styles.mdCodeBlockInner}>{children}</code>,
+  pre:        ({ children }: React.PropsWithChildren) => <pre className={styles.mdCodeBlock}>{children}</pre>,
+};
+
+/** Bot-only: render content as Markdown using ReactMarkdown + GFM. */
+function BotContent({ text }: { text: string }) {
+  return (
+    <div className={styles.mdBody}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+/** User messages: plain text, newlines preserved. Never parsed as Markdown. */
+function UserContent({ text }: { text: string }) {
+  return (
+    <div className={styles.text}>
+      {text.split("\n").map((line, i) =>
+        line ? <p key={i}>{line}</p> : <br key={i} />
+      )}
+    </div>
+  );
+}
+
 export default function MessageBubble({ message }: Props) {
   const isUser = message.role === "user";
 
-  /* Render content with newlines preserved */
-  const renderContent = (text: string) =>
-    text.split("\n").map((line, i) =>
-      line ? <p key={i}>{line}</p> : <br key={i} />
-    );
-
   return (
     <div className={`${styles.wrapper} ${isUser ? styles.user : styles.bot}`}>
-      {/* Avatar */}
+      {/* Bot avatar */}
       {!isUser && (
         <div className={styles.avatar} aria-hidden>
           <BotIcon />
@@ -56,9 +97,12 @@ export default function MessageBubble({ message }: Props) {
 
         {/* Bubble */}
         <div className={`${styles.bubble} ${message.isError ? styles.errorBubble : ""}`}>
-          <div className={styles.text}>{renderContent(message.content)}</div>
+          {isUser
+            ? <UserContent text={message.content} />
+            : <BotContent text={message.content} />
+          }
 
-          {/* Attached file chips (user messages) */}
+          {/* Attached file chips (user messages only) */}
           {message.attachmentNames && message.attachmentNames.length > 0 && (
             <div className={styles.chips}>
               {message.attachmentNames.map((name) => (
@@ -69,7 +113,11 @@ export default function MessageBubble({ message }: Props) {
         </div>
 
         {/* Timestamp */}
-        <time className={styles.timestamp} dateTime={message.timestamp.toISOString()} suppressHydrationWarning>
+        <time
+          className={styles.timestamp}
+          dateTime={message.timestamp.toISOString()}
+          suppressHydrationWarning
+        >
           {formatTime(message.timestamp)}
         </time>
       </div>
