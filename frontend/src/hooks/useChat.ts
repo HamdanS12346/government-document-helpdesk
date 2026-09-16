@@ -6,6 +6,8 @@ import {
   fetchThreadMessages,
   type AttachmentStatus,
   type ChatApiResponse,
+  type ProcessingWarning,
+  type AssistantMessage,
 } from "@/lib/api";
 
 export type MessageRole = "user" | "bot";
@@ -55,36 +57,30 @@ function safeText(text: string | undefined, fallback: string): string {
 }
 
 function buildBotContent(
-  data: ChatApiResponse
+  success: boolean,
+  message: string,
+  assistantMessage: AssistantMessage | null,
+  warnings: ProcessingWarning[],
+  attachmentStatuses: AttachmentStatus[]
 ): string {
-  const warnings = data.warnings ?? [];
-  const attachmentStatuses = data.attachment_statuses ?? [];
-  const assistantContent = data.assistant_message?.content;
-
-  if (!data.success) {
-    return safeText(
-      data.message,
-      "Sorry, I couldn't process that request. Please try again."
-    );
+  // --- Priority 1: use the real LLM response when present ---
+  if (assistantMessage?.content) {
+    return safeText(assistantMessage.content, "Sorry, I couldn't generate a response. Please try again.");
   }
 
+  // --- Priority 2: input processing failure ---
+  if (!success) {
+    return safeText(message, "Sorry, I couldn't process that request. Please try again.");
+  }
+
+  // --- Priority 3: all attachments failed ---
   const failedFiles = attachmentStatuses.filter((s) => s.status === "failed");
   if (failedFiles.length > 0 && attachmentStatuses.every((s) => s.status === "failed")) {
     return "I received your message but couldn't process the attached files. Please check that they are valid PDF, PNG, or JPEG files.";
   }
 
-  let reply = assistantContent
-    ? safeText(assistantContent, data.message)
-    : "Thank you! I've received and processed your request successfully.";
-
-  if (attachmentStatuses.length > 0) {
-    const ok = attachmentStatuses.filter((s) => s.status === "success").length;
-    reply += ` ${ok} of ${attachmentStatuses.length} attachment${attachmentStatuses.length > 1 ? "s" : ""} processed.`;
-  }
-  if (warnings.length > 0) {
-    reply += "\n\n⚠️ Note: " + warnings.map((w) => safeText(w.message, "Processing warning.")).join("; ");
-  }
-  return reply;
+  // --- Priority 4: generic status fallback (should not normally be seen) ---
+  return safeText(message, "Your message was received. Please try asking again.");
 }
 
 export function useChat(): UseChatReturn {
@@ -93,6 +89,8 @@ export function useChat(): UseChatReturn {
   const [pendingQuery, setPendingQuery] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Track conversation_id for multi-turn memory (set after first response)
+  const conversationIdRef = useRef<string | null>(null);
 
   const sendMessage = useCallback(async (text: string, files: File[], token?: string | null) => {
     const trimmed = text.trim();
@@ -113,13 +111,20 @@ export function useChat(): UseChatReturn {
     try {
       const data = await postChat(trimmed, files, conversationId, token);
       if (data.conversation_id) {
+        conversationIdRef.current = data.conversation_id;
         setConversationId(data.conversation_id);
       }
 
       const botMsg: ChatMessage = {
         id: uid(),
         role: "bot",
-        content: buildBotContent(data),
+        content: buildBotContent(
+          data.success,
+          data.message,
+          data.assistant_message ?? null,
+          data.warnings ?? [],
+          data.attachment_statuses ?? []
+        ),
         timestamp: new Date(),
         attachmentStatuses: data.attachment_statuses ?? [],
         warnings: (data.warnings ?? []).map((w) =>
@@ -167,6 +172,7 @@ export function useChat(): UseChatReturn {
     setMessages([{ ...WELCOME_MESSAGE, timestamp: new Date() }]);
     setIsLoading(false);
     setPendingQuery("");
+    conversationIdRef.current = null;
     setConversationId(null);
   }, []);
 

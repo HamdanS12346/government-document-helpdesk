@@ -1,5 +1,6 @@
 """API boundary tests for frontend input processing."""
 
+import asyncio
 from contextlib import contextmanager
 from collections.abc import Iterator
 
@@ -8,6 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 import pytest
 
 from app.api import routes
+from app.api import main as api_main
 from app.api.main import app
 from app.api.serialization import serialize_public_message
 from app.config import get_settings
@@ -85,6 +87,39 @@ def test_chat_allows_local_frontend_origin() -> None:
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+def test_api_lifespan_warms_retriever_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePipeline:
+        def __init__(self) -> None:
+            self.dense_warm_calls = 0
+            self.warm_calls = 0
+
+        def warm_dense_resources(self) -> bool:
+            self.dense_warm_calls += 1
+            return True
+
+        def warm_lexical_index(self) -> bool:
+            self.warm_calls += 1
+            return True
+
+    pipeline = FakePipeline()
+    monkeypatch.setattr(
+        api_main,
+        "get_default_retriever_pipeline",
+        lambda: pipeline,
+    )
+
+    async def run_lifespan() -> None:
+        async with api_main.lifespan(app):
+            pass
+
+    asyncio.run(run_lifespan())
+
+    assert pipeline.dense_warm_calls == 1
+    assert pipeline.warm_calls == 1
 
 
 def test_chat_accepts_text_only_input() -> None:
@@ -199,9 +234,27 @@ def test_chat_graph_wrapper_forwards_memory_fields(
     assert captured_kwargs["clarification_round_count"] == 2
 
 
-def test_chat_prints_normalized_input_and_intent_decision(
+def test_chat_does_not_print_debug_details_by_default(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    client = TestClient(app)
+
+    response = client.post("/chat", data={"message": "Please explain this notice."})
+
+    assert response.status_code == 200
+    output = capsys.readouterr().out
+    assert "Normalized input:" not in output
+    assert '"user_query": "Please explain this notice."' not in output
+    assert "Intent decision:" not in output
+    assert '"intent_type": "document_info"' not in output
+
+
+def test_chat_prints_debug_details_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("CHAT_DEBUG_PRINTS", "true")
+    get_settings.cache_clear()
     client = TestClient(app)
 
     response = client.post("/chat", data={"message": "Please explain this notice."})
@@ -212,9 +265,10 @@ def test_chat_prints_normalized_input_and_intent_decision(
     assert '"user_query": "Please explain this notice."' in output
     assert "Intent decision:" in output
     assert '"intent_type": "document_info"' in output
+    get_settings.cache_clear()
 
 
-def test_chat_prints_documents_when_graph_state_contains_documents(
+def test_chat_does_not_print_full_documents_or_context(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -283,10 +337,10 @@ def test_chat_prints_documents_when_graph_state_contains_documents(
     assert "documents" not in payload
     assert "retrieved_context" not in payload
     output = capsys.readouterr().out
-    assert "Documents:" in output
-    assert '"id": "identity-documents__pan-card__chunk-0001"' in output
-    assert "Retrieved context:" in output
-    assert '"formatted_context": "[Document 1]\\nDocument: pan-card' in output
+    assert "Documents:" not in output
+    assert "Retrieved context:" not in output
+    assert "identity-documents__pan-card__chunk-0001" not in output
+    assert "PAN application requires proof of identity." not in output
 
 
 @pytest.mark.parametrize("intent_type", ["general_chat", "ambiguous"])
@@ -327,8 +381,8 @@ def test_chat_accepts_non_document_graph_states_without_documents(
     assert "documents" not in payload
     assert "retrieved_context" not in payload
     output = capsys.readouterr().out
-    assert "Intent decision:" in output
-    assert f'"intent_type": "{intent_type}"' in output
+    assert "Intent decision:" not in output
+    assert f'"intent_type": "{intent_type}"' not in output
     assert "Documents:" not in output
     assert "Retrieved context:" not in output
 

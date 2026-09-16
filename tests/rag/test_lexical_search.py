@@ -47,3 +47,28 @@ def test_bm25_empty_searcher():
     searcher = BM25LexicalSearcher()
     results = searcher.search(query="any query", top_k=5)
     assert results == []
+
+
+def test_bm25_ensure_indexed_loads_external_corpus_once():
+    docs = [
+        create_sample_doc("doc1", "PAN application requires proof of identity."),
+        create_sample_doc("doc2", "Passport renewal requires address proof."),
+        create_sample_doc("doc3", "Income tax return filing has a due date."),
+    ]
+    searcher = BM25LexicalSearcher()
+    provider_calls = 0
+
+    def documents_provider():
+        nonlocal provider_calls
+        provider_calls += 1
+        return docs
+
+    assert searcher.ensure_indexed(documents_provider) is True
+    assert searcher.document_count == 3
+
+    results = searcher.search(query="PAN identity", top_k=1)
+    assert len(results) == 1
+    assert results[0].id == "doc1"
+
+    assert searcher.ensure_indexed(documents_provider) is True
+    assert provider_calls == 1

@@ -18,6 +18,11 @@ export type ProcessingWarning = {
   message?: string;
 };
 
+export type AssistantMessage = {
+  role: "assistant";
+  content: string;
+};
+
 export type ChatApiResponse = {
   success: boolean;
   status:
@@ -25,12 +30,10 @@ export type ChatApiResponse = {
     | "clarification_required"
     | "input_failed"
     | "classification_error"
-    | "system_error";
+    | "system_error"
+    | string;
   message: string;
-  assistant_message: {
-    role: "assistant";
-    content: string;
-  } | null;
+  assistant_message: AssistantMessage | null;
   attachment_statuses: AttachmentStatus[];
   warnings: ProcessingWarning[];
   normalized_input: unknown;
