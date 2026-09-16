@@ -54,6 +54,23 @@ class RetrieverPipeline:
         self.lexical_searcher.index(documents)
         self.vector_retriever.index(documents)
 
+    def warm_lexical_index(self) -> bool:
+        """Ensure BM25 has the same canonical corpus available to dense search."""
+        ensure_indexed = getattr(self.lexical_searcher, "ensure_indexed", None)
+        get_all_documents = getattr(self.vector_retriever, "get_all_documents", None)
+        if not callable(ensure_indexed) or not callable(get_all_documents):
+            return False
+
+        before_count = getattr(self.lexical_searcher, "document_count", 0)
+        loaded = ensure_indexed(get_all_documents)
+        after_count = getattr(self.lexical_searcher, "document_count", 0)
+
+        if after_count > before_count:
+            logger.info("Initialized BM25 lexical index with %d document chunks.", after_count)
+        elif not loaded:
+            logger.warning("BM25 lexical index is empty; lexical retrieval will return no documents.")
+        return bool(loaded)
+
     def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Execute the end-to-end retriever pipeline on a LangGraph state dictionary."""
         raw_norm_input = state.get("normalized_input")
@@ -205,6 +222,7 @@ class RetrieverPipeline:
                     "rewritten_query_length": len(rewritten_query),
                 },
             ) as lexical_observation:
+                self.warm_lexical_index()
                 lexical_results = self.lexical_searcher.search(
                     rewritten_query,
                     top_k=self.bm25_top_k,

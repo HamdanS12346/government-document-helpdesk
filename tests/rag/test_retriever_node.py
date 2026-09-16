@@ -233,6 +233,19 @@ class EmptyVectorRetriever:
         return []
 
 
+class CorpusOnlyVectorRetriever:
+    def __init__(self, corpus):
+        self.corpus = corpus
+        self.get_all_documents_calls = 0
+
+    def search(self, query, top_k=25, where=None):
+        return []
+
+    def get_all_documents(self):
+        self.get_all_documents_calls += 1
+        return self.corpus
+
+
 class EmptyLexicalSearcher:
     def search(self, query, top_k=25, filter_criteria=None):
         return []
@@ -287,3 +300,35 @@ def test_retriever_pipeline_rewrites_from_combined_text_not_intent_query():
     assert query_rewriter.messages == state["messages"]
     assert query_rewriter.conversation_summary == state["conversation_summary"]
     assert query_rewriter.attachment_previews == []
+
+
+def test_retriever_pipeline_warms_empty_lexical_index_from_vector_corpus_once():
+    """Default-style empty BM25 searcher can load Chroma-backed corpus and reuse it."""
+    corpus = get_mock_corpus()
+    vector_retriever = CorpusOnlyVectorRetriever(corpus)
+    pipeline = RetrieverPipeline(
+        query_rewriter=QueryRewriter(),
+        metadata_extractor=FakeMetadataExtractor(),
+        lexical_searcher=BM25LexicalSearcher(),
+        vector_retriever=vector_retriever,
+        reranker=PassthroughReranker(),
+        final_top_k=2,
+    )
+    state = {
+        "normalized_input": NormalizedInput(
+            user_query="Section 44ADA professionals receipts",
+            image_content=[],
+            pdf_content=[],
+            combined_text="Section 44ADA professionals receipts",
+        ),
+        "messages": [],
+        "conversation_summary": None,
+    }
+
+    first_result = pipeline.execute(state)
+    second_result = pipeline.execute(state)
+
+    assert len(first_result["documents"]) > 0
+    assert first_result["documents"][0].id == "income-documents__itr-forms__india__source-001__chunk-0002"
+    assert len(second_result["documents"]) > 0
+    assert vector_retriever.get_all_documents_calls == 1
