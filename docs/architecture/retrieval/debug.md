@@ -182,6 +182,28 @@ How to read random latency spikes:
 - If none of the dense children explain the parent `dense_retrieval` time, the
   gap is likely observation overhead or SDK work around the measured calls.
 
+## Step 5 Implemented: Reduce Reranker Payload Size
+
+Files changed:
+
+- `app/rag/node.py`
+- `tests/rag/test_retriever_node.py`
+
+Change:
+
+```text
+RetrieverPipeline default rrf_top_n: 25 -> 15
+```
+
+Expected trace behavior:
+
+- `reciprocal_rank_fusion.input.rrf_top_n` should show 15 for the default
+  pipeline.
+- `reranking.input.input_document_count` should be at most 15.
+- `reranking` latency should drop when previous fused candidate count was above
+  15.
+- Final answer quality should be checked because fewer candidates reach Cohere.
+
 ## Ranked Solutions
 
 ### 1. Move BM25 Warm-Up Out Of The Request Path
@@ -362,6 +384,8 @@ Avoid making real OpenAI/Cohere inference calls during startup unless explicitly
 needed.
 
 ### 7. Reduce Reranker Payload Size
+
+Status: implemented by reducing default `rrf_top_n` from 25 to 15.
 
 Confidence: medium-high.
 

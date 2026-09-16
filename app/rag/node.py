@@ -34,7 +34,7 @@ class RetrieverPipeline:
         reranker: Optional[CohereReranker] = None,
         dense_top_k: int = 25,
         bm25_top_k: int = 25,
-        rrf_top_n: int = 25,
+        rrf_top_n: int = 15,
         final_top_k: int = 5,
         rrf_k: int = 60,
     ):

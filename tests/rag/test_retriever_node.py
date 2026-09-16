@@ -233,6 +233,14 @@ class EmptyVectorRetriever:
         return []
 
 
+class StaticVectorRetriever:
+    def __init__(self, documents):
+        self.documents = documents
+
+    def search(self, query, top_k=25, where=None):
+        return self.documents[:top_k]
+
+
 class CorpusOnlyVectorRetriever:
     def __init__(self, corpus):
         self.corpus = corpus
@@ -251,8 +259,25 @@ class EmptyLexicalSearcher:
         return []
 
 
+class StaticLexicalSearcher:
+    def __init__(self, documents):
+        self.documents = documents
+
+    def search(self, query, top_k=25, filter_criteria=None):
+        return self.documents[:top_k]
+
+
 class PassthroughReranker:
     def rerank(self, query, documents, top_n=5):
+        return documents[:top_n], False
+
+
+class RecordingReranker:
+    def __init__(self):
+        self.input_count = None
+
+    def rerank(self, query, documents, top_n=5):
+        self.input_count = len(documents)
         return documents[:top_n], False
 
 
@@ -335,3 +360,55 @@ def test_retriever_pipeline_uses_startup_warmed_lexical_index():
     assert first_result["documents"][0].id == "income-documents__itr-forms__india__source-001__chunk-0002"
     assert len(second_result["documents"]) > 0
     assert vector_retriever.get_all_documents_calls == 1
+
+
+def test_retriever_pipeline_default_rrf_pool_caps_reranker_input_at_15():
+    """Default RRF pool limits how many fused candidates are sent to reranking."""
+    dense_docs = [
+        RetrievedDocument(
+            id=f"dense-{idx}",
+            text_content=f"Dense document {idx}",
+            metadata=ChunkMetadata(
+                document_id=f"dense-doc-{idx}",
+                category="general",
+                document_name=f"dense-{idx}",
+            ),
+        )
+        for idx in range(20)
+    ]
+    lexical_docs = [
+        RetrievedDocument(
+            id=f"lexical-{idx}",
+            text_content=f"Lexical document {idx}",
+            metadata=ChunkMetadata(
+                document_id=f"lexical-doc-{idx}",
+                category="general",
+                document_name=f"lexical-{idx}",
+            ),
+        )
+        for idx in range(20)
+    ]
+    reranker = RecordingReranker()
+    pipeline = RetrieverPipeline(
+        query_rewriter=QueryRewriter(),
+        metadata_extractor=FakeMetadataExtractor(),
+        lexical_searcher=StaticLexicalSearcher(lexical_docs),
+        vector_retriever=StaticVectorRetriever(dense_docs),
+        reranker=reranker,
+        final_top_k=5,
+    )
+    state = {
+        "normalized_input": NormalizedInput(
+            user_query="documents",
+            image_content=[],
+            pdf_content=[],
+            combined_text="documents",
+        ),
+        "messages": [],
+        "conversation_summary": None,
+    }
+
+    result = pipeline.execute(state)
+
+    assert len(result["documents"]) == 5
+    assert reranker.input_count == 15
