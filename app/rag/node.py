@@ -11,6 +11,8 @@ from app.rag.metadata_extractor import MetadataExtractor
 from app.rag.query_rewriter import QueryRewriter
 from app.rag.reranker import CohereReranker
 from app.rag.vector_store import VectorStoreRetriever
+from langchain_community.callbacks import get_openai_callback
+
 from app.observability import start_observation
 from app.observability.metadata import (
     build_documents_metadata,
@@ -141,6 +143,8 @@ class RetrieverPipeline:
         ) as retriever_observation:
             with start_observation(
                 "query_rewrite",
+                as_type="generation",
+                model="gpt-4o-mini",
                 input=build_query_rewrite_input_metadata(
                     retrieval_input,
                     used_combined_text=used_combined_text,
@@ -149,17 +153,30 @@ class RetrieverPipeline:
                     attachment_preview_count=0,
                 ),
             ) as query_observation:
-                rewritten_query = self.query_rewriter.rewrite(
-                    user_query=retrieval_input,
-                    messages=messages,
-                    conversation_summary=summary,
-                    attachment_previews=[],
-                )
-                query_observation.update(
-                    output=build_query_rewrite_output_metadata(
-                        retrieval_input,
-                        rewritten_query,
+                with get_openai_callback() as rewrite_cb:
+                    rewritten_query = self.query_rewriter.rewrite(
+                        user_query=retrieval_input,
+                        messages=messages,
+                        conversation_summary=summary,
+                        attachment_previews=[],
                     )
+                query_output = build_query_rewrite_output_metadata(
+                    retrieval_input,
+                    rewritten_query,
+                )
+                if rewrite_cb.total_tokens > 0:
+                    query_output["token_usage"] = {
+                        "input_tokens": rewrite_cb.prompt_tokens,
+                        "output_tokens": rewrite_cb.completion_tokens,
+                        "total_tokens": rewrite_cb.total_tokens,
+                    }
+                query_observation.update(
+                    output=query_output,
+                    usage_details={
+                        "input": rewrite_cb.prompt_tokens,
+                        "output": rewrite_cb.completion_tokens,
+                        "total": rewrite_cb.total_tokens,
+                    },
                 )
 
             logger.info(
@@ -191,19 +208,34 @@ class RetrieverPipeline:
 
             with start_observation(
                 "metadata_filter",
+                as_type="generation",
+                model="gpt-4o-mini",
                 input={"rewritten_query_length": len(rewritten_query)},
             ) as metadata_observation:
-                meta_decision = self.metadata_extractor.extract(rewritten_query)
+                with get_openai_callback() as meta_cb:
+                    meta_decision = self.metadata_extractor.extract(rewritten_query)
                 chroma_where = MetadataExtractor.build_chroma_filter(meta_decision)
                 bm25_filter = MetadataExtractor.build_criteria(meta_decision)
-                metadata_observation.update(
-                    output={
-                        "is_confident": meta_decision.is_confident,
-                        "category": meta_decision.category,
-                        "document_name": meta_decision.document_name,
-                        "chroma_filter_applied": chroma_where is not None,
-                        "bm25_filter_applied": bm25_filter is not None,
+                meta_output = {
+                    "is_confident": meta_decision.is_confident,
+                    "category": meta_decision.category,
+                    "document_name": meta_decision.document_name,
+                    "chroma_filter_applied": chroma_where is not None,
+                    "bm25_filter_applied": bm25_filter is not None,
+                }
+                if meta_cb.total_tokens > 0:
+                    meta_output["token_usage"] = {
+                        "input_tokens": meta_cb.prompt_tokens,
+                        "output_tokens": meta_cb.completion_tokens,
+                        "total_tokens": meta_cb.total_tokens,
                     }
+                metadata_observation.update(
+                    output=meta_output,
+                    usage_details={
+                        "input": meta_cb.prompt_tokens,
+                        "output": meta_cb.completion_tokens,
+                        "total": meta_cb.total_tokens,
+                    },
                 )
 
             logger.info(
@@ -290,11 +322,28 @@ class RetrieverPipeline:
                 applied_fallback,
             )
 
-            retriever_observation.update(
-                output={
-                    **build_documents_metadata(final_documents),
-                    "fallback_applied": applied_fallback,
+            retrieval_input_tokens = rewrite_cb.prompt_tokens + meta_cb.prompt_tokens
+            retrieval_output_tokens = rewrite_cb.completion_tokens + meta_cb.completion_tokens
+            retrieval_total_tokens = rewrite_cb.total_tokens + meta_cb.total_tokens
+
+            retriever_output = {
+                **build_documents_metadata(final_documents),
+                "fallback_applied": applied_fallback,
+            }
+            if retrieval_total_tokens > 0:
+                retriever_output["token_usage"] = {
+                    "input_tokens": retrieval_input_tokens,
+                    "output_tokens": retrieval_output_tokens,
+                    "total_tokens": retrieval_total_tokens,
                 }
+
+            retriever_observation.update(
+                output=retriever_output,
+                usage_details={
+                    "input": retrieval_input_tokens,
+                    "output": retrieval_output_tokens,
+                    "total": retrieval_total_tokens,
+                },
             )
 
         return {"documents": final_documents}

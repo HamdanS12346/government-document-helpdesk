@@ -25,6 +25,8 @@ from app.input_processing.schemas import Attachment, InputProcessingResult, Inpu
 from app.intent.classifier import OpenAIIntentClassifier
 from app.memory import get_default_memory_manager
 from app.memory.repository import get_default_memory_repository
+from langchain_community.callbacks import get_openai_callback
+
 from app.observability import flush_langfuse, start_observation
 from app.observability.metadata import (
     build_chat_request_metadata,
@@ -87,12 +89,13 @@ async def chat(
                 _debug_print(result.normalized_input.model_dump_json(indent=2), flush=True)
                 try:
                     user_id = user.id if user else None
-                    graph_state = _invoke_chat_graph(
-                        result,
-                        conversation_id=conversation_id,
-                        user_id=user_id,
-                        memory_manager=get_default_memory_manager(),
-                    )
+                    with get_openai_callback() as total_cb:
+                        graph_state = _invoke_chat_graph(
+                            result,
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            memory_manager=get_default_memory_manager(),
+                        )
                 except Exception as exc:
                     logger.exception("Failed to invoke chat graph: %s", exc)
                     print(f"\n[ERROR] Chat graph invocation failed: {exc}", flush=True)
@@ -111,6 +114,16 @@ async def chat(
                         flush=True,
                     )
                     _debug_print(assistant_message.content, flush=True)
+
+                token_usage_data = None
+                if total_cb.total_tokens > 0:
+                    token_usage_data = {
+                        "input_tokens": total_cb.prompt_tokens,
+                        "output_tokens": total_cb.completion_tokens,
+                        "total_tokens": total_cb.total_tokens,
+                        "cost_usd": total_cb.total_cost,
+                    }
+
                 trace.update(
                     output=build_chat_graph_response_metadata(
                         graph_state,
@@ -120,7 +133,13 @@ async def chat(
                             if assistant_message is not None
                             else None
                         ),
-                    )
+                        token_usage=token_usage_data,
+                    ),
+                    usage_details={
+                        "input": total_cb.prompt_tokens,
+                        "output": total_cb.completion_tokens,
+                        "total": total_cb.total_tokens,
+                    },
                 )
             else:
                 _debug_print(result.model_dump_json(indent=2))

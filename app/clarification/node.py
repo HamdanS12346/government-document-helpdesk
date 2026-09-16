@@ -3,6 +3,7 @@
 import logging
 from typing import Any
 
+from langchain_community.callbacks import get_openai_callback
 from langchain_core.messages import AIMessage
 
 from app.clarification.generator import (
@@ -48,6 +49,8 @@ def ask_for_clarification(
 
     with start_observation(
         "clarification",
+        as_type="generation",
+        model="gpt-4o-mini",
         input=build_clarification_input_metadata(
             decision,
             messages=input_data.messages,
@@ -56,16 +59,30 @@ def ask_for_clarification(
             max_clarification_rounds=MAX_CLARIFICATION_ROUNDS,
         ),
     ) as observation:
-        result = ClarificationResult.model_validate(generator.generate(input_data))
+        with get_openai_callback() as cb:
+            raw_gen = generator.generate(input_data)
+        result = ClarificationResult.model_validate(raw_gen)
         message = AIMessage(content=result.question)
+        output_data = build_clarification_output_metadata(
+            clarification_required=True,
+            reason_code=str(result.reason_code),
+            missing_dimensions=result.missing_dimensions,
+            question=result.question,
+        )
+        if cb.total_tokens > 0:
+            output_data["token_usage"] = {
+                "input_tokens": cb.prompt_tokens,
+                "output_tokens": cb.completion_tokens,
+                "total_tokens": cb.total_tokens,
+            }
         _safe_update_observation(
             observation,
-            output=build_clarification_output_metadata(
-                clarification_required=True,
-                reason_code=str(result.reason_code),
-                missing_dimensions=result.missing_dimensions,
-                question=result.question,
-            ),
+            output=output_data,
+            usage_details={
+                "input": cb.prompt_tokens,
+                "output": cb.completion_tokens,
+                "total": cb.total_tokens,
+            },
         )
 
     return {
