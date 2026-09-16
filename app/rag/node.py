@@ -2,6 +2,7 @@
 
 import logging
 from typing import Any, Dict, List, Optional
+from app.config import get_settings
 from app.contracts.normalized_input import NormalizedInput
 from app.contracts.retrieval import RetrievedDocument
 from app.rag.hybrid_fusion import reciprocal_rank_fusion
@@ -22,6 +23,11 @@ from guardrails.retrieval import QueryInjectionGuard, RetrievalGuardrailDecision
 logger = logging.getLogger(__name__)
 
 
+def _debug_print(*args: object, **kwargs: object) -> None:
+    if get_settings().chat_debug_prints:
+        print(*args, **kwargs)
+
+
 class RetrieverPipeline:
     """Configurable pipeline orchestrating query rewriting, metadata filtering, hybrid search, RRF, and reranking."""
 
@@ -34,7 +40,7 @@ class RetrieverPipeline:
         reranker: Optional[CohereReranker] = None,
         dense_top_k: int = 25,
         bm25_top_k: int = 25,
-        rrf_top_n: int = 25,
+        rrf_top_n: int = 15,
         final_top_k: int = 5,
         rrf_k: int = 60,
     ):
@@ -53,6 +59,33 @@ class RetrieverPipeline:
         """Update active document corpus for both lexical and semantic searchers."""
         self.lexical_searcher.index(documents)
         self.vector_retriever.index(documents)
+
+    def warm_lexical_index(self) -> bool:
+        """Ensure BM25 has the same canonical corpus available to dense search."""
+        ensure_indexed = getattr(self.lexical_searcher, "ensure_indexed", None)
+        get_all_documents = getattr(self.vector_retriever, "get_all_documents", None)
+        if not callable(ensure_indexed) or not callable(get_all_documents):
+            return False
+
+        before_count = getattr(self.lexical_searcher, "document_count", 0)
+        loaded = ensure_indexed(get_all_documents)
+        after_count = getattr(self.lexical_searcher, "document_count", 0)
+
+        if after_count > before_count:
+            logger.info("Initialized BM25 lexical index with %d document chunks.", after_count)
+        elif not loaded:
+            logger.warning("BM25 lexical index is empty; lexical retrieval will return no documents.")
+        return bool(loaded)
+
+    def warm_dense_resources(self) -> bool:
+        """Initialize Chroma collection, collection count, and embedding client."""
+        warm_resources = getattr(self.vector_retriever, "warm_resources", None)
+        if not callable(warm_resources):
+            return False
+        warmed = warm_resources()
+        if warmed:
+            logger.info("Initialized dense retrieval resources.")
+        return bool(warmed)
 
     def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Execute the end-to-end retriever pipeline on a LangGraph state dictionary."""
@@ -135,7 +168,7 @@ class RetrieverPipeline:
                 rewritten_query,
             )
 
-            print("\n[Retriever Node] Conversation History in Memory:", flush=True)
+            _debug_print("\n[Retriever Node] Conversation History in Memory:", flush=True)
             if messages:
                 for idx, msg in enumerate(messages, 1):
                     msg_type = getattr(msg, "type", "")
@@ -145,16 +178,16 @@ class RetrieverPipeline:
                         if msg_type == "human"
                         else ("AI Message" if msg_type == "ai" else f"{msg_type.capitalize()} Message")
                     )
-                    print(f"  {idx}. {role_label}: {content}", flush=True)
+                    _debug_print(f"  {idx}. {role_label}: {content}", flush=True)
             else:
-                print("  (None - initial turn)", flush=True)
+                _debug_print("  (None - initial turn)", flush=True)
 
             if summary:
-                print(f"[Retriever Node] Conversation Summary:\n  {summary}", flush=True)
+                _debug_print(f"[Retriever Node] Conversation Summary:\n  {summary}", flush=True)
 
-            print(f"[Retriever Node] Query Optimization:", flush=True)
-            print(f"  Original Query:  {retrieval_input}", flush=True)
-            print(f"  Optimized Query: {rewritten_query}\n", flush=True)
+            _debug_print(f"[Retriever Node] Query Optimization:", flush=True)
+            _debug_print(f"  Original Query:  {retrieval_input}", flush=True)
+            _debug_print(f"  Optimized Query: {rewritten_query}\n", flush=True)
 
             with start_observation(
                 "metadata_filter",

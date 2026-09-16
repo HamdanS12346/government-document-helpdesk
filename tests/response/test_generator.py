@@ -128,6 +128,34 @@ class TestResponseGeneratorDocumentInfo:
         system_content = call_args[0].content
         assert context.formatted_context in system_content
 
+    def test_uploaded_this_document_instruction_is_available_with_context(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = AIMessage(content="Use the official source listed in Document 1.")
+        gen = ResponseGenerator(llm=mock_llm)
+        normalized_input = NormalizedInput(
+            user_query="how do i get this document?",
+            image_content=[],
+            pdf_content=[],
+            combined_text=(
+                "<USER_QUERY>\nhow do i get this document?\n\n"
+                "<PDF_CONTENT>\nFilename: Passports_Amendment_Rules_2026_Schedule_IV_OCR.pdf\n"
+                "Preview: Passports Amendment Rules 2026 Schedule IV"
+            ),
+        )
+
+        gen.generate(
+            normalized_input=normalized_input,
+            intent_decision=_make_intent(IntentType.DOCUMENT_INFO),
+            retrieved_context=_make_retrieved_context(has_relevant=True),
+            messages=[],
+            conversation_summary=None,
+        )
+
+        call_args = mock_llm.invoke.call_args[0][0]
+        system_content = call_args[0].content
+        assert "answer from it instead of asking a clarification question" in system_content
+        assert "uploaded file name/content as the document they mean" in system_content
+
 
 class TestResponseGeneratorGeneralChat:
 
