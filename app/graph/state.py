@@ -15,6 +15,7 @@ class GraphState(TypedDict, total=False):
     """
 
     thread_id: NotRequired[str]
+    user_id: NotRequired[str | None]
     normalized_input: NotRequired[NormalizedInput]
     intent_decision: NotRequired[IntentDecision]
     documents: NotRequired[list[Any]]

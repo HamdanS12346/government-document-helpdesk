@@ -11,6 +11,7 @@ from app.contracts.memory import (
     ConversationThread,
     MemorySnapshot,
     MessageRole,
+    ThreadSummary,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,11 +83,26 @@ class SupabaseMemoryRepository:
                 )
                 if res.data and len(res.data) > 0:
                     row = res.data[0]
+                    updates = {}
+                    if user_id and not row.get("user_id"):
+                        updates["user_id"] = user_id
+                        row["user_id"] = user_id
+                    if title and not row.get("title"):
+                        updates["title"] = title
+                        row["title"] = title
+                    if updates:
+                        try:
+                            self._client.table("conversation_threads").update(
+                                updates
+                            ).eq("id", thread_id).execute()
+                        except Exception as exc:
+                            logger.warning("Could not associate user_id/title with existing thread: %s", exc)
                     return ConversationThread.model_validate(row)
 
                 # Create new thread
                 new_row = {
                     "id": thread_id,
+                    "user_id": user_id,
                     "title": title,
                     "status": "active",
                     "conversation_summary": "",
@@ -103,6 +119,7 @@ class SupabaseMemoryRepository:
         if thread_id not in self._in_memory_threads:
             self._in_memory_threads[thread_id] = ConversationThread(
                 id=thread_id,
+                user_id=user_id,
                 title=title,
                 status="active",
                 conversation_summary="",
@@ -111,6 +128,11 @@ class SupabaseMemoryRepository:
                 updated_at=now,
             )
             self._in_memory_messages[thread_id] = []
+        else:
+            if user_id and not self._in_memory_threads[thread_id].user_id:
+                self._in_memory_threads[thread_id].user_id = user_id
+            if title and not self._in_memory_threads[thread_id].title:
+                self._in_memory_threads[thread_id].title = title
         return self._in_memory_threads[thread_id]
 
     def load_active_messages(
@@ -290,6 +312,128 @@ class SupabaseMemoryRepository:
                 logger.warning("Supabase get_full_transcript failed: %s; using in-memory.", exc)
 
         return list(self._in_memory_messages.get(thread_id, []))
+
+    def get_thread(self, thread_id: str) -> Optional[ConversationThread]:
+        """Fetch a single conversation thread by ID."""
+        if self._is_live_supabase and self._client:
+            try:
+                res = (
+                    self._client.table("conversation_threads")
+                    .select("*")
+                    .eq("id", thread_id)
+                    .limit(1)
+                    .execute()
+                )
+                if res.data and len(res.data) > 0:
+                    return ConversationThread.model_validate(res.data[0])
+                return None
+            except Exception as exc:
+                logger.warning("Supabase get_thread failed: %s; checking in-memory.", exc)
+
+        return self._in_memory_threads.get(thread_id)
+
+    def update_thread_title(self, thread_id: str, title: str) -> None:
+        """Update thread title directly in database and memory cache."""
+        if self._is_live_supabase and self._client:
+            try:
+                self._client.table("conversation_threads").update(
+                    {"title": title}
+                ).eq("id", thread_id).execute()
+            except Exception as exc:
+                logger.warning("Supabase update_thread_title failed: %s", exc)
+
+        if thread_id in self._in_memory_threads:
+            self._in_memory_threads[thread_id].title = title
+
+    def list_user_threads(self, user_id: str) -> List[ThreadSummary]:
+        """List all conversation threads belonging to an authenticated citizen."""
+        if self._is_live_supabase and self._client:
+            try:
+                res = (
+                    self._client.table("conversation_threads")
+                    .select("id, title, conversation_summary, created_at, updated_at")
+                    .eq("user_id", user_id)
+                    .order("updated_at", desc=True)
+                    .execute()
+                )
+                items: List[ThreadSummary] = []
+                for r in res.data or []:
+                    if not r.get("title"):
+                        try:
+                            msg_res = (
+                                self._client.table("conversation_messages")
+                                .select("content")
+                                .eq("thread_id", r["id"])
+                                .eq("role", "human")
+                                .order("sequence_number", desc=False)
+                                .limit(1)
+                                .execute()
+                            )
+                            if msg_res.data and len(msg_res.data) > 0:
+                                from app.memory.title_generator import generate_thread_title
+
+                                derived = generate_thread_title(msg_res.data[0]["content"])
+                                r["title"] = derived
+                                self._client.table("conversation_threads").update(
+                                    {"title": derived}
+                                ).eq("id", r["id"]).execute()
+                        except Exception as title_err:
+                            logger.debug("Could not derive title for thread %s: %s", r["id"], title_err)
+                    items.append(ThreadSummary.model_validate(r))
+                return items
+            except Exception as exc:
+                logger.warning("Supabase list_user_threads failed: %s; using in-memory.", exc)
+
+        matching = [
+            t for t in self._in_memory_threads.values()
+            if getattr(t, "user_id", None) == user_id
+        ]
+        matching.sort(
+            key=lambda t: t.updated_at or t.created_at or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+        items = []
+        for t in matching:
+            title = t.title
+            if not title:
+                msgs = self._in_memory_messages.get(t.id, [])
+                human_msgs = [m for m in msgs if getattr(m, "role", "") in ("human", MessageRole.HUMAN)]
+                if human_msgs:
+                    from app.memory.title_generator import generate_thread_title
+
+                    title = generate_thread_title(human_msgs[0].content)
+                    t.title = title
+            items.append(
+                ThreadSummary(
+                    id=t.id,
+                    title=title,
+                    conversation_summary=t.conversation_summary,
+                    created_at=t.created_at,
+                    updated_at=t.updated_at,
+                )
+            )
+        return items
+
+    def delete_thread(self, thread_id: str, user_id: str) -> bool:
+        """Delete a conversation thread if owned by user_id."""
+        thread = self.get_thread(thread_id)
+        if not thread:
+            return False
+        if str(thread.user_id or "") != str(user_id):
+            return False
+
+        if self._is_live_supabase and self._client:
+            try:
+                self._client.table("conversation_threads").delete().eq("id", thread_id).eq("user_id", user_id).execute()
+                self._in_memory_threads.pop(thread_id, None)
+                self._in_memory_messages.pop(thread_id, None)
+                return True
+            except Exception as exc:
+                logger.warning("Supabase delete_thread failed: %s; deleting from in-memory.", exc)
+
+        self._in_memory_threads.pop(thread_id, None)
+        self._in_memory_messages.pop(thread_id, None)
+        return True
 
 
 # Global singleton instance

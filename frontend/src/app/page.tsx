@@ -6,24 +6,48 @@ import Sidebar from "@/components/Sidebar";
 import ChatWindow from "@/components/ChatWindow";
 import RightPanel from "@/components/RightPanel";
 import { useChat } from "@/hooks/useChat";
+import { useAuth } from "@/hooks/useAuth";
 
 export default function Home() {
-  const { messages, isLoading, pendingQuery, sendMessage, clearChat, setPendingQuery } = useChat();
+  const {
+    messages,
+    isLoading,
+    pendingQuery,
+    conversationId,
+    sendMessage,
+    loadThread,
+    clearChat,
+    setPendingQuery,
+  } = useChat();
+  const { token } = useAuth();
   const [panelCollapsed, setPanelCollapsed] = useState(false);
 
-  const handleSuggestedQuestion = (q: string) => {
-    // Send directly to chat — no composer prefill needed
-    sendMessage(q, []);
+  const handleSend = async (text: string, files: File[]) => {
+    await sendMessage(text, files, token);
+  };
+
+  const handleSuggestedQuestion = async (q: string) => {
+    await sendMessage(q, [], token);
+  };
+
+  const handleSelectThread = (threadId: string) => {
+    if (token) {
+      loadThread(threadId, token);
+    }
   };
 
   return (
     <div className={styles.shell}>
-      <Sidebar onNewChat={clearChat} />
+      <Sidebar
+        onNewChat={clearChat}
+        activeThreadId={conversationId}
+        onSelectThread={handleSelectThread}
+      />
       <ChatWindow
         messages={messages}
         isLoading={isLoading}
         pendingQuery={pendingQuery}
-        onSend={sendMessage}
+        onSend={handleSend}
         onPendingQueryChange={setPendingQuery}
       />
       <RightPanel
