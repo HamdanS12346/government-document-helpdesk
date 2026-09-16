@@ -11,6 +11,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from app.api.serialization import serialize_public_message
+from app.config import get_settings
 from app.contracts.chat import (
     ChatIntentSummary,
     ChatMessage,
@@ -35,6 +36,11 @@ _DEFAULT_INVOKE_INTENT_RETRIEVER = invoke_intent_retriever_graph
 
 
 router = APIRouter()
+
+
+def _debug_print(*args: object, **kwargs: object) -> None:
+    if get_settings().chat_debug_prints:
+        print(*args, **kwargs)
 
 
 @dataclass(frozen=True)
@@ -72,10 +78,10 @@ async def chat(
                     output=build_input_processing_result_metadata(result)
                 )
             if result.success and result.normalized_input is not None:
-                print(f"\n==================== Incoming Chat Request ====================", flush=True)
-                print(f"Conversation ID: {conversation_id or '(none - starting new thread)'}", flush=True)
-                print("\nNormalized input:", flush=True)
-                print(result.normalized_input.model_dump_json(indent=2), flush=True)
+                _debug_print(f"\n==================== Incoming Chat Request ====================", flush=True)
+                _debug_print(f"Conversation ID: {conversation_id or '(none - starting new thread)'}", flush=True)
+                _debug_print("\nNormalized input:", flush=True)
+                _debug_print(result.normalized_input.model_dump_json(indent=2), flush=True)
                 try:
                     graph_state = _invoke_chat_graph(
                         result,
@@ -90,16 +96,16 @@ async def chat(
                         status_code=status.HTTP_502_BAD_GATEWAY,
                         content=_build_classification_error_payload(),
                     )
-                print("\nIntent decision:", flush=True)
-                print(graph_state["intent_decision"].model_dump_json(indent=2), flush=True)
+                _debug_print("\nIntent decision:", flush=True)
+                _debug_print(graph_state["intent_decision"].model_dump_json(indent=2), flush=True)
                 response_status = _build_chat_status(result, graph_state)
                 assistant_message = _build_assistant_message(graph_state)
                 if assistant_message is not None:
-                    print(
+                    _debug_print(
                         f"\n[Assistant response] (thread_id: {graph_state.get('thread_id')}):",
                         flush=True,
                     )
-                    print(assistant_message.content, flush=True)
+                    _debug_print(assistant_message.content, flush=True)
                 trace.update(
                     output=build_chat_graph_response_metadata(
                         graph_state,
@@ -112,7 +118,7 @@ async def chat(
                     )
                 )
             else:
-                print(result.model_dump_json(indent=2))
+                _debug_print(result.model_dump_json(indent=2))
                 trace.update(
                     output={
                         "status": "input_failed",

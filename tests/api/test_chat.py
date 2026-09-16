@@ -234,9 +234,27 @@ def test_chat_graph_wrapper_forwards_memory_fields(
     assert captured_kwargs["clarification_round_count"] == 2
 
 
-def test_chat_prints_normalized_input_and_intent_decision(
+def test_chat_does_not_print_debug_details_by_default(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    client = TestClient(app)
+
+    response = client.post("/chat", data={"message": "Please explain this notice."})
+
+    assert response.status_code == 200
+    output = capsys.readouterr().out
+    assert "Normalized input:" not in output
+    assert '"user_query": "Please explain this notice."' not in output
+    assert "Intent decision:" not in output
+    assert '"intent_type": "document_info"' not in output
+
+
+def test_chat_prints_debug_details_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("CHAT_DEBUG_PRINTS", "true")
+    get_settings.cache_clear()
     client = TestClient(app)
 
     response = client.post("/chat", data={"message": "Please explain this notice."})
@@ -247,6 +265,7 @@ def test_chat_prints_normalized_input_and_intent_decision(
     assert '"user_query": "Please explain this notice."' in output
     assert "Intent decision:" in output
     assert '"intent_type": "document_info"' in output
+    get_settings.cache_clear()
 
 
 def test_chat_does_not_print_full_documents_or_context(
@@ -362,8 +381,8 @@ def test_chat_accepts_non_document_graph_states_without_documents(
     assert "documents" not in payload
     assert "retrieved_context" not in payload
     output = capsys.readouterr().out
-    assert "Intent decision:" in output
-    assert f'"intent_type": "{intent_type}"' in output
+    assert "Intent decision:" not in output
+    assert f'"intent_type": "{intent_type}"' not in output
     assert "Documents:" not in output
     assert "Retrieved context:" not in output
 

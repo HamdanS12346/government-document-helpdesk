@@ -2,6 +2,7 @@
 
 import logging
 from typing import Any, Dict, List, Optional
+from app.config import get_settings
 from app.contracts.normalized_input import NormalizedInput
 from app.contracts.retrieval import RetrievedDocument
 from app.rag.hybrid_fusion import reciprocal_rank_fusion
@@ -20,6 +21,11 @@ from app.observability.metadata import (
 from guardrails.retrieval import QueryInjectionGuard, RetrievalGuardrailDecision
 
 logger = logging.getLogger(__name__)
+
+
+def _debug_print(*args: object, **kwargs: object) -> None:
+    if get_settings().chat_debug_prints:
+        print(*args, **kwargs)
 
 
 class RetrieverPipeline:
@@ -162,7 +168,7 @@ class RetrieverPipeline:
                 rewritten_query,
             )
 
-            print("\n[Retriever Node] Conversation History in Memory:", flush=True)
+            _debug_print("\n[Retriever Node] Conversation History in Memory:", flush=True)
             if messages:
                 for idx, msg in enumerate(messages, 1):
                     msg_type = getattr(msg, "type", "")
@@ -172,16 +178,16 @@ class RetrieverPipeline:
                         if msg_type == "human"
                         else ("AI Message" if msg_type == "ai" else f"{msg_type.capitalize()} Message")
                     )
-                    print(f"  {idx}. {role_label}: {content}", flush=True)
+                    _debug_print(f"  {idx}. {role_label}: {content}", flush=True)
             else:
-                print("  (None - initial turn)", flush=True)
+                _debug_print("  (None - initial turn)", flush=True)
 
             if summary:
-                print(f"[Retriever Node] Conversation Summary:\n  {summary}", flush=True)
+                _debug_print(f"[Retriever Node] Conversation Summary:\n  {summary}", flush=True)
 
-            print(f"[Retriever Node] Query Optimization:", flush=True)
-            print(f"  Original Query:  {retrieval_input}", flush=True)
-            print(f"  Optimized Query: {rewritten_query}\n", flush=True)
+            _debug_print(f"[Retriever Node] Query Optimization:", flush=True)
+            _debug_print(f"  Original Query:  {retrieval_input}", flush=True)
+            _debug_print(f"  Optimized Query: {rewritten_query}\n", flush=True)
 
             with start_observation(
                 "metadata_filter",
