@@ -146,6 +146,43 @@ Expected trace behavior after restarting the API:
   time is probably outside retrieval spans, especially response payload
   serialization, console printing, graph/memory wrapper work, or Langfuse flush.
 
+## Step 4 Implemented: Dense Retrieval Sub-Spans
+
+Files changed:
+
+- `app/rag/vector_store.py`
+
+Change:
+
+```text
+dense_retrieval
+  -> dense_embedding
+  -> dense_chroma_query
+  -> dense_chroma_fallback_query, only when filtered query returns zero hits
+  -> dense_result_conversion
+```
+
+For in-memory fallback mode:
+
+```text
+dense_retrieval
+  -> dense_embedding
+  -> dense_in_memory_search
+```
+
+How to read random latency spikes:
+
+- If `dense_embedding` spikes, the delay is OpenAI embedding latency or SDK
+  retry behavior.
+- If `dense_chroma_query` spikes, the delay is Chroma Cloud/vector query/network
+  latency.
+- If `dense_chroma_fallback_query` appears, metadata filtering caused an extra
+  Chroma query.
+- If `dense_result_conversion` spikes, local result conversion or returned
+  payload size is unexpectedly expensive.
+- If none of the dense children explain the parent `dense_retrieval` time, the
+  gap is likely observation overhead or SDK work around the measured calls.
+
 ## Ranked Solutions
 
 ### 1. Move BM25 Warm-Up Out Of The Request Path

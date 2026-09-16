@@ -5,6 +5,7 @@ import os
 from typing import Any, Dict, List, Optional
 import numpy as np
 from app.contracts.retrieval import RetrievedDocument
+from app.observability import start_observation
 
 logger = logging.getLogger(__name__)
 
@@ -167,8 +168,15 @@ class VectorStoreRetriever:
             return []
 
         try:
-            emb_model = self._get_embeddings_model()
-            query_embedding = emb_model.embed_query(query)
+            with start_observation(
+                "dense_embedding",
+                input={"query_length": len(query)},
+            ) as embedding_observation:
+                emb_model = self._get_embeddings_model()
+                query_embedding = emb_model.embed_query(query)
+                embedding_observation.update(
+                    output={"embedding_dimensions": len(query_embedding)}
+                )
 
             collection = self._get_collection()
             if collection is not None:
@@ -182,76 +190,60 @@ class VectorStoreRetriever:
                 if where:
                     query_kwargs["where"] = where
 
-                results = collection.query(**query_kwargs)
+                with start_observation(
+                    "dense_chroma_query",
+                    input={
+                        "top_k": top_k,
+                        "n_results": n_res,
+                        "filter_applied": where is not None,
+                    },
+                ) as chroma_observation:
+                    results = collection.query(**query_kwargs)
+                    chroma_observation.update(
+                        output={
+                            "result_count": self._chroma_result_count(results),
+                            "fallback_needed": self._is_empty_chroma_result(results),
+                        }
+                    )
 
                 # Zero-recall circuit breaker: if filtered search produced 0 hits, retry unconstrained
-                if where and (not results or not results.get("ids") or not results["ids"][0]):
+                if where and self._is_empty_chroma_result(results):
                     logger.info("Filtered vector search returned 0 results; falling back to unconstrained search.")
                     query_kwargs.pop("where", None)
-                    results = collection.query(**query_kwargs)
-
-                retrieved = []
-                if (
-                    results
-                    and results.get("ids")
-                    and len(results["ids"]) > 0
-                    and results["ids"][0]
-                ):
-                    ids = results["ids"][0]
-                    texts = results["documents"][0] if results.get("documents") else []
-                    metas = results["metadatas"][0] if results.get("metadatas") else []
-                    distances = results["distances"][0] if results.get("distances") else []
-
-                    for idx in range(len(ids)):
-                        doc_id = ids[idx]
-                        text = (
-                            texts[idx]
-                            if idx < len(texts) and texts[idx]
-                            else self._find_text_by_id(doc_id)
+                    with start_observation(
+                        "dense_chroma_fallback_query",
+                        input={"top_k": top_k, "n_results": n_res},
+                    ) as fallback_observation:
+                        results = collection.query(**query_kwargs)
+                        fallback_observation.update(
+                            output={"result_count": self._chroma_result_count(results)}
                         )
-                        meta = (
-                            metas[idx]
-                            if idx < len(metas) and metas[idx]
-                            else self._find_meta_by_id(doc_id)
-                        )
-                        dist = distances[idx] if idx < len(distances) else 0.0
-                        # Convert cosine distance to cosine similarity
-                        score = max(0.0, 1.0 - float(dist))
 
-                        retrieved.append(
-                            RetrievedDocument(
-                                id=doc_id,
-                                text_content=text,
-                                metadata=meta,
-                                score=score,
-                            )
-                        )
+                with start_observation(
+                    "dense_result_conversion",
+                    input={"raw_result_count": self._chroma_result_count(results)},
+                ) as conversion_observation:
+                    retrieved = self._documents_from_chroma_results(results)
+                    conversion_observation.update(
+                        output={"document_count": len(retrieved)}
+                    )
                 return retrieved
 
             # In-memory cosine similarity fallback
             if self._fallback_embeddings is not None and self._documents:
-                q_emb = np.array(query_embedding, dtype=np.float32)
-                q_norm = np.linalg.norm(q_emb)
-                if q_norm > 0:
-                    q_emb = q_emb / q_norm
-                sims = np.dot(self._fallback_embeddings, q_emb)
-                sorted_indices = np.argsort(sims)[::-1]
-
-                # Filter by metadata if where is provided
-                matching_indices = []
-                for idx in sorted_indices:
-                    doc = self._documents[idx]
-                    if self._matches_in_memory_where(doc, where):
-                        matching_indices.append(idx)
-
-                # Fallback if filtered in-memory search has 0 matches
-                if where and not matching_indices:
-                    matching_indices = list(sorted_indices)
-
-                return [
-                    self._documents[idx].model_copy(update={"score": float(sims[idx])})
-                    for idx in matching_indices[:top_k]
-                ]
+                with start_observation(
+                    "dense_in_memory_search",
+                    input={
+                        "top_k": top_k,
+                        "document_count": len(self._documents),
+                        "filter_applied": where is not None,
+                    },
+                ) as fallback_observation:
+                    documents = self._search_in_memory(query_embedding, top_k, where)
+                    fallback_observation.update(
+                        output={"document_count": len(documents)}
+                    )
+                    return documents
 
         except Exception as exc:
             logger.warning("Vector search encountered error: %s", exc)
@@ -267,6 +259,78 @@ class VectorStoreRetriever:
         if "$and" in where:
             return all(meta.get(k) == v for condition in where["$and"] for k, v in condition.items())
         return all(meta.get(k) == v for k, v in where.items())
+
+    @staticmethod
+    def _is_empty_chroma_result(results: Any) -> bool:
+        return not results or not results.get("ids") or not results["ids"][0]
+
+    @staticmethod
+    def _chroma_result_count(results: Any) -> int:
+        if not results or not results.get("ids") or not results["ids"]:
+            return 0
+        return len(results["ids"][0] or [])
+
+    def _documents_from_chroma_results(self, results: Any) -> List[RetrievedDocument]:
+        retrieved: List[RetrievedDocument] = []
+        if self._is_empty_chroma_result(results):
+            return retrieved
+
+        ids = results["ids"][0]
+        texts = results["documents"][0] if results.get("documents") else []
+        metas = results["metadatas"][0] if results.get("metadatas") else []
+        distances = results["distances"][0] if results.get("distances") else []
+
+        for idx in range(len(ids)):
+            doc_id = ids[idx]
+            text = (
+                texts[idx]
+                if idx < len(texts) and texts[idx]
+                else self._find_text_by_id(doc_id)
+            )
+            meta = (
+                metas[idx]
+                if idx < len(metas) and metas[idx]
+                else self._find_meta_by_id(doc_id)
+            )
+            dist = distances[idx] if idx < len(distances) else 0.0
+            score = max(0.0, 1.0 - float(dist))
+
+            retrieved.append(
+                RetrievedDocument(
+                    id=doc_id,
+                    text_content=text,
+                    metadata=meta,
+                    score=score,
+                )
+            )
+        return retrieved
+
+    def _search_in_memory(
+        self,
+        query_embedding: List[float],
+        top_k: int,
+        where: Optional[Dict[str, Any]],
+    ) -> List[RetrievedDocument]:
+        q_emb = np.array(query_embedding, dtype=np.float32)
+        q_norm = np.linalg.norm(q_emb)
+        if q_norm > 0:
+            q_emb = q_emb / q_norm
+        sims = np.dot(self._fallback_embeddings, q_emb)
+        sorted_indices = np.argsort(sims)[::-1]
+
+        matching_indices = []
+        for idx in sorted_indices:
+            doc = self._documents[idx]
+            if self._matches_in_memory_where(doc, where):
+                matching_indices.append(idx)
+
+        if where and not matching_indices:
+            matching_indices = list(sorted_indices)
+
+        return [
+            self._documents[idx].model_copy(update={"score": float(sims[idx])})
+            for idx in matching_indices[:top_k]
+        ]
 
     def get_all_documents(self, limit: Optional[int] = None) -> List[RetrievedDocument]:
         """Fetch all documents directly from Chroma Cloud with pagination to respect quota limits."""

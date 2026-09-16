@@ -249,7 +249,7 @@ def test_chat_prints_normalized_input_and_intent_decision(
     assert '"intent_type": "document_info"' in output
 
 
-def test_chat_prints_documents_when_graph_state_contains_documents(
+def test_chat_does_not_print_full_documents_or_context(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -318,10 +318,10 @@ def test_chat_prints_documents_when_graph_state_contains_documents(
     assert "documents" not in payload
     assert "retrieved_context" not in payload
     output = capsys.readouterr().out
-    assert "Documents:" in output
-    assert '"id": "identity-documents__pan-card__chunk-0001"' in output
-    assert "Retrieved context:" in output
-    assert '"formatted_context": "[Document 1]\\nDocument: pan-card' in output
+    assert "Documents:" not in output
+    assert "Retrieved context:" not in output
+    assert "identity-documents__pan-card__chunk-0001" not in output
+    assert "PAN application requires proof of identity." not in output
 
 
 @pytest.mark.parametrize("intent_type", ["general_chat", "ambiguous"])

@@ -1,7 +1,6 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cache
-import json
 import logging
 from typing import Annotated, Any
 
@@ -93,24 +92,6 @@ async def chat(
                     )
                 print("\nIntent decision:", flush=True)
                 print(graph_state["intent_decision"].model_dump_json(indent=2), flush=True)
-                if "documents" in graph_state:
-                    print("\nDocuments:", flush=True)
-                    print(
-                        json.dumps(
-                            jsonable_encoder(graph_state["documents"]),
-                            indent=2,
-                        ),
-                        flush=True,
-                    )
-                if "retrieved_context" in graph_state:
-                    print("\nRetrieved context:", flush=True)
-                    print(
-                        json.dumps(
-                            jsonable_encoder(graph_state["retrieved_context"]),
-                            indent=2,
-                        ),
-                        flush=True,
-                    )
                 response_status = _build_chat_status(result, graph_state)
                 assistant_message = _build_assistant_message(graph_state)
                 if assistant_message is not None:
