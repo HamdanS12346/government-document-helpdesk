@@ -24,7 +24,6 @@ class VectorStoreRetriever:
         self._embeddings_model = embeddings_model
         self._chroma_client = chroma_client
         self._collection: Optional[Any] = None
-        self._collection_count: Optional[int] = None
         self._documents: List[RetrievedDocument] = []
         self._fallback_embeddings: Optional[np.ndarray] = None
 
@@ -102,23 +101,11 @@ class VectorStoreRetriever:
         """Initialize reusable dense retrieval resources before user requests."""
         try:
             self._get_embeddings_model()
-            collection = self._get_collection()
-            if collection is not None and hasattr(collection, "count"):
-                if refresh_count or self._collection_count is None:
-                    self._collection_count = int(collection.count())
+            self._get_collection()
             return True
         except Exception as exc:
             logger.warning("Dense retrieval warm-up failed: %s", exc)
             return False
-
-    def _get_collection_count(self, collection: Any) -> int:
-        """Return cached Chroma collection count when available."""
-        if self._collection_count is not None:
-            return self._collection_count
-        if hasattr(collection, "count"):
-            self._collection_count = int(collection.count())
-            return self._collection_count
-        return len(self._documents) or 25
 
     def index(self, documents: List[RetrievedDocument]) -> None:
         """Index documents into Chroma using text-embedding-3-small embeddings."""
@@ -180,8 +167,7 @@ class VectorStoreRetriever:
 
             collection = self._get_collection()
             if collection is not None:
-                total_count = self._get_collection_count(collection)
-                n_res = min(top_k, max(1, total_count))
+                n_res = max(1, top_k)
                 query_kwargs: Dict[str, Any] = {
                     "query_embeddings": [query_embedding],
                     "n_results": n_res,
@@ -339,7 +325,7 @@ class VectorStoreRetriever:
             return self._documents
 
         try:
-            total_count = self._get_collection_count(collection)
+            total_count = collection.count() if hasattr(collection, "count") else 0
             if total_count == 0:
                 return self._documents
 

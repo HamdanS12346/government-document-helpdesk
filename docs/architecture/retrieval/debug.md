@@ -109,7 +109,7 @@ Expected trace behavior after restarting the API:
 - If lexical returns zero documents on later queries, that should now mean query
   terms/filtering did not produce BM25 hits, not that BM25 failed to load.
 
-## Step 3 Implemented: Dense Resource Warm-Up And Count Cache
+## Step 3 Implemented: Dense Resource Warm-Up And Count Avoidance
 
 Files changed:
 
@@ -126,17 +126,16 @@ FastAPI lifespan startup
   -> pipeline.warm_dense_resources()
   -> initialize embedding model object
   -> initialize Chroma client/collection
-  -> cache Chroma collection.count()
   -> pipeline.warm_lexical_index()
 
 VectorStoreRetriever.search()
-  -> reuses cached collection count
-  -> avoids collection.count() during normal dense retrieval after startup
+  -> sends configured top_k directly as Chroma n_results
+  -> avoids collection.count() in the dense request path
 ```
 
 Expected trace behavior after restarting the API:
 
-- Startup may take a little longer because Chroma collection/count and embedding
+- Startup may take a little longer because Chroma collection and embedding
   client setup happen before the first request.
 - First real `dense_retrieval` should no longer pay Chroma client/collection
   creation or collection count.
@@ -289,15 +288,15 @@ Preserve the same trace span names: `dense_retrieval`, `lexical_retrieval`,
 
 ### 4. Cache Or Avoid `collection.count()` During Dense Search
 
-Status: implemented with a cached count warmed at startup.
+Status: implemented by avoiding `collection.count()` in dense search.
 
 Confidence: high.
 
 Reason:
 
-`VectorStoreRetriever.search()` calls `collection.count()` before every Chroma
-query to clamp `n_results`. With Chroma Cloud, that can be an extra network
-round trip on every retrieval.
+Earlier, `VectorStoreRetriever.search()` called `collection.count()` before
+every Chroma query to clamp `n_results`. With Chroma Cloud, that could add an
+extra network round trip on every retrieval.
 
 Possible implementation:
 
@@ -458,8 +457,8 @@ Current result:
    and total request time.
 2. If first query is worse but later queries improve, move BM25 warm-up to
    startup.
-3. If dense remains slow on every query, cache or remove the per-query
-   `collection.count()`.
+3. If dense remains slow on every query, inspect the dense sub-spans to separate
+   embedding latency from Chroma query latency.
 4. If retrieval branch time is still additive, parallelize dense and lexical.
 5. If pre-retrieval time dominates, add deterministic metadata extraction.
 6. If reranking dominates, reduce/truncate reranker inputs.

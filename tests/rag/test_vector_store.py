@@ -45,7 +45,7 @@ class FakeEmbeddings:
         return [0.1, 0.2, 0.3]
 
 
-def test_vector_store_warm_resources_caches_collection_count():
+def test_vector_store_search_does_not_count_collection():
     collection = FakeCollection()
     embeddings = FakeEmbeddings()
     retriever = VectorStoreRetriever(
@@ -54,11 +54,11 @@ def test_vector_store_warm_resources_caches_collection_count():
     )
 
     assert retriever.warm_resources() is True
-    assert collection.count_calls == 1
+    assert collection.count_calls == 0
 
     results = retriever.search("PAN identity", top_k=5)
 
     assert len(results) == 1
     assert results[0].id == "doc1"
-    assert collection.count_calls == 1
+    assert collection.count_calls == 0
     assert collection.query_calls[0]["n_results"] == 5
