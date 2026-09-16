@@ -27,6 +27,7 @@ get_settings.cache_clear()
 from app.contracts.retrieval import RetrievedDocument
 from app.observability.langfuse import flush_langfuse, get_langfuse_client, start_observation
 get_langfuse_client.cache_clear()
+from langchain_community.callbacks import get_openai_callback
 from app.rag.node import get_default_retriever_pipeline
 from app.rag.vector_store import VectorStoreRetriever
 from evaluation.case_loader import load_cases
@@ -115,22 +116,49 @@ def run_demo(start: int = 1, end: int = 3) -> None:
                 "expected_citations": case.get("expected_citations"),
             }
 
-            # Run LLM judges on the actual response
+            # Run LLM judges on the actual response with token tracking
             print("  Evaluating response quality across 6 criteria (LLM judges)...", flush=True)
-            eval_res = evaluate_response_case(
-                case=eval_case_data,
-                generated_response=graph_output.response or "",
-            )
+            with get_openai_callback() as eval_cb:
+                eval_res = evaluate_response_case(
+                    case=eval_case_data,
+                    generated_response=graph_output.response or "",
+                )
 
             scores = eval_res.get("scores", {})
             composite_score = eval_res.get("composite_score", 0.0)
             passed = eval_res.get("passed", False)
 
-            print(f"  -> Evaluation Composite Score: {composite_score:.2f} (Passed: {passed})")
-            for crit, score in scores.items():
-                print(f"     * {crit:<13}: {score:.2f}")
+            # Aggregate token usage across pipeline and evaluation judges
+            pipe_tokens = graph_output.token_usage or {}
+            pipe_in = pipe_tokens.get("input_tokens", 0)
+            pipe_out = pipe_tokens.get("output_tokens", 0)
+            pipe_tot = pipe_tokens.get("total_tokens", 0)
+            pipe_cost = pipe_tokens.get("cost_usd", 0.0)
 
-            # Attach scores to Langfuse trace
+            eval_tokens = {
+                "input_tokens": eval_cb.prompt_tokens,
+                "output_tokens": eval_cb.completion_tokens,
+                "total_tokens": eval_cb.total_tokens,
+                "cost_usd": eval_cb.total_cost,
+            }
+
+            turn_tokens = {
+                "input_tokens": pipe_in + eval_tokens["input_tokens"],
+                "output_tokens": pipe_out + eval_tokens["output_tokens"],
+                "total_tokens": pipe_tot + eval_tokens["total_tokens"],
+                "cost_usd": pipe_cost + eval_tokens["cost_usd"],
+                "pipeline": pipe_tokens,
+                "evaluators": eval_tokens,
+            }
+
+            print(f"  -> Tokens (Pipeline): {pipe_in} in / {pipe_out} out ({pipe_tot} total)", flush=True)
+            print(f"  -> Tokens (Judges):   {eval_tokens['input_tokens']} in / {eval_tokens['output_tokens']} out ({eval_tokens['total_tokens']} total)", flush=True)
+            print(f"  -> Tokens (Total):    {turn_tokens['input_tokens']} in / {turn_tokens['output_tokens']} out (~ ${turn_tokens['cost_usd']:.5f})", flush=True)
+            print(f"  -> Evaluation Composite Score: {composite_score:.2f} (Passed: {passed})", flush=True)
+            for crit, score in scores.items():
+                print(f"     * {crit:<13}: {score:.2f}", flush=True)
+
+            # Attach scores & token metrics to Langfuse trace
             if langfuse_client and trace_id:
                 try:
                     langfuse_client.create_score(
@@ -147,8 +175,57 @@ def run_demo(start: int = 1, end: int = 3) -> None:
                             trace_id=trace_id,
                             data_type="NUMERIC",
                         )
+                    # Token Usage Metrics
+                    langfuse_client.create_score(
+                        name="tokens_total",
+                        value=float(turn_tokens["total_tokens"]),
+                        trace_id=trace_id,
+                        data_type="NUMERIC",
+                    )
+                    langfuse_client.create_score(
+                        name="tokens_input",
+                        value=float(turn_tokens["input_tokens"]),
+                        trace_id=trace_id,
+                        data_type="NUMERIC",
+                    )
+                    langfuse_client.create_score(
+                        name="tokens_output",
+                        value=float(turn_tokens["output_tokens"]),
+                        trace_id=trace_id,
+                        data_type="NUMERIC",
+                    )
+                    langfuse_client.create_score(
+                        name="tokens_pipeline_input",
+                        value=float(pipe_in),
+                        trace_id=trace_id,
+                        data_type="NUMERIC",
+                    )
+                    langfuse_client.create_score(
+                        name="tokens_pipeline_output",
+                        value=float(pipe_out),
+                        trace_id=trace_id,
+                        data_type="NUMERIC",
+                    )
+                    langfuse_client.create_score(
+                        name="tokens_eval_input",
+                        value=float(eval_tokens["input_tokens"]),
+                        trace_id=trace_id,
+                        data_type="NUMERIC",
+                    )
+                    langfuse_client.create_score(
+                        name="tokens_eval_output",
+                        value=float(eval_tokens["output_tokens"]),
+                        trace_id=trace_id,
+                        data_type="NUMERIC",
+                    )
+                    langfuse_client.create_score(
+                        name="cost_usd",
+                        value=float(turn_tokens["cost_usd"]),
+                        trace_id=trace_id,
+                        data_type="NUMERIC",
+                    )
                 except Exception as exc:
-                    print(f"  [WARN] Failed to record scores to Langfuse: {exc}")
+                    print(f"  [WARN] Failed to record scores to Langfuse: {exc}", flush=True)
 
             trace.update(
                 output={
@@ -159,6 +236,7 @@ def run_demo(start: int = 1, end: int = 3) -> None:
                     "evaluation_scores": scores,
                     "composite_score": composite_score,
                     "passed": passed,
+                    "token_usage": turn_tokens,
                 }
             )
 
@@ -169,13 +247,14 @@ def run_demo(start: int = 1, end: int = 3) -> None:
                 "retrieved_chunks": len(graph_output.retrieved_chunk_ids),
                 "composite_score": composite_score,
                 "passed": passed,
+                "tokens": turn_tokens,
                 "trace_id": trace_id,
             })
 
     # Flush all events to Langfuse cloud
-    print("\nFlushing events to Langfuse...")
+    print("\nFlushing events to Langfuse...", flush=True)
     flush_langfuse()
-    print("[OK] All observations and scores flushed to Langfuse.")
+    print("[OK] All observations and scores flushed to Langfuse.", flush=True)
 
     print("\n" + "=" * 80, flush=True)
     print("SUMMARY OF CONNECTED GRAPH EVALUATION RUN", flush=True)
@@ -185,6 +264,8 @@ def run_demo(start: int = 1, end: int = 3) -> None:
         print(f"  Query:            {res['query']}", flush=True)
         print(f"  Intent:           {res['intent']}", flush=True)
         print(f"  Chunks Retrieved: {res['retrieved_chunks']}", flush=True)
+        tokens = res.get("tokens", {})
+        print(f"  Tokens:           {tokens.get('input_tokens', 0)} in / {tokens.get('output_tokens', 0)} out (Total: {tokens.get('total_tokens', 0)}, Cost: ${tokens.get('cost_usd', 0.0):.5f})", flush=True)
         print(f"  Composite Score:  {res['composite_score']:.2f}", flush=True)
         print(f"  Status:           {'PASSED' if res['passed'] else 'FAILED'}", flush=True)
         if res.get('trace_id'):

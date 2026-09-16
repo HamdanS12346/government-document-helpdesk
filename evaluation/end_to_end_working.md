@@ -139,6 +139,8 @@ Trace: eval_case:<CASE_ID>
 ```
 
 ### Metrics Recorded on Each Trace
+
+#### Quality & Grounding Scores
 1. `composite_score`: Overall case evaluation score.
 2. `eval_correctness`: Factually accurate against ground-truth points (0.0 to 1.0).
 3. `eval_faithfulness`: Grounded strictly in retrieved chunks without hallucination (0.0 to 1.0).
@@ -146,6 +148,15 @@ Trace: eval_case:<CASE_ID>
 5. `eval_completeness`: Coverage of required procedures, fees, or documents (0.0 to 1.0).
 6. `eval_citation`: Valid government source links cited (0.0 to 1.0).
 7. `eval_safety`: Complies with safety guidelines and avoids misleading policy guidance (0.0 to 1.0).
+
+#### Token Consumption & Cost Metrics
+8. `tokens_input`: Total input (prompt) tokens consumed across the full turn.
+9. `tokens_output`: Total output (completion) tokens generated across the full turn.
+10. `tokens_total`: Total tokens consumed across pipeline and evaluators.
+11. `tokens_pipeline_input` & `tokens_pipeline_output`: Input/output tokens used by graph nodes (`intent_classifier`, `retriever` query rewriter/metadata extractor, `response_generator`).
+12. `tokens_eval_input` & `tokens_eval_output`: Input/output tokens consumed by the 6 LLM judge evaluators.
+13. `cost_usd`: Total estimated cost (USD) for the evaluation turn.
+14. Stage-specific breakdown available in trace output metadata under `token_usage.stages` (`intent`, `retrieval`, `response`, `clarification`).
 
 ---
 
