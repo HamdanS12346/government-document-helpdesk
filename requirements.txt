@@ -1,30 +1,29 @@
-fastapi
-uvicorn
-python-multipart
+fastapi==0.141.1
+uvicorn==0.52.4
+python-multipart==0.0.32
 
-langchain
-langchain-community
-langchain-openai
-langgraph
-openai
-cohere
-langfuse
+langchain==1.4.0
+langchain-community==0.4.2
+langchain-openai==1.6.2
+langgraph==1.2.11
+openai==3.13.0
+cohere==7.1.1
+langfuse==4.15.2
 
-pydantic
-pydantic-settings
-python-dotenv
-langfuse
+pydantic==2.13.5
+pydantic-settings==2.15.0
+python-dotenv==1.2.3
 
-chromadb
-faiss-cpu
-rank-bm25
-supabase
+chromadb==1.5.9
+faiss-cpu==1.15.0
+rank-bm25==0.2.2
+supabase==2.31.0
 
-pypdf
-pdfplumber
-pillow
-pytesseract
-openpyxl>=3.1,<4
+pypdf==6.18.1
+pdfplumber==0.11.10
+pillow==12.3.0
+pytesseract==0.3.13
+openpyxl==3.1.5
 
-pytest
-pytest-asyncio
+pytest==9.1.1
+pytest-asyncio==1.4.0
