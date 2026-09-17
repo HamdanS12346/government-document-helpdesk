@@ -112,13 +112,18 @@ class RetrieverPipeline:
             retrieval_input,
             user_query=norm_input.user_query,
         )
+        guardrail_flags = dict(state.get("guardrail_flags") or {})
+        guardrail_flags["query_injection_decision"] = injection_result.decision
+        if injection_result.matched_pattern_names:
+            guardrail_flags["query_injection_patterns"] = injection_result.matched_pattern_names
+
         if injection_result.decision == RetrievalGuardrailDecision.REJECT:
             logger.error(
                 "[QueryInjectionGuard] REJECT — aborting retrieval pipeline. "
                 "Matched patterns: %s.",
                 injection_result.matched_pattern_names,
             )
-            return {"documents": []}
+            return {"documents": [], "guardrail_flags": guardrail_flags}
         if injection_result.decision == RetrievalGuardrailDecision.SANITIZE_AND_CONTINUE:
             logger.warning(
                 "[QueryInjectionGuard] SANITIZE — query cleaned before retrieval. "
@@ -346,7 +351,10 @@ class RetrieverPipeline:
                 },
             )
 
-        return {"documents": final_documents}
+        ret_update: Dict[str, Any] = {"documents": final_documents}
+        if guardrail_flags:
+            ret_update["guardrail_flags"] = guardrail_flags
+        return ret_update
 
 
 # Default singleton pipeline instance for LangGraph wiring

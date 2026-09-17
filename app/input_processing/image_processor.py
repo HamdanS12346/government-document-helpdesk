@@ -15,11 +15,14 @@ from app.input_processing.schemas import (
     ValidatedAttachment,
 )
 from guardrails.input_processor import (
+    MAX_IMAGE_PIXELS,
     mark_document_text_untrusted,
     mask_pii_in_text,
+    validate_image_dimensions,
 )
 
 
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 IMAGE_QUALITY_THRESHOLD = None
 UNREADABLE_IMAGE_MESSAGE = "This image could not be inspected safely."
 UNUSABLE_OCR_MESSAGE = "No reliable text could be extracted from this image."
@@ -58,8 +61,27 @@ def process_image_attachment(
 
     try:
         with Image.open(BytesIO(attachment.content)) as image:
+            size = getattr(image, "size", None)
+            if size is not None:
+                width, height = size
+                if width * height > MAX_IMAGE_PIXELS:
+                    return ImageProcessingResult(
+                        error=AttachmentProcessingError(
+                            filename=attachment.filename,
+                            code=InputProcessingErrorCode.FILE_TOO_LARGE,
+                            message=f"Image resolution exceeds maximum allowed limit ({MAX_IMAGE_PIXELS} pixels).",
+                        )
+                    )
             image.verify()
-    except (UnidentifiedImageError, OSError) as exc:
+    except Image.DecompressionBombError:
+        return ImageProcessingResult(
+            error=AttachmentProcessingError(
+                filename=attachment.filename,
+                code=InputProcessingErrorCode.FILE_TOO_LARGE,
+                message="This image has excessive pixel dimensions and could not be processed safely.",
+            )
+        )
+    except (UnidentifiedImageError, OSError):
         return ImageProcessingResult(
             error=AttachmentProcessingError(
                 filename=attachment.filename,

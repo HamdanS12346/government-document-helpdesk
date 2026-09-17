@@ -109,7 +109,10 @@ class VectorStoreRetriever:
 
     def index(self, documents: List[RetrievedDocument]) -> None:
         """Index documents into Chroma using text-embedding-3-small embeddings."""
-        self._documents = list(documents)
+        from guardrails.retrieval import DocumentIngestionGuard
+
+        sanitized_docs, stats = DocumentIngestionGuard().validate_and_sanitize_corpus(list(documents))
+        self._documents = sanitized_docs
         if not self._documents:
             return
 

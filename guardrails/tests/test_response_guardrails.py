@@ -15,6 +15,8 @@ from app.contracts.response import ContextSource, RetrievedContext
 from guardrails.response import (
     CitationGroundingGuardrail,
     CitationGroundingResult,
+    FactualityHallucinationGuardrail,
+    HallucinationCheckResult,
     ResponseGuardrailDecision,
     ResponseGuardrailReport,
     ResponseLengthGuardrail,
@@ -370,3 +372,89 @@ class TestRunResponseGuardrails:
         assert isinstance(report.pii_result.redaction_count, int)
         assert isinstance(report.length_result.original_length, int)
         assert isinstance(report.scope_result.forbidden_matches, list)
+        assert report.hallucination_result is not None
+
+
+# ---------------------------------------------------------------------------
+# TestFactualityHallucinationGuardrail
+# ---------------------------------------------------------------------------
+
+class TestFactualityHallucinationGuardrail:
+    """Tests for FactualityHallucinationGuardrail (fees, dates & requirements)."""
+
+    guardrail = FactualityHallucinationGuardrail()
+
+    def test_allow_when_fees_and_deadlines_grounded(self):
+        """Grounded fees and deadlines pass with ALLOW."""
+        ctx = _make_context(1)
+        ctx.formatted_context = (
+            "Permanent driving license issuance fee is ₹500. "
+            "Dispatch timeline is within 30 days after test."
+        )
+        response = "The fee is ₹500 and the license will be delivered within 30 days."
+        result = self.guardrail.check(response, ctx)
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+        assert len(result.unsupported_entities) == 0
+        assert len(result.supported_entities) >= 1
+
+    def test_allow_when_no_entities_present(self):
+        """Responses with no numbers or dates pass with ALLOW."""
+        ctx = _make_context(1)
+        ctx.formatted_context = "Visit the official government portal to apply."
+        response = "Please visit the official portal to complete your application."
+        result = self.guardrail.check(response, ctx)
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+        assert result.total_entities_found == 0
+
+    def test_allow_when_context_is_none(self):
+        """general_chat without context passes with ALLOW."""
+        response = "The general registration charges are ₹100."
+        result = self.guardrail.check(response, retrieved_context=None)
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+
+    def test_reject_when_fabricated_fee_not_in_context(self):
+        """100% fabricated fee replaces response with safe fallback."""
+        ctx = _make_context(1)
+        ctx.formatted_context = "The nominal fee for passport application is ₹1,500."
+        response = "You must pay a processing fee of ₹3,500 to submit your form."
+        result = self.guardrail.check(response, ctx)
+        assert result.decision == ResponseGuardrailDecision.REPLACE_WITH_FALLBACK
+        assert len(result.unsupported_entities) == 1
+        assert "3,500" in result.unsupported_entities[0]
+        assert "official government portal" in result.cleaned_text
+
+    def test_warn_and_append_when_partial_unsupported_entity(self):
+        """Partial hallucination (<= 50%) appends official notice rather than hard reject."""
+        ctx = _make_context(1)
+        ctx.formatted_context = (
+            "The driving license fee is ₹500. Application review is within 15 days."
+        )
+        # ₹500 is supported, but within 90 days is unsupported (1 of 2 = 50%)
+        response = "The fee is ₹500 and processing will take within 90 days."
+        result = self.guardrail.check(response, ctx)
+        assert result.decision == ResponseGuardrailDecision.WARN_AND_APPEND
+        assert len(result.supported_entities) == 1
+        assert len(result.unsupported_entities) == 1
+        assert "within 90 days" in result.unsupported_entities[0]
+        assert "[Official Notice:" in result.cleaned_text
+        assert "The fee is ₹500" in result.cleaned_text
+
+    def test_reject_when_fabricated_deadline_and_age(self):
+        """Fabricated requirements (> 50%) trigger fallback replacement."""
+        ctx = _make_context(1)
+        ctx.formatted_context = "Applicant must be minimum age of 18 years."
+        response = "You must be minimum age of 28 years and apply within 60 days."
+        result = self.guardrail.check(response, ctx)
+        assert result.decision == ResponseGuardrailDecision.REPLACE_WITH_FALLBACK
+        assert len(result.unsupported_entities) >= 1
+
+    def test_composite_runner_triggers_hallucination_guardrail(self):
+        """run_response_guardrails executes hallucination check and reports trigger."""
+        ctx = _make_context(1)
+        ctx.formatted_context = "Voter card application fee is ₹25."
+        response = "The voter registration fee is ₹2,000 [Document 1]."
+        report = run_response_guardrails(response, ctx, intent_type="document_info")
+        assert report.any_triggered is True
+        assert report.hallucination_result is not None
+        assert report.hallucination_result.decision == ResponseGuardrailDecision.REPLACE_WITH_FALLBACK
+        assert "official government portal" in report.final_text

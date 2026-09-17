@@ -25,6 +25,8 @@ export type ChatMessage = {
   warnings?: string[];
   /** True when the API returned success: false */
   isError?: boolean;
+  /** True while the assistant response is actively streaming */
+  isStreaming?: boolean;
 };
 
 type UseChatReturn = {
@@ -83,6 +85,58 @@ function buildBotContent(
   return safeText(message, "Your message was received. Please try asking again.");
 }
 
+/** Stream response text progressively token-by-token into state */
+async function streamBotResponse(
+  botMsgId: string,
+  fullText: string,
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
+  signal?: AbortSignal
+): Promise<void> {
+  const tokens = fullText.match(/(\S+|\s+)/g) || [fullText];
+  const total = tokens.length;
+  if (total <= 1) {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === botMsgId ? { ...msg, content: fullText, isStreaming: false } : msg
+      )
+    );
+    return;
+  }
+
+  // Adjust chunk size for longer messages to maintain responsiveness
+  const chunkSize = total > 400 ? 3 : total > 150 ? 2 : 1;
+  const delayMs = 15;
+
+  let currentIdx = 0;
+  let accumulated = "";
+
+  return new Promise((resolve) => {
+    const timer = setInterval(() => {
+      if (signal?.aborted || currentIdx >= total) {
+        clearInterval(timer);
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === botMsgId ? { ...msg, content: fullText, isStreaming: false } : msg
+          )
+        );
+        resolve();
+        return;
+      }
+
+      for (let i = 0; i < chunkSize && currentIdx < total; i++) {
+        accumulated += tokens[currentIdx];
+        currentIdx++;
+      }
+
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === botMsgId ? { ...msg, content: accumulated, isStreaming: true } : msg
+        )
+      );
+    }, delayMs);
+  });
+}
+
 export function useChat(): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
   const [isLoading, setIsLoading] = useState(false);
@@ -115,16 +169,22 @@ export function useChat(): UseChatReturn {
         setConversationId(data.conversation_id);
       }
 
+      const botContent = buildBotContent(
+        data.success,
+        data.message,
+        data.assistant_message ?? null,
+        data.warnings ?? [],
+        data.attachment_statuses ?? []
+      );
+
+      const botMsgId = uid();
+      const shouldStream = data.success && Boolean(data.assistant_message?.content) && botContent.length > 20;
+
       const botMsg: ChatMessage = {
-        id: uid(),
+        id: botMsgId,
         role: "bot",
-        content: buildBotContent(
-          data.success,
-          data.message,
-          data.assistant_message ?? null,
-          data.warnings ?? [],
-          data.attachment_statuses ?? []
-        ),
+        content: shouldStream ? "" : botContent,
+        isStreaming: shouldStream,
         timestamp: new Date(),
         attachmentStatuses: data.attachment_statuses ?? [],
         warnings: (data.warnings ?? []).map((w) =>
@@ -132,7 +192,14 @@ export function useChat(): UseChatReturn {
         ),
         isError: !data.success,
       };
+
       setMessages((prev) => [...prev, botMsg]);
+      setIsLoading(false);
+
+      if (shouldStream) {
+        abortRef.current = new AbortController();
+        await streamBotResponse(botMsgId, botContent, setMessages, abortRef.current.signal);
+      }
     } catch {
       const errorMsg: ChatMessage = {
         id: uid(),

@@ -14,6 +14,17 @@ from app.observability import start_observation
 MAX_CLARIFICATION_ROUNDS = 3
 
 
+def _safe_clarification_round_count(raw_count: object) -> int:
+    """Safely parse clarification_round_count against non-int, negative, or corrupt values."""
+    if raw_count is None:
+        return 0
+    try:
+        val = int(raw_count)  # type: ignore[arg-type]
+        return max(0, val)
+    except (ValueError, TypeError):
+        return 0
+
+
 def route_after_intent(state: State) -> str:
     """Route to the next graph node after intent classification.
 
@@ -31,7 +42,9 @@ def route_after_intent(state: State) -> str:
     elif intent_type == IntentType.GENERAL_CHAT:
         selected_node = GENERAL_CHAT_PLACEHOLDER_NODE
     elif intent_type == IntentType.AMBIGUOUS:
-        clarification_round_count = int(state.get("clarification_round_count", 0) or 0)
+        clarification_round_count = _safe_clarification_round_count(
+            state.get("clarification_round_count")
+        )
         if clarification_round_count >= MAX_CLARIFICATION_ROUNDS:
             selected_node = RETRIEVER_NODE
         else:
@@ -39,14 +52,13 @@ def route_after_intent(state: State) -> str:
     else:
         raise ValueError(f"unsupported intent_type: {intent_type}")
 
+    safe_count = _safe_clarification_round_count(state.get("clarification_round_count"))
     with start_observation(
         "route_after_intent",
         input={
             "intent_type": str(intent_type),
             "confidence_score": decision.confidence_score,
-            "clarification_round_count": int(
-                state.get("clarification_round_count", 0) or 0
-            ),
+            "clarification_round_count": safe_count,
             "max_clarification_rounds": MAX_CLARIFICATION_ROUNDS,
         },
     ) as observation:
@@ -82,7 +94,9 @@ def route_after_intent_full(state: State) -> str:
     elif intent_type == IntentType.GENERAL_CHAT:
         selected_node = RESPONSE_NODE
     elif intent_type == IntentType.AMBIGUOUS:
-        clarification_round_count = int(state.get("clarification_round_count", 0) or 0)
+        clarification_round_count = _safe_clarification_round_count(
+            state.get("clarification_round_count")
+        )
         if clarification_round_count >= MAX_CLARIFICATION_ROUNDS:
             selected_node = RETRIEVER_NODE
         else:
@@ -90,14 +104,13 @@ def route_after_intent_full(state: State) -> str:
     else:
         raise ValueError(f"unsupported intent_type: {intent_type}")
 
+    safe_count = _safe_clarification_round_count(state.get("clarification_round_count"))
     with start_observation(
         "route_after_intent_full",
         input={
             "intent_type": str(intent_type),
             "confidence_score": decision.confidence_score,
-            "clarification_round_count": int(
-                state.get("clarification_round_count", 0) or 0
-            ),
+            "clarification_round_count": safe_count,
             "max_clarification_rounds": MAX_CLARIFICATION_ROUNDS,
         },
     ) as observation:

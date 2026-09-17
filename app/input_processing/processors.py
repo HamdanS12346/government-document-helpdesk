@@ -25,6 +25,8 @@ from guardrails.input_processor import (
     mask_pii_in_text,
     validate_attachment_modality,
     validate_input_presence,
+    validate_post_extraction_boundary,
+    validate_pre_processing_boundary,
 )
 
 
@@ -38,7 +40,7 @@ def process_input(
     """Process a public Input Processor request into normalized content."""
 
     try:
-        validate_input_presence(request)
+        validate_pre_processing_boundary(request)
     except InputProcessingError as exc:
         return InputProcessingResult(
             success=False,
@@ -228,7 +230,9 @@ def _process_user_query(
     if user_query is None:
         return "", []
 
-    masked_text = mask_pii_in_text(user_query).text
+    masked_text = validate_post_extraction_boundary(
+        user_query, is_user_query=True, strict_safety=False
+    )
     untrusted_text = mark_document_text_untrusted(masked_text)
     warnings = []
     if untrusted_text.suspicious:

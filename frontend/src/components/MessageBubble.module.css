@@ -240,3 +240,19 @@
 .mdLink:hover {
   color: var(--accent-hover);
 }
+
+/* Streaming cursor */
+.streamingCursor {
+  display: inline-block;
+  color: var(--accent);
+  font-weight: 700;
+  margin-left: 2px;
+  font-size: 0.9em;
+  animation: cursorBlink 0.8s infinite;
+  vertical-align: baseline;
+}
+
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

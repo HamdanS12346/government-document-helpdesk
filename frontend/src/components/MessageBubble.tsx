@@ -56,12 +56,13 @@ const markdownComponents = {
 };
 
 /** Bot-only: render content as Markdown using ReactMarkdown + GFM. */
-function BotContent({ text }: { text: string }) {
+function BotContent({ text, isStreaming }: { text: string; isStreaming?: boolean }) {
   return (
     <div className={styles.mdBody}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
         {text}
       </ReactMarkdown>
+      {isStreaming && <span className={styles.streamingCursor} aria-hidden>▋</span>}
     </div>
   );
 }
@@ -99,7 +100,7 @@ export default function MessageBubble({ message }: Props) {
         <div className={`${styles.bubble} ${message.isError ? styles.errorBubble : ""}`}>
           {isUser
             ? <UserContent text={message.content} />
-            : <BotContent text={message.content} />
+            : <BotContent text={message.content} isStreaming={message.isStreaming} />
           }
 
           {/* Attached file chips (user messages only) */}
