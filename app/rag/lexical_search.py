@@ -36,7 +36,10 @@ class BM25LexicalSearcher:
 
     def index(self, documents: List[RetrievedDocument]) -> None:
         """Build or replace BM25 index with provided documents."""
-        self._documents = list(documents)
+        from guardrails.retrieval import DocumentIngestionGuard
+
+        sanitized_docs, stats = DocumentIngestionGuard().validate_and_sanitize_corpus(list(documents))
+        self._documents = sanitized_docs
         self._external_load_attempted = bool(self._documents)
         tokenized_corpus = [
             self._tokenize(doc.text_content) for doc in self._documents

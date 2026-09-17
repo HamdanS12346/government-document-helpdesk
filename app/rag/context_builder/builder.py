@@ -542,10 +542,19 @@ class ContextBuilder:
         # Pre-measure the delimiter length once — it is added between chunks.
         delimiter_len = len(self.formatter.delimiter)
 
+        from guardrails.retrieval import RetrievedContextNeutralizer
+        neutralizer = RetrievedContextNeutralizer()
+
         for idx, doc in enumerate(docs):
             # citation_index is 1-based and matches [Document X] in the formatted text.
             citation_index = idx + 1
-            formatted_chunk = self.formatter.format_single_chunk(doc, citation_index)
+            # Neutralize raw citation tokens and delimiter injection markers from content
+            neutralized_text = neutralizer.neutralize(doc.text_content).cleaned_text
+            clean_doc = (
+                doc if neutralized_text == doc.text_content
+                else doc.model_copy(update={"text_content": neutralized_text})
+            )
+            formatted_chunk = self.formatter.format_single_chunk(clean_doc, citation_index)
 
             # First chunk has no leading delimiter; subsequent chunks do.
             added_len = len(formatted_chunk) + (delimiter_len if included_docs else 0)
@@ -577,15 +586,15 @@ class ContextBuilder:
                     sliced_text = formatted_chunk[: self.max_context_chars]
                     source = ContextSource(
                         index=citation_index,
-                        chunk_id=doc.id,
-                        document_name=doc.metadata.document_name,
-                        source_url=doc.metadata.source_url,
-                        score=doc.score,
+                        chunk_id=clean_doc.id,
+                        document_name=clean_doc.metadata.document_name,
+                        source_url=clean_doc.metadata.source_url,
+                        score=clean_doc.score,
                     )
                     logger.warning(
                         "build_context: first chunk '%s' (%d chars) exceeds budget "
                         "(%d chars). Returning sliced context.",
-                        doc.id,
+                        clean_doc.id,
                         len(formatted_chunk),
                         self.max_context_chars,
                     )
@@ -599,7 +608,7 @@ class ContextBuilder:
                         fallback_applied=False,
                     )
 
-            included_docs.append(doc)
+            included_docs.append(clean_doc)
             current_char_count += added_len
 
             # Record citation metadata matching the [Document X] index used in the
@@ -608,10 +617,10 @@ class ContextBuilder:
             sources.append(
                 ContextSource(
                     index=citation_index,
-                    chunk_id=doc.id,
-                    document_name=doc.metadata.document_name,
-                    source_url=doc.metadata.source_url,
-                    score=doc.score,
+                    chunk_id=clean_doc.id,
+                    document_name=clean_doc.metadata.document_name,
+                    source_url=clean_doc.metadata.source_url,
+                    score=clean_doc.score,
                 )
             )
 
