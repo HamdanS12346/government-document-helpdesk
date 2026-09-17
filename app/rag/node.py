@@ -4,13 +4,13 @@ import logging
 from typing import Any, Dict, List, Optional
 from app.config import get_settings
 from app.contracts.normalized_input import NormalizedInput
-from app.contracts.retrieval import RetrievedDocument
+from app.contracts.retrieval import RetrievedDocument, RetrievalError, RetrievalStatus
 from app.rag.hybrid_fusion import reciprocal_rank_fusion
 from app.rag.lexical_search import BM25LexicalSearcher
 from app.rag.metadata_extractor import MetadataExtractor
 from app.rag.query_rewriter import QueryRewriter
 from app.rag.reranker import CohereReranker
-from app.rag.vector_store import VectorStoreRetriever
+from app.rag.vector_store import RetrievalServiceError, VectorStoreRetriever
 from langchain_community.callbacks import get_openai_callback
 
 from app.observability import start_observation
@@ -45,6 +45,9 @@ class RetrieverPipeline:
         rrf_top_n: int = 15,
         final_top_k: int = 5,
         rrf_k: int = 60,
+        dense_min_score: float = 0.0,
+        lexical_min_score: float = 8.0,
+        rerank_min_score: float = 0.2,
     ):
         self.query_rewriter = query_rewriter or QueryRewriter()
         self.metadata_extractor = metadata_extractor or MetadataExtractor()
@@ -56,6 +59,9 @@ class RetrieverPipeline:
         self.rrf_top_n = rrf_top_n
         self.final_top_k = final_top_k
         self.rrf_k = rrf_k
+        self.dense_min_score = dense_min_score
+        self.lexical_min_score = lexical_min_score
+        self.rerank_min_score = rerank_min_score
 
     def set_corpus(self, documents: List[RetrievedDocument]) -> None:
         """Update active document corpus for both lexical and semantic searchers."""
@@ -91,6 +97,7 @@ class RetrieverPipeline:
 
     def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Execute the end-to-end retriever pipeline on a LangGraph state dictionary."""
+        retrieval_errors: list[RetrievalError] = []
         raw_norm_input = state.get("normalized_input")
         if isinstance(raw_norm_input, dict):
             norm_input = NormalizedInput.model_validate(raw_norm_input)
@@ -259,10 +266,30 @@ class RetrieverPipeline:
                     "rewritten_query_length": len(rewritten_query),
                 },
             ) as dense_observation:
-                dense_results = self.vector_retriever.search(
-                    rewritten_query,
-                    top_k=self.dense_top_k,
-                    where=chroma_where,
+                try:
+                    dense_results = self.vector_retriever.search(
+                        rewritten_query,
+                        top_k=self.dense_top_k,
+                        where=chroma_where,
+                    )
+                except RetrievalServiceError as exc:
+                    logger.warning(
+                        "Dense retrieval failed (%s): %s",
+                        exc.code,
+                        exc,
+                    )
+                    retrieval_errors.append(
+                        RetrievalError(
+                            component=exc.component,
+                            code=exc.code,
+                            message=str(exc),
+                        )
+                    )
+                    dense_results = []
+                dense_results = self._filter_by_min_score(
+                    dense_results,
+                    min_score=self.dense_min_score,
+                    inclusive=False,
                 )
                 dense_observation.update(output=build_documents_metadata(dense_results))
 
@@ -275,10 +302,26 @@ class RetrieverPipeline:
                     "rewritten_query_length": len(rewritten_query),
                 },
             ) as lexical_observation:
-                lexical_results = self.lexical_searcher.search(
-                    rewritten_query,
-                    top_k=self.bm25_top_k,
-                    filter_criteria=bm25_filter,
+                try:
+                    lexical_results = self.lexical_searcher.search(
+                        rewritten_query,
+                        top_k=self.bm25_top_k,
+                        filter_criteria=bm25_filter,
+                    )
+                except Exception as exc:
+                    logger.warning("Lexical retrieval failed: %s", exc)
+                    retrieval_errors.append(
+                        RetrievalError(
+                            component="lexical_retrieval",
+                            code="lexical_search_failed",
+                            message="Lexical retrieval failed.",
+                        )
+                    )
+                    lexical_results = []
+                lexical_results = self._filter_by_min_score(
+                    lexical_results,
+                    min_score=self.lexical_min_score,
+                    inclusive=True,
                 )
                 lexical_observation.update(
                     output=build_documents_metadata(lexical_results)
@@ -314,10 +357,20 @@ class RetrieverPipeline:
                     documents=fused_results,
                     top_n=self.final_top_k,
                 )
+                if (
+                    not applied_fallback
+                    and getattr(self.reranker, "applies_relevance_threshold", False)
+                ):
+                    final_documents = self._filter_by_min_score(
+                        final_documents,
+                        min_score=self.rerank_min_score,
+                        inclusive=False,
+                    )
                 rerank_observation.update(
                     output={
                         **build_documents_metadata(final_documents),
                         "fallback_applied": applied_fallback,
+                        "rerank_min_score": self.rerank_min_score,
                     }
                 )
 
@@ -327,6 +380,13 @@ class RetrieverPipeline:
                 applied_fallback,
             )
 
+            retrieval_status = self._build_retrieval_status(
+                dense_results=dense_results,
+                lexical_results=lexical_results,
+                final_documents=final_documents,
+                errors=retrieval_errors,
+            )
+
             retrieval_input_tokens = rewrite_cb.prompt_tokens + meta_cb.prompt_tokens
             retrieval_output_tokens = rewrite_cb.completion_tokens + meta_cb.completion_tokens
             retrieval_total_tokens = rewrite_cb.total_tokens + meta_cb.total_tokens
@@ -334,6 +394,8 @@ class RetrieverPipeline:
             retriever_output = {
                 **build_documents_metadata(final_documents),
                 "fallback_applied": applied_fallback,
+                "retrieval_status": retrieval_status.status,
+                "retrieval_error_count": len(retrieval_status.errors),
             }
             if retrieval_total_tokens > 0:
                 retriever_output["token_usage"] = {
@@ -351,10 +413,61 @@ class RetrieverPipeline:
                 },
             )
 
-        ret_update: Dict[str, Any] = {"documents": final_documents}
+        ret_update: Dict[str, Any] = {
+            "documents": final_documents,
+            "retrieval_status": retrieval_status,
+        }
         if guardrail_flags:
             ret_update["guardrail_flags"] = guardrail_flags
         return ret_update
+
+    @staticmethod
+    def _filter_by_min_score(
+        documents: list[RetrievedDocument],
+        *,
+        min_score: float,
+        inclusive: bool,
+    ) -> list[RetrievedDocument]:
+        """Keep documents whose score clears the configured retrieval threshold."""
+
+        filtered: list[RetrievedDocument] = []
+        for doc in documents:
+            if doc.score is None:
+                filtered.append(doc)
+                continue
+            if inclusive:
+                if doc.score >= min_score:
+                    filtered.append(doc)
+            elif doc.score > min_score:
+                filtered.append(doc)
+        return filtered
+
+    @staticmethod
+    def _build_retrieval_status(
+        *,
+        dense_results: list[RetrievedDocument],
+        lexical_results: list[RetrievedDocument],
+        final_documents: list[RetrievedDocument],
+        errors: list[RetrievalError],
+    ) -> RetrievalStatus:
+        final_count = len(final_documents)
+        if final_count > 0 and errors:
+            status = "partial_failure"
+        elif final_count > 0:
+            status = "success"
+        elif errors:
+            status = "failed"
+        else:
+            status = "no_documents_found"
+
+        return RetrievalStatus(
+            status=status,
+            errors=errors,
+            dense_result_count=len(dense_results),
+            lexical_result_count=len(lexical_results),
+            final_document_count=final_count,
+            no_documents_found=status == "no_documents_found",
+        )
 
 
 # Default singleton pipeline instance for LangGraph wiring

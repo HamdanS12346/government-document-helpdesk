@@ -6,7 +6,7 @@ The LangGraph state is the shared state passed through the workflow. It stores i
 
 The state should remain simple and contain only information needed by the workflow.
 
-The current state fields are `normalized_input`, `intent_decision`, `documents`, `retrieved_context`, `messages`, `conversation_summary`, and `clarification_round_count`.
+The current state fields are `normalized_input`, `intent_decision`, `documents`, `retrieval_status`, `retrieved_context`, `messages`, `conversation_summary`, and `clarification_round_count`.
 
 ## High-Level State
 
@@ -40,25 +40,35 @@ It is a list because retrieval can return multiple relevant documents or chunks.
 
 The detailed structure will be defined separately as part of the retrieval contract.
 
-### 4. Retrieved Context
+### 4. Retrieval Status
+
+`retrieval_status` stores the Retriever Node outcome separately from the
+retrieved documents. This lets downstream nodes distinguish a successful search
+with no matching documents from a provider failure such as an embedding or
+Chroma error.
+
+The current status values are `success`, `no_documents_found`,
+`partial_failure`, `failed`, and `blocked_by_guardrail`.
+
+### 5. Retrieved Context
 
 `retrieved_context` stores the context prepared from retrieved documents for the Response Node.
 
 At a high level, this is the context provided to the LLM for answer generation.
 
-### 5. Messages
+### 6. Messages
 
 `messages` stores conversation messages, including human and AI messages.
 
 This supports conversation flow and LangGraph message-state handling.
 
-### 6. Conversation Summary
+### 7. Conversation Summary
 
 `conversation_summary` stores a compact summary of relevant previous conversation context.
 
 It is represented as a string and can be used when the full message history should not be passed directly to downstream processing.
 
-### 7. Clarification Round Count
+### 8. Clarification Round Count
 
 `clarification_round_count` stores the number of consecutive clarification turns for the active request.
 

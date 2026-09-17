@@ -111,6 +111,34 @@ class TestResponseGeneratorDocumentInfo:
         # Fallback prompt tells bot no relevant documents were found
         assert "No relevant documents" in system_content
 
+    def test_retrieval_failure_uses_service_failure_prompt(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = AIMessage(content="retry later")
+        gen = ResponseGenerator(llm=mock_llm)
+        context = RetrievedContext(
+            formatted_context="Document retrieval could not be completed because a retrieval service failed.",
+            sources=[],
+            total_documents_retrieved=0,
+            documents_used=0,
+            has_relevant_documents=False,
+            truncated=False,
+            fallback_applied=True,
+            retrieval_status="failed",
+        )
+
+        gen.generate(
+            normalized_input=_make_normalized_input(),
+            intent_decision=_make_intent(IntentType.DOCUMENT_INFO),
+            retrieved_context=context,
+            messages=[],
+            conversation_summary=None,
+        )
+
+        call_args = mock_llm.invoke.call_args[0][0]
+        system_content = call_args[0].content
+        assert "retrieval service failed" in system_content
+        assert "Do not say that no relevant documents exist" in system_content
+
     def test_retrieved_context_text_in_prompt(self):
         mock_llm = MagicMock()
         mock_llm.invoke.return_value = AIMessage(content="ok")

@@ -1,6 +1,6 @@
 """Retrieval contract definitions."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -44,4 +44,39 @@ class RetrievalOutput(BaseModel):
     applied_fallback: bool = False
 
 
-__all__ = ["ChunkMetadata", "RetrievedDocument", "RetrievalOutput"]
+RetrievalStatusValue = Literal[
+    "success",
+    "no_documents_found",
+    "partial_failure",
+    "failed",
+    "blocked_by_guardrail",
+]
+
+
+class RetrievalError(BaseModel):
+    """Safe diagnostic for a retrieval component failure."""
+
+    component: str = Field(description="Retrieval component that failed")
+    code: str = Field(description="Stable machine-readable error code")
+    message: str = Field(description="Safe non-secret error summary")
+
+
+class RetrievalStatus(BaseModel):
+    """Outcome summary distinguishing clean no-match results from service failures."""
+
+    status: RetrievalStatusValue = Field(description="Overall retrieval outcome")
+    errors: List[RetrievalError] = Field(default_factory=list)
+    dense_result_count: int = 0
+    lexical_result_count: int = 0
+    final_document_count: int = 0
+    no_documents_found: bool = False
+
+
+__all__ = [
+    "ChunkMetadata",
+    "RetrievedDocument",
+    "RetrievalError",
+    "RetrievalOutput",
+    "RetrievalStatus",
+    "RetrievalStatusValue",
+]

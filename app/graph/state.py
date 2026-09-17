@@ -4,6 +4,7 @@ from typing import Any, NotRequired, TypedDict
 
 from app.contracts.intent_decision import IntentDecision
 from app.contracts.normalized_input import NormalizedInput
+from app.contracts.retrieval import RetrievalStatus
 from app.contracts.response import RetrievedContext
 
 
@@ -19,6 +20,7 @@ class GraphState(TypedDict, total=False):
     normalized_input: NotRequired[NormalizedInput]
     intent_decision: NotRequired[IntentDecision]
     documents: NotRequired[list[Any]]
+    retrieval_status: NotRequired[RetrievalStatus]
     retrieved_context: NotRequired[RetrievedContext]
     messages: NotRequired[list[Any]]
     conversation_summary: NotRequired[str]

@@ -166,8 +166,13 @@ The Retriever can also use relevant normalized attachment content when the user'
 ### Writes
 
 - `documents`
+- `retrieval_status`
 
 `documents` is a list of retrieved documents, chunks, or evidence.
+
+`retrieval_status` distinguishes a clean no-match result from a retrieval
+provider failure. A clean empty search uses `no_documents_found`; service
+failures such as embedding or Chroma errors use `failed` or `partial_failure`.
 
 ### Flow
 
@@ -276,8 +281,8 @@ messages
 | Input Processor | Raw user input, attachments | `normalized_input` |
 | Intent Classifier | `normalized_input`, `messages`, `conversation_summary` | `intent_decision` |
 | Clarification Node | `intent_decision.intent_type`, `intent_decision.query`, `messages`, `conversation_summary` | `messages`, `clarification_round_count` |
-| Retriever | `normalized_input`, `intent_decision`, `messages`, `conversation_summary` | `documents` |
-| Context Builder | `normalized_input`, `intent_decision`, `documents`, `messages`, `conversation_summary` | `retrieved_context` |
+| Retriever | `normalized_input`, `intent_decision`, `messages`, `conversation_summary` | `documents`, `retrieval_status` |
+| Context Builder | `normalized_input`, `intent_decision`, `documents`, `retrieval_status`, `messages`, `conversation_summary` | `retrieved_context` |
 | Response Node | `normalized_input`, `intent_decision`, `retrieved_context`, `messages`, `conversation_summary` | `messages` |
 
 ## Routing

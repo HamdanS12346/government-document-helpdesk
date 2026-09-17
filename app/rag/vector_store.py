@@ -10,6 +10,15 @@ from app.observability import start_observation
 logger = logging.getLogger(__name__)
 
 
+class RetrievalServiceError(RuntimeError):
+    """Raised when a retrieval provider fails before returning valid results."""
+
+    def __init__(self, component: str, code: str, message: str):
+        super().__init__(message)
+        self.component = component
+        self.code = code
+
+
 class VectorStoreRetriever:
     """Semantic vector search retriever over RetrievedDocument chunks using Chroma and text-embedding-3-small."""
 
@@ -46,6 +55,11 @@ class VectorStoreRetriever:
         """Initialize Chroma CloudClient or in-process Client."""
         if self._chroma_client is not None:
             return self._chroma_client
+        using_cloud = bool(
+            os.getenv("CHROMA_TENANT")
+            and os.getenv("CHROMA_DATABASE")
+            and os.getenv("CHROMA_API_KEY")
+        )
         try:
             import chromadb
 
@@ -53,7 +67,7 @@ class VectorStoreRetriever:
             database = os.getenv("CHROMA_DATABASE")
             api_key = os.getenv("CHROMA_API_KEY")
 
-            if tenant and database and api_key:
+            if using_cloud:
                 logger.info("Connecting to Chroma Cloud (tenant=%s, db=%s)", tenant, database)
                 if hasattr(chromadb, "CloudClient"):
                     self._chroma_client = chromadb.CloudClient(
@@ -71,8 +85,14 @@ class VectorStoreRetriever:
 
             return self._chroma_client
         except Exception as exc:
+            if using_cloud:
+                raise RetrievalServiceError(
+                    "dense_retrieval",
+                    "chroma_client_failed",
+                    "Could not initialize Chroma Cloud client.",
+                ) from exc
             logger.warning(
-                "Could not initialize Chroma client (%s); using in-memory vector fallback.",
+                "Could not initialize local Chroma client (%s); using in-memory vector fallback.",
                 exc,
             )
             return None
@@ -90,11 +110,13 @@ class VectorStoreRetriever:
             )
             return self._collection
         except Exception as exc:
-            logger.warning(
-                "Failed to get_or_create_collection '%s': %s",
-                self.collection_name,
-                exc,
-            )
+            if os.getenv("CHROMA_TENANT") and os.getenv("CHROMA_DATABASE") and os.getenv("CHROMA_API_KEY"):
+                raise RetrievalServiceError(
+                    "dense_retrieval",
+                    "chroma_collection_failed",
+                    f"Could not access Chroma collection '{self.collection_name}'.",
+                ) from exc
+            logger.warning("Failed to get_or_create_collection '%s': %s", self.collection_name, exc)
             return None
 
     def warm_resources(self, *, refresh_count: bool = False) -> bool:
@@ -157,86 +179,101 @@ class VectorStoreRetriever:
         if not query.strip():
             return []
 
-        try:
-            with start_observation(
-                "dense_embedding",
-                input={"query_length": len(query)},
-            ) as embedding_observation:
+        with start_observation(
+            "dense_embedding",
+            input={"query_length": len(query)},
+        ) as embedding_observation:
+            try:
                 emb_model = self._get_embeddings_model()
                 query_embedding = emb_model.embed_query(query)
-                embedding_observation.update(
-                    output={"embedding_dimensions": len(query_embedding)}
+            except Exception as exc:
+                embedding_observation.update(output={"status": "failed"})
+                raise RetrievalServiceError(
+                    "dense_retrieval",
+                    "openai_embedding_failed",
+                    "Could not generate the query embedding for dense retrieval.",
+                ) from exc
+            embedding_observation.update(
+                output={"embedding_dimensions": len(query_embedding)}
+            )
+
+        collection = self._get_collection()
+        if collection is not None:
+            n_res = max(1, top_k)
+            query_kwargs: Dict[str, Any] = {
+                "query_embeddings": [query_embedding],
+                "n_results": n_res,
+                "include": ["documents", "metadatas", "distances"],
+            }
+            if where:
+                query_kwargs["where"] = where
+
+            with start_observation(
+                "dense_chroma_query",
+                input={
+                    "top_k": top_k,
+                    "n_results": n_res,
+                    "filter_applied": where is not None,
+                },
+            ) as chroma_observation:
+                try:
+                    results = collection.query(**query_kwargs)
+                except Exception as exc:
+                    chroma_observation.update(output={"status": "failed"})
+                    raise RetrievalServiceError(
+                        "dense_retrieval",
+                        "chroma_query_failed",
+                        "Chroma query failed during dense retrieval.",
+                    ) from exc
+                chroma_observation.update(
+                    output={
+                        "result_count": self._chroma_result_count(results),
+                        "fallback_needed": self._is_empty_chroma_result(results),
+                    }
                 )
 
-            collection = self._get_collection()
-            if collection is not None:
-                n_res = max(1, top_k)
-                query_kwargs: Dict[str, Any] = {
-                    "query_embeddings": [query_embedding],
-                    "n_results": n_res,
-                    "include": ["documents", "metadatas", "distances"],
-                }
-                if where:
-                    query_kwargs["where"] = where
-
+            # Zero-recall circuit breaker: if filtered search produced 0 hits, retry unconstrained
+            if where and self._is_empty_chroma_result(results):
+                logger.info("Filtered vector search returned 0 results; falling back to unconstrained search.")
+                query_kwargs.pop("where", None)
                 with start_observation(
-                    "dense_chroma_query",
-                    input={
-                        "top_k": top_k,
-                        "n_results": n_res,
-                        "filter_applied": where is not None,
-                    },
-                ) as chroma_observation:
-                    results = collection.query(**query_kwargs)
-                    chroma_observation.update(
-                        output={
-                            "result_count": self._chroma_result_count(results),
-                            "fallback_needed": self._is_empty_chroma_result(results),
-                        }
-                    )
-
-                # Zero-recall circuit breaker: if filtered search produced 0 hits, retry unconstrained
-                if where and self._is_empty_chroma_result(results):
-                    logger.info("Filtered vector search returned 0 results; falling back to unconstrained search.")
-                    query_kwargs.pop("where", None)
-                    with start_observation(
-                        "dense_chroma_fallback_query",
-                        input={"top_k": top_k, "n_results": n_res},
-                    ) as fallback_observation:
-                        results = collection.query(**query_kwargs)
-                        fallback_observation.update(
-                            output={"result_count": self._chroma_result_count(results)}
-                        )
-
-                with start_observation(
-                    "dense_result_conversion",
-                    input={"raw_result_count": self._chroma_result_count(results)},
-                ) as conversion_observation:
-                    retrieved = self._documents_from_chroma_results(results)
-                    conversion_observation.update(
-                        output={"document_count": len(retrieved)}
-                    )
-                return retrieved
-
-            # In-memory cosine similarity fallback
-            if self._fallback_embeddings is not None and self._documents:
-                with start_observation(
-                    "dense_in_memory_search",
-                    input={
-                        "top_k": top_k,
-                        "document_count": len(self._documents),
-                        "filter_applied": where is not None,
-                    },
+                    "dense_chroma_fallback_query",
+                    input={"top_k": top_k, "n_results": n_res},
                 ) as fallback_observation:
-                    documents = self._search_in_memory(query_embedding, top_k, where)
+                    try:
+                        results = collection.query(**query_kwargs)
+                    except Exception as exc:
+                        fallback_observation.update(output={"status": "failed"})
+                        raise RetrievalServiceError(
+                            "dense_retrieval",
+                            "chroma_fallback_query_failed",
+                            "Unfiltered Chroma fallback query failed during dense retrieval.",
+                        ) from exc
                     fallback_observation.update(
-                        output={"document_count": len(documents)}
+                        output={"result_count": self._chroma_result_count(results)}
                     )
-                    return documents
 
-        except Exception as exc:
-            logger.warning("Vector search encountered error: %s", exc)
-            return []
+            with start_observation(
+                "dense_result_conversion",
+                input={"raw_result_count": self._chroma_result_count(results)},
+            ) as conversion_observation:
+                retrieved = self._documents_from_chroma_results(results)
+                conversion_observation.update(output={"document_count": len(retrieved)})
+            return retrieved
+
+        # In-memory cosine similarity fallback
+        if self._fallback_embeddings is not None and self._documents:
+            with start_observation(
+                "dense_in_memory_search",
+                input={
+                    "top_k": top_k,
+                    "document_count": len(self._documents),
+                    "filter_applied": where is not None,
+                },
+            ) as fallback_observation:
+                documents = self._search_in_memory(query_embedding, top_k, where)
+                fallback_observation.update(output={"document_count": len(documents)})
+                return documents
 
         return []
 
@@ -371,4 +408,4 @@ class VectorStoreRetriever:
         return {}
 
 
-__all__ = ["VectorStoreRetriever"]
+__all__ = ["RetrievalServiceError", "VectorStoreRetriever"]

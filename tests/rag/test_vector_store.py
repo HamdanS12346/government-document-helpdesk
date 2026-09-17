@@ -1,6 +1,8 @@
 """Unit tests for VectorStoreRetriever dense adapter behavior."""
 
-from app.rag.vector_store import VectorStoreRetriever
+import pytest
+
+from app.rag.vector_store import RetrievalServiceError, VectorStoreRetriever
 
 
 class FakeCollection:
@@ -45,6 +47,11 @@ class FakeEmbeddings:
         return [0.1, 0.2, 0.3]
 
 
+class FailingEmbeddings:
+    def embed_query(self, query: str):
+        raise RuntimeError("missing OPENAI_API_KEY")
+
+
 def test_vector_store_search_does_not_count_collection():
     collection = FakeCollection()
     embeddings = FakeEmbeddings()
@@ -62,3 +69,13 @@ def test_vector_store_search_does_not_count_collection():
     assert results[0].id == "doc1"
     assert collection.count_calls == 0
     assert collection.query_calls[0]["n_results"] == 5
+
+
+def test_vector_store_search_raises_provider_error_for_embedding_failure():
+    retriever = VectorStoreRetriever(embeddings_model=FailingEmbeddings())
+
+    with pytest.raises(RetrievalServiceError) as exc_info:
+        retriever.search("PAN identity", top_k=5)
+
+    assert exc_info.value.component == "dense_retrieval"
+    assert exc_info.value.code == "openai_embedding_failed"

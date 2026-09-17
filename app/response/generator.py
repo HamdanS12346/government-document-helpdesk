@@ -80,6 +80,11 @@ class ResponseGenerator:
             has_relevant_documents=has_relevant,
             conversation_summary=conversation_summary,
             retrieved_context_text=retrieved_text,
+            retrieval_status=(
+                str(getattr(retrieved_context, "retrieval_status", ""))
+                if retrieved_context is not None
+                else None
+            ),
         )
 
         # Build the message list:

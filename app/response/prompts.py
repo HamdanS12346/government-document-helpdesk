@@ -55,6 +55,20 @@ DOCUMENT_INFO_NO_CONTEXT_PROMPT = (
     "Do not make up information or guess at procedures."
 )
 
+DOCUMENT_INFO_RETRIEVAL_FAILED_PROMPT = (
+    "You are a helpful assistant at a Government Document Helpdesk in India.\n"
+    "Your job is to help citizens understand government documents, forms, procedures, and services.\n"
+    "\n"
+    "You must speak plainly and directly, like a knowledgeable colleague, not a chatbot.\n"
+    "Do not start your reply with filler phrases. Do not say 'As an AI'.\n"
+    "\n"
+    "The document search could not be completed because a retrieval service failed.\n"
+    "\n"
+    "Tell the citizen honestly that you could not search the document knowledge base right now.\n"
+    "Do not say that no relevant documents exist, because the search did not complete successfully.\n"
+    "Suggest that they try again later or check the relevant official portal or department office."
+)
+
 GENERAL_CHAT_SYSTEM_PROMPT = (
     "You are a helpful assistant at a Government Document Helpdesk in India.\n"
     "Your job is to help citizens with questions about government documents, forms, services,\n"
@@ -105,6 +119,7 @@ def build_system_prompt(
     has_relevant_documents: bool,
     conversation_summary: str | None,
     retrieved_context_text: str | None = None,
+    retrieval_status: str | None = None,
 ) -> str:
     """Select and populate the correct system prompt for the given intent.
 
@@ -123,6 +138,9 @@ def build_system_prompt(
             context_block = _RETRIEVED_CONTEXT_BLOCK.format(
                 retrieved_context=retrieved_context_text
             )
+        elif retrieval_status == "failed":
+            base = DOCUMENT_INFO_RETRIEVAL_FAILED_PROMPT
+            context_block = ""
         else:
             base = DOCUMENT_INFO_NO_CONTEXT_PROMPT
             context_block = ""
@@ -143,6 +161,7 @@ def build_system_prompt(
 __all__ = [
     "AI_FILLER_PHRASES",
     "DOCUMENT_INFO_NO_CONTEXT_PROMPT",
+    "DOCUMENT_INFO_RETRIEVAL_FAILED_PROMPT",
     "DOCUMENT_INFO_SYSTEM_PROMPT",
     "GENERAL_CHAT_SYSTEM_PROMPT",
     "build_system_prompt",
