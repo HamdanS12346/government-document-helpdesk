@@ -1,5 +1,6 @@
 """Tests for the response_node LangGraph state contract."""
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 import pytest
@@ -64,6 +65,81 @@ class TestResponseNodeReturnContract:
         result = response_node(_base_state(), generator=_mock_generator("Some answer."))
         ai_msgs = [m for m in result["messages"] if isinstance(m, AIMessage)]
         assert ai_msgs[0].content == "Some answer."
+
+
+class TestResponseNodeObservability:
+
+    def test_logs_response_text_when_text_capture_enabled(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from app.config import get_settings
+        import app.response.node as response_node_module
+
+        updates: list[dict] = []
+
+        class CapturingObservation:
+            def update(self, **kwargs):
+                updates.append(kwargs)
+
+        @contextmanager
+        def capture_observation(*args, **kwargs):
+            yield CapturingObservation()
+
+        monkeypatch.setenv("LANGFUSE_CAPTURE_TEXT", "true")
+        get_settings.cache_clear()
+        monkeypatch.setattr(
+            response_node_module,
+            "start_observation",
+            capture_observation,
+        )
+
+        response_node(
+            _base_state(),
+            generator=_mock_generator("Here is the actual response."),
+        )
+
+        assert updates[-1]["output"]["response_chars"] == len(
+            "Here is the actual response."
+        )
+        assert updates[-1]["output"]["response_text"] == (
+            "Here is the actual response."
+        )
+
+    def test_omits_response_text_when_text_capture_disabled(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from app.config import get_settings
+        import app.response.node as response_node_module
+
+        updates: list[dict] = []
+
+        class CapturingObservation:
+            def update(self, **kwargs):
+                updates.append(kwargs)
+
+        @contextmanager
+        def capture_observation(*args, **kwargs):
+            yield CapturingObservation()
+
+        monkeypatch.setenv("LANGFUSE_CAPTURE_TEXT", "false")
+        get_settings.cache_clear()
+        monkeypatch.setattr(
+            response_node_module,
+            "start_observation",
+            capture_observation,
+        )
+
+        response_node(
+            _base_state(),
+            generator=_mock_generator("Here is the actual response."),
+        )
+
+        assert updates[-1]["output"]["response_chars"] == len(
+            "Here is the actual response."
+        )
+        assert "response_text" not in updates[-1]["output"]
 
 
 # ---------------------------------------------------------------------------

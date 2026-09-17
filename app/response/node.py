@@ -32,6 +32,7 @@ from app.contracts.intent_decision import IntentDecision
 from app.contracts.normalized_input import NormalizedInput
 from app.contracts.response import RetrievedContext
 from app.observability import start_observation
+from app.observability.metadata import build_response_output_metadata
 from app.response.generator import ResponseGenerator
 
 logger = logging.getLogger(__name__)
@@ -125,9 +126,7 @@ def response_node(
                 messages=messages,
                 conversation_summary=conversation_summary,
             )
-        output_data: dict[str, Any] = {
-            "response_chars": len(str(ai_message.content)),
-        }
+        output_data = build_response_output_metadata(str(ai_message.content))
         if cb.total_tokens > 0:
             output_data["token_usage"] = {
                 "input_tokens": cb.prompt_tokens,

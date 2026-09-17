@@ -22,7 +22,9 @@ from app.contracts.chat import (
 )
 from app.graph.graph import invoke_full_graph, invoke_intent_retriever_graph
 from app.input_processing.processors import process_input
+from app.input_processing.errors import InputProcessingErrorCode
 from app.input_processing.schemas import Attachment, InputProcessingResult, InputRequest
+from app.input_processing.schemas import AttachmentProcessingError, AttachmentProcessingStatus
 from app.intent.classifier import OpenAIIntentClassifier
 from app.memory import get_default_memory_manager
 from app.memory.repository import get_default_memory_repository
@@ -35,9 +37,11 @@ from app.observability.metadata import (
     build_input_processing_result_metadata,
     build_input_request_metadata,
 )
+from guardrails.input_processor import MAX_ATTACHMENT_SIZE_BYTES
 
 
 _DEFAULT_INVOKE_INTENT_RETRIEVER = invoke_intent_retriever_graph
+UPLOAD_READ_CHUNK_SIZE = 1024 * 1024
 
 
 router = APIRouter()
@@ -57,6 +61,14 @@ class UploadedFileBytes:
     content: bytes
 
 
+@dataclass(frozen=True)
+class UploadedFileReadResult:
+    """Upload read result with optional early validation failure."""
+
+    file: UploadedFileBytes | None = None
+    error_status: AttachmentProcessingStatus | None = None
+
+
 @router.post("/chat")
 async def chat(
     message: Annotated[str | None, Form()] = None,
@@ -72,14 +84,24 @@ async def chat(
     ) as trace:
         graph_state: dict[str, object] | None = None
         try:
-            uploaded_files = await _read_uploaded_files(incoming_files)
+            upload_results = await _read_uploaded_files(incoming_files)
+            upload_errors = [
+                result.error_status
+                for result in upload_results
+                if result.error_status is not None
+            ]
+            uploaded_files = [
+                result.file
+                for result in upload_results
+                if result.file is not None
+            ]
             attachments = _build_attachments(uploaded_files)
             request = InputRequest(user_query=message, attachments=attachments)
             with start_observation(
                 "input_processor",
                 input=build_input_request_metadata(request),
             ) as input_observation:
-                result = process_input(request)
+                result = _process_request_with_upload_errors(request, upload_errors)
                 input_observation.update(
                     output=build_input_processing_result_metadata(result)
                 )
@@ -171,17 +193,161 @@ async def chat(
     )
 
 
-async def _read_uploaded_files(files: list[UploadFile]) -> list[UploadedFileBytes]:
-    uploaded_files: list[UploadedFileBytes] = []
-    for file in files:
-        uploaded_files.append(
-            UploadedFileBytes(
-                filename=file.filename or "upload",
-                media_type=file.content_type or "application/octet-stream",
-                content=await file.read(),
+async def _read_uploaded_files(files: list[UploadFile]) -> list[UploadedFileReadResult]:
+    settings = get_settings()
+    if len(files) > settings.upload_max_attachment_count:
+        return [
+            UploadedFileReadResult(
+                error_status=_too_many_attachments_status(
+                    settings.upload_max_attachment_count
+                )
             )
-        )
+        ]
+
+    uploaded_files: list[UploadedFileReadResult] = []
+    total_bytes = 0
+    for file in files:
+        filename = file.filename or "upload"
+        media_type = file.content_type or "application/octet-stream"
+        declared_size = getattr(file, "size", None)
+        if declared_size is not None and declared_size >= MAX_ATTACHMENT_SIZE_BYTES:
+            uploaded_files.append(
+                UploadedFileReadResult(
+                    error_status=_uploaded_file_too_large_status(filename)
+                )
+            )
+            continue
+        if (
+            declared_size is not None
+            and total_bytes + declared_size > settings.upload_max_total_size_bytes
+        ):
+            uploaded_files.append(
+                UploadedFileReadResult(error_status=_total_upload_too_large_status())
+            )
+            break
+
+        chunks: list[bytes] = []
+        file_bytes = 0
+        while True:
+            file_remaining_bytes = MAX_ATTACHMENT_SIZE_BYTES - file_bytes
+            total_remaining_bytes = (
+                settings.upload_max_total_size_bytes - total_bytes
+            )
+            read_size = min(
+                UPLOAD_READ_CHUNK_SIZE,
+                file_remaining_bytes,
+                total_remaining_bytes + 1,
+            )
+            if read_size <= 0:
+                uploaded_files.append(
+                    UploadedFileReadResult(error_status=_total_upload_too_large_status())
+                )
+                break
+
+            chunk = await file.read(read_size)
+            if not chunk:
+                uploaded_files.append(
+                    UploadedFileReadResult(
+                        file=UploadedFileBytes(
+                            filename=filename,
+                            media_type=media_type,
+                            content=b"".join(chunks),
+                        )
+                    )
+                )
+                break
+
+            chunks.append(chunk)
+            file_bytes += len(chunk)
+            total_bytes += len(chunk)
+            if file_bytes >= MAX_ATTACHMENT_SIZE_BYTES:
+                uploaded_files.append(
+                    UploadedFileReadResult(
+                        error_status=_uploaded_file_too_large_status(filename)
+                    )
+                )
+                break
+            if total_bytes > settings.upload_max_total_size_bytes:
+                uploaded_files.append(
+                    UploadedFileReadResult(
+                        error_status=_total_upload_too_large_status()
+                    )
+                )
+                break
     return uploaded_files
+
+
+def _too_many_attachments_status(max_attachment_count: int) -> AttachmentProcessingStatus:
+    return AttachmentProcessingStatus(
+        filename="request",
+        status="failed",
+        error=AttachmentProcessingError(
+            filename="request",
+            code=InputProcessingErrorCode.TOO_MANY_ATTACHMENTS,
+            message=(
+                f"Too many attachments. Upload {max_attachment_count} files or fewer."
+            ),
+        ),
+    )
+
+
+def _total_upload_too_large_status() -> AttachmentProcessingStatus:
+    return AttachmentProcessingStatus(
+        filename="request",
+        status="failed",
+        error=AttachmentProcessingError(
+            filename="request",
+            code=InputProcessingErrorCode.TOTAL_UPLOAD_TOO_LARGE,
+            message="Total upload size is too large. Upload 50 MB or less per request.",
+        ),
+    )
+
+
+def _uploaded_file_too_large_status(filename: str) -> AttachmentProcessingStatus:
+    return AttachmentProcessingStatus(
+        filename=filename,
+        status="failed",
+        error=AttachmentProcessingError(
+            filename=filename,
+            code=InputProcessingErrorCode.FILE_TOO_LARGE,
+            message="This attachment is too large. Upload a file smaller than 10 MB.",
+        ),
+    )
+
+
+def _process_request_with_upload_errors(
+    request: InputRequest,
+    upload_errors: list[AttachmentProcessingStatus],
+) -> InputProcessingResult:
+    if _has_request_level_upload_error(upload_errors):
+        return InputProcessingResult(success=False, attachment_statuses=upload_errors)
+
+    if not request.attachments and upload_errors and request.user_query is None:
+        return InputProcessingResult(success=False, attachment_statuses=upload_errors)
+
+    result = process_input(request)
+    if not upload_errors:
+        return result
+
+    return InputProcessingResult(
+        success=result.success,
+        normalized_input=result.normalized_input,
+        attachment_statuses=[*result.attachment_statuses, *upload_errors],
+        warnings=result.warnings,
+    )
+
+
+def _has_request_level_upload_error(
+    upload_errors: list[AttachmentProcessingStatus],
+) -> bool:
+    request_level_codes = {
+        InputProcessingErrorCode.TOO_MANY_ATTACHMENTS,
+        InputProcessingErrorCode.TOTAL_UPLOAD_TOO_LARGE,
+    }
+    return any(
+        status.error is not None and status.error.code in request_level_codes
+        for status in upload_errors
+    )
 
 
 def _build_attachments(uploaded_files: list[UploadedFileBytes]) -> list[Attachment]:

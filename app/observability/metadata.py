@@ -211,6 +211,16 @@ def build_token_usage_metadata(
     return data
 
 
+def build_response_output_metadata(response_text: str) -> dict[str, Any]:
+    """Build Response Node output metadata."""
+
+    metadata = {
+        "response_chars": len(response_text),
+    }
+    _add_text_preview(metadata, "response_text", response_text)
+    return metadata
+
+
 def build_chat_graph_response_metadata(
     graph_state: Mapping[str, Any],
     *,
@@ -506,6 +516,7 @@ __all__ = [
     "build_query_rewrite_input_metadata",
     "build_query_rewrite_output_metadata",
     "build_retrieved_context_metadata",
+    "build_response_output_metadata",
     "build_token_usage_metadata",
     "TEXT_PREVIEW_MAX_CHARS",
 ]

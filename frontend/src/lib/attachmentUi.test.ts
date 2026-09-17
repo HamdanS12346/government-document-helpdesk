@@ -5,17 +5,53 @@ import {
   ACCEPTED_UPLOAD_HINT,
   ACCEPTED_UPLOAD_TYPES,
   ALL_FAILED_ATTACHMENTS_MESSAGE,
+  MAX_ATTACHMENT_COUNT,
+  MAX_TOTAL_UPLOAD_SIZE_BYTES,
   ATTACH_TOOLTIP,
+  TOO_MANY_ATTACHMENTS_MESSAGE,
+  TOTAL_UPLOAD_TOO_LARGE_MESSAGE,
   attachmentStatusLabel,
   buildAttachmentSummary,
   getAttachmentKind,
   safeStatusText,
+  validateUploadLimits,
 } from "./attachmentUi.ts";
 
 test("upload affordance copy and accept list include xlsx", () => {
   assert.equal(ACCEPTED_UPLOAD_TYPES, ".png,.jpg,.jpeg,.pdf,.xlsx");
   assert.match(ATTACH_TOOLTIP, /XLSX/);
   assert.match(ACCEPTED_UPLOAD_HINT, /XLSX/);
+  assert.match(ACCEPTED_UPLOAD_HINT, /Max 5 files/);
+});
+
+test("upload limit validation rejects more than five files", () => {
+  const files = Array.from(
+    { length: MAX_ATTACHMENT_COUNT + 1 },
+    (_, index) => new File(["x"], `file-${index}.pdf`, { type: "application/pdf" })
+  );
+
+  assert.equal(validateUploadLimits(files), TOO_MANY_ATTACHMENTS_MESSAGE);
+});
+
+test("upload limit validation rejects total size above fifty megabytes", () => {
+  const files = [
+    new File(
+      [new Uint8Array(MAX_TOTAL_UPLOAD_SIZE_BYTES + 1)],
+      "large.pdf",
+      { type: "application/pdf" }
+    ),
+  ];
+
+  assert.equal(validateUploadLimits(files), TOTAL_UPLOAD_TOO_LARGE_MESSAGE);
+});
+
+test("upload limit validation accepts five files within total size", () => {
+  const files = Array.from(
+    { length: MAX_ATTACHMENT_COUNT },
+    (_, index) => new File(["x"], `file-${index}.pdf`, { type: "application/pdf" })
+  );
+
+  assert.equal(validateUploadLimits(files), null);
 });
 
 test("file chips can distinguish supported attachment kinds by extension", () => {

@@ -37,6 +37,16 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="LANGFUSE_CAPTURE_TEXT",
     )
+    upload_max_attachment_count: int = Field(
+        default=5,
+        ge=1,
+        validation_alias="UPLOAD_MAX_ATTACHMENT_COUNT",
+    )
+    upload_max_total_size_bytes: int = Field(
+        default=50 * 1024 * 1024,
+        ge=1,
+        validation_alias="UPLOAD_MAX_TOTAL_SIZE_BYTES",
+    )
 
     spreadsheet_supported_extension: str = Field(
         default=".xlsx",

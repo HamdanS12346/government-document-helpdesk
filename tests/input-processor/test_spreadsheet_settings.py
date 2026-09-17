@@ -9,6 +9,8 @@ from app.config import Settings
 def test_spreadsheet_settings_expose_mvp_defaults() -> None:
     settings = Settings(_env_file=None)
 
+    assert settings.upload_max_attachment_count == 5
+    assert settings.upload_max_total_size_bytes == 50 * 1024 * 1024
     assert settings.spreadsheet_supported_extension == ".xlsx"
     assert settings.spreadsheet_parser_package == "openpyxl"
     assert settings.spreadsheet_max_visible_sheets == 5
@@ -21,6 +23,8 @@ def test_spreadsheet_settings_expose_mvp_defaults() -> None:
 def test_spreadsheet_settings_are_injectable_from_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("UPLOAD_MAX_ATTACHMENT_COUNT", "3")
+    monkeypatch.setenv("UPLOAD_MAX_TOTAL_SIZE_BYTES", "12345")
     monkeypatch.setenv("SPREADSHEET_MAX_VISIBLE_SHEETS", "2")
     monkeypatch.setenv("SPREADSHEET_MAX_ROWS_PER_SHEET", "10")
     monkeypatch.setenv("SPREADSHEET_MAX_COLUMNS_PER_SHEET", "8")
@@ -29,6 +33,8 @@ def test_spreadsheet_settings_are_injectable_from_environment(
 
     settings = Settings(_env_file=None)
 
+    assert settings.upload_max_attachment_count == 3
+    assert settings.upload_max_total_size_bytes == 12345
     assert settings.spreadsheet_max_visible_sheets == 2
     assert settings.spreadsheet_max_rows_per_sheet == 10
     assert settings.spreadsheet_max_columns_per_sheet == 8
@@ -40,6 +46,8 @@ def test_spreadsheet_settings_are_injectable_from_environment(
     ("env_name", "env_value"),
     [
         ("SPREADSHEET_MAX_VISIBLE_SHEETS", "0"),
+        ("UPLOAD_MAX_ATTACHMENT_COUNT", "0"),
+        ("UPLOAD_MAX_TOTAL_SIZE_BYTES", "0"),
         ("SPREADSHEET_MAX_ROWS_PER_SHEET", "0"),
         ("SPREADSHEET_MAX_COLUMNS_PER_SHEET", "0"),
         ("SPREADSHEET_MAX_TEXT_CELL_CHARACTERS", "0"),

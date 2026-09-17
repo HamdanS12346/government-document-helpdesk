@@ -183,6 +183,8 @@ The existing project requirement/decision is:
 File size < 10 MB
 ```
 This validation must occur before expensive document processing.
+At the API upload boundary, file bytes are read incrementally and the request
+must stop reading an individual upload once the 10 MB boundary is reached.
 Conceptually:
 ```text
 file size
@@ -192,6 +194,19 @@ within limit?
    └── YES → continue
 ```
 An oversized upload must not reach OCR or PDF processing.
+
+The API boundary also enforces request-level upload limits before Input
+Processor extraction:
+
+```text
+Maximum attachments per request = 5
+Maximum total upload size per request = 50 MB
+```
+
+Attachment count is checked before reading any file bytes. Total upload size is
+checked from declared upload sizes when available, and otherwise while reading
+chunks. Once the total request limit is exceeded, no further upload bytes should
+be read and the request should fail with a controlled request-level error.
 # 12. PDF Page-Count Guardrail
 The Input Processor must validate PDF page count before processing the PDF.
 The current Input Processor design proposes:
@@ -581,6 +596,8 @@ INVALID_INPUT
 UNSUPPORTED_FORMAT
 SIGNATURE_MISMATCH
 FILE_TOO_LARGE
+TOO_MANY_ATTACHMENTS
+TOTAL_UPLOAD_TOO_LARGE
 PDF_PAGE_LIMIT_EXCEEDED
 SPREADSHEET_WORKSHEET_LIMIT_EXCEEDED
 UNSUPPORTED_WORKBOOK_PROTECTION
@@ -597,6 +614,8 @@ Spreadsheet-specific additions are used only where generic categories would be u
 
 * `SPREADSHEET_WORKSHEET_LIMIT_EXCEEDED`: too many visible worksheets for the configured MVP limit.
 * `UNSUPPORTED_WORKBOOK_PROTECTION`: protected or encrypted workbook handling is outside the MVP.
+* `TOO_MANY_ATTACHMENTS`: more than the configured number of files were uploaded in one request.
+* `TOTAL_UPLOAD_TOO_LARGE`: the combined upload bytes exceeded the configured request limit.
 
 Spreadsheet processing warnings should use safe category strings:
 
