@@ -110,6 +110,85 @@
   border-top-color: var(--border);
 }
 
+/* ---- Attachment summary ---- */
+.summaryList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.summaryItem {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+/* ---- Attachment statuses ---- */
+.statusList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.statusItem {
+  display: grid;
+  grid-template-columns: auto minmax(90px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.statusPill {
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  background: #ecfdf5;
+  color: #047857;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.statusFailed .statusPill {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.statusSkipped .statusPill {
+  background: #f8fafc;
+  color: #475569;
+}
+
+.statusFilename {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.statusDetail {
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
 /* ---- Timestamp ---- */
 .timestamp {
   font-size: 11px;

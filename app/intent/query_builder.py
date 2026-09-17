@@ -17,7 +17,11 @@ def _render(value: Any) -> str:
         return value.strip()
     preview = getattr(value, "preview", None)
     if preview is not None:
-        name = getattr(value, "image_name", None) or getattr(value, "pdf_name", None)
+        name = (
+            getattr(value, "image_name", None)
+            or getattr(value, "pdf_name", None)
+            or getattr(value, "workbook_name", None)
+        )
         prefix = f"{name}: " if name else ""
         return f"{prefix}{preview}".strip()
     return str(value).strip()
@@ -56,6 +60,9 @@ def build_classification_query(
     sections = [f"User Query:\n{normalized_input.user_query.strip()}"]
     sections.extend(_render_items(normalized_input.image_content, "Image Preview"))
     sections.extend(_render_items(normalized_input.pdf_content, "PDF Preview"))
+    sections.extend(
+        _render_items(normalized_input.spreadsheet_content, "Spreadsheet Preview")
+    )
 
     recent_messages = _render_messages(messages or [])
     if recent_messages:

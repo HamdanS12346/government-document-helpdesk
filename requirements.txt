@@ -24,6 +24,7 @@ pypdf
 pdfplumber
 pillow
 pytesseract
+openpyxl>=3.1,<4
 
 pytest
 pytest-asyncio

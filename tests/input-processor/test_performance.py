@@ -23,6 +23,22 @@ from app.input_processing.pdf_processor import (
 )
 from app.input_processing.schemas import Attachment, InputRequest
 from guardrails.input_processor import mask_pii_in_text, validate_attachment_modality
+from app.input_processing.excel_processor import (
+    OpenPyXLSpreadsheetParser,
+    SpreadsheetInspectionStatus,
+    build_spreadsheet_content,
+    build_spreadsheet_preview,
+    build_spreadsheet_text_projection,
+)
+from app.config.settings import get_settings
+from spreadsheet_fixture_helpers import (
+    make_boundary_xlsx_bytes,
+    make_formula_heavy_xlsx_bytes,
+    make_merged_range_heavy_xlsx_bytes,
+    make_openpyxl_xlsx_bytes,
+    make_privacy_xlsx_bytes,
+    make_table_heavy_xlsx_bytes,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -31,6 +47,7 @@ BLURRY_IMAGE = FIXTURES / "images" / "blurry" / "img_003_blurry_form.png"
 TEXT_PDF = FIXTURES / "pdfs" / "text" / "pdf_001_text_based.pdf"
 SCANNED_PDF = FIXTURES / "pdfs" / "scanned" / "pdf_002_scanned.pdf"
 MIXED_PDF = FIXTURES / "pdfs" / "mixed" / "pdf_003_mixed.pdf"
+SPREADSHEET_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 class StaticOCRProvider:
@@ -62,6 +79,59 @@ def assert_measurements_recorded(
 ) -> None:
     assert set(measurements) == expected_labels
     assert all(duration >= 0 for duration in measurements.values())
+
+
+def measure_spreadsheet_pipeline(content: bytes, filename: str) -> dict[str, float]:
+    measurements: dict[str, float] = {}
+    parser = OpenPyXLSpreadsheetParser()
+    settings = get_settings()
+
+    inspection = measure(
+        "workbook_inspection",
+        measurements,
+        lambda: parser.inspect(content, filename),
+    )
+    assert inspection.status == SpreadsheetInspectionStatus.SUCCESS
+    assert inspection.workbook is not None
+
+    spreadsheet_content = measure(
+        "normalization",
+        measurements,
+        lambda: build_spreadsheet_content(inspection.workbook, settings=settings),
+    )
+    preview = measure(
+        "preview_generation",
+        measurements,
+        lambda: build_spreadsheet_preview(spreadsheet_content),
+    )
+    combined_text_projection = measure(
+        "combined_text_generation",
+        measurements,
+        lambda: build_spreadsheet_text_projection(spreadsheet_content),
+    )
+    end_to_end_result = measure(
+        "total_input_processor",
+        measurements,
+        lambda: processors.process_input(
+            InputRequest(
+                attachments=[
+                    Attachment(
+                        filename=filename,
+                        media_type=SPREADSHEET_MEDIA_TYPE,
+                        content=content,
+                    )
+                ],
+            ),
+        ),
+    )
+
+    assert spreadsheet_content.workbook_name == filename
+    assert preview
+    assert combined_text_projection
+    assert end_to_end_result.success is True
+    assert end_to_end_result.normalized_input is not None
+    assert end_to_end_result.normalized_input.spreadsheet_content
+    return measurements
 
 
 @pytest.mark.parametrize(
@@ -258,6 +328,47 @@ def test_measure_pii_detection_and_normalization_time(
     assert result.normalized_input is not None
     assert "ABCDE1234F" not in result.normalized_input.combined_text
     assert_measurements_recorded(measurements, {"pii_detection", "normalization"})
+
+
+@pytest.mark.parametrize(
+    ("case_name", "filename", "content"),
+    [
+        ("small_workbook", "small.xlsx", make_openpyxl_xlsx_bytes()),
+        ("five_visible_sheets_50x50", "boundary.xlsx", make_boundary_xlsx_bytes()),
+        ("formula_heavy", "formulas.xlsx", make_formula_heavy_xlsx_bytes()),
+        ("table_heavy", "tables.xlsx", make_table_heavy_xlsx_bytes()),
+        ("merged_range_heavy", "merged.xlsx", make_merged_range_heavy_xlsx_bytes()),
+        ("long_cell", "long-cell.xlsx", make_privacy_xlsx_bytes(long_text_length=5001)),
+        ("pii_heavy", "pii.xlsx", make_privacy_xlsx_bytes(long_text_length=100)),
+    ],
+    ids=[
+        "small_workbook",
+        "five_visible_sheets_50x50",
+        "formula_heavy",
+        "table_heavy",
+        "merged_range_heavy",
+        "long_cell",
+        "pii_heavy",
+    ],
+)
+def test_measure_representative_spreadsheet_processing_time(
+    case_name: str,
+    filename: str,
+    content: bytes,
+) -> None:
+    measurements = measure_spreadsheet_pipeline(content, filename)
+
+    assert_measurements_recorded(
+        measurements,
+        {
+            "workbook_inspection",
+            "normalization",
+            "preview_generation",
+            "combined_text_generation",
+            "total_input_processor",
+        },
+    )
+    assert case_name
 
 
 def test_measure_multiple_attachment_total_processing_time(

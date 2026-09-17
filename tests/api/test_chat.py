@@ -14,7 +14,12 @@ from app.api.main import app
 from app.api.serialization import serialize_public_message
 from app.config import get_settings
 from app.contracts.intent_decision import IntentDecision
-from app.contracts.normalized_input import NormalizedInput
+from app.contracts.normalized_input import (
+    NormalizedInput,
+    SpreadsheetContent,
+    SpreadsheetMetadata,
+    SpreadsheetSheet,
+)
 from app.input_processing.errors import InputProcessingErrorCode
 from app.input_processing.schemas import (
     Attachment,
@@ -40,11 +45,40 @@ EXPECTED_CHAT_RESPONSE_KEYS = {
     "message",
     "assistant_message",
     "attachment_statuses",
+    "attachment_summary",
     "warnings",
     "normalized_input",
     "intent",
     "conversation_id",
 }
+
+
+def _spreadsheet_content(filename: str = "sheet.xlsx") -> SpreadsheetContent:
+    return SpreadsheetContent(
+        workbook_name=filename,
+        sheets=[
+            SpreadsheetSheet(
+                name="Sheet1",
+                position=1,
+                max_row=1,
+                max_column=1,
+                is_empty=False,
+            )
+        ],
+        preview=f"Workbook: {filename}\nSheet: Sheet1",
+        warnings=[],
+        metadata=SpreadsheetMetadata(
+            workbook_name=filename,
+            processed_sheet_count=1,
+            total_visible_sheet_count=1,
+            hidden_sheet_count=0,
+            max_sheets=5,
+            max_rows_per_sheet=50,
+            max_columns_per_sheet=50,
+            max_text_cell_characters=5000,
+            preview_row_count=5,
+        ),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -142,6 +176,7 @@ def test_chat_accepts_text_only_input() -> None:
         "user_query": "Please explain this notice.",
         "image_content": [],
         "pdf_content": [],
+        "spreadsheet_content": [],
         "combined_text": "<USER_QUERY>\nPlease explain this notice.",
     }
 
@@ -983,6 +1018,193 @@ def test_chat_accepts_mixed_image_and_pdf_attachments(
     ]
 
 
+def test_chat_returns_spreadsheet_success_payload_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_process_input(request: InputRequest) -> InputProcessingResult:
+        assert request.attachments[0].filename == "sheet.xlsx"
+        return InputProcessingResult(
+            success=True,
+            normalized_input=NormalizedInput(
+                user_query="",
+                image_content=[],
+                pdf_content=[],
+                spreadsheet_content=[_spreadsheet_content("sheet.xlsx")],
+                combined_text="<SPREADSHEET_CONTENT>\nWorkbook: sheet.xlsx",
+            ),
+            attachment_statuses=[
+                AttachmentProcessingStatus(filename="sheet.xlsx", status="success")
+            ],
+        )
+
+    monkeypatch.setattr(routes, "process_input", fake_process_input)
+    client = TestClient(app)
+
+    response = client.post(
+        "/chat",
+        files=[
+            (
+                "files",
+                (
+                    "sheet.xlsx",
+                    b"spreadsheet bytes stay out of response",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+            )
+        ],
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert set(payload) == EXPECTED_CHAT_RESPONSE_KEYS
+    assert payload["success"] is True
+    assert payload["status"] == "completed"
+    assert payload["attachment_summary"] == {
+        "total": 1,
+        "images": 0,
+        "pdfs": 0,
+        "spreadsheets": 1,
+        "other": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "skipped": 0,
+    }
+    assert payload["attachment_statuses"][0]["filename"] == "sheet.xlsx"
+    assert payload["attachment_statuses"][0]["status"] == "success"
+    assert "spreadsheet bytes" not in response.text
+
+
+def test_chat_returns_spreadsheet_failure_payload_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_process_input(request: InputRequest) -> InputProcessingResult:
+        return InputProcessingResult(
+            success=False,
+            attachment_statuses=[
+                AttachmentProcessingStatus(
+                    filename="broken.xlsx",
+                    status="failed",
+                    error=AttachmentProcessingError(
+                        filename="broken.xlsx",
+                        code=InputProcessingErrorCode.EXTRACTION_FAILURE,
+                        message="This spreadsheet could not be processed.",
+                    ),
+                )
+            ],
+        )
+
+    monkeypatch.setattr(routes, "process_input", fake_process_input)
+    client = TestClient(app)
+
+    response = client.post(
+        "/chat",
+        files=[
+            (
+                "files",
+                (
+                    "broken.xlsx",
+                    b"not returned",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+            )
+        ],
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert set(payload) == EXPECTED_CHAT_RESPONSE_KEYS
+    assert payload["success"] is False
+    assert payload["status"] == "input_failed"
+    assert payload["normalized_input"] is None
+    assert payload["message"] == "This spreadsheet could not be processed."
+    assert payload["attachment_summary"] == {
+        "total": 1,
+        "images": 0,
+        "pdfs": 0,
+        "spreadsheets": 1,
+        "other": 0,
+        "succeeded": 0,
+        "failed": 1,
+        "skipped": 0,
+    }
+    assert payload["attachment_statuses"][0]["error"]["message"] == (
+        "This spreadsheet could not be processed."
+    )
+    assert "not returned" not in response.text
+
+
+def test_chat_returns_mixed_partial_success_payload_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_process_input(request: InputRequest) -> InputProcessingResult:
+        return InputProcessingResult(
+            success=True,
+            normalized_input=NormalizedInput(
+                user_query="Review these attachments.",
+                image_content=[],
+                pdf_content=[],
+                spreadsheet_content=[_spreadsheet_content("sheet.xlsx")],
+                combined_text=(
+                    "<USER_QUERY>\nReview these attachments.\n\n"
+                    "<SPREADSHEET_CONTENT>\nWorkbook: sheet.xlsx"
+                ),
+            ),
+            attachment_statuses=[
+                AttachmentProcessingStatus(filename="photo.png", status="success"),
+                AttachmentProcessingStatus(
+                    filename="broken.xlsx",
+                    status="failed",
+                    error=AttachmentProcessingError(
+                        filename="broken.xlsx",
+                        code=InputProcessingErrorCode.EXTRACTION_FAILURE,
+                        message="This spreadsheet could not be processed.",
+                    ),
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(routes, "process_input", fake_process_input)
+    client = TestClient(app)
+
+    response = client.post(
+        "/chat",
+        data={"message": "Review these attachments."},
+        files=[
+            ("files", ("photo.png", b"\x89PNG\r\n\x1a\nimage", "image/png")),
+            (
+                "files",
+                (
+                    "broken.xlsx",
+                    b"not returned",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+            ),
+        ],
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert set(payload) == EXPECTED_CHAT_RESPONSE_KEYS
+    assert payload["success"] is True
+    assert payload["status"] == "completed"
+    assert payload["message"] == "Input processed with some attachment issues."
+    assert payload["attachment_summary"] == {
+        "total": 2,
+        "images": 1,
+        "pdfs": 0,
+        "spreadsheets": 1,
+        "other": 0,
+        "succeeded": 1,
+        "failed": 1,
+        "skipped": 0,
+    }
+    assert [
+        (status["filename"], status["status"])
+        for status in payload["attachment_statuses"]
+    ] == [("photo.png", "success"), ("broken.xlsx", "failed")]
+    assert "not returned" not in response.text
+
+
 def test_chat_returns_safe_input_processor_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1062,6 +1284,16 @@ def test_chat_hides_unexpected_exception_details(
         "message": "The input could not be processed safely.",
         "assistant_message": None,
         "attachment_statuses": [],
+        "attachment_summary": {
+            "total": 0,
+            "images": 0,
+            "pdfs": 0,
+            "spreadsheets": 0,
+            "other": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "skipped": 0,
+        },
         "warnings": [],
         "normalized_input": None,
         "intent": None,
@@ -1099,6 +1331,16 @@ def test_chat_returns_safe_response_when_intent_retriever_graph_fails(
         "message": "The request could not be classified right now. Please try again.",
         "assistant_message": None,
         "attachment_statuses": [],
+        "attachment_summary": {
+            "total": 0,
+            "images": 0,
+            "pdfs": 0,
+            "spreadsheets": 0,
+            "other": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "skipped": 0,
+        },
         "warnings": [],
         "normalized_input": None,
         "intent": None,

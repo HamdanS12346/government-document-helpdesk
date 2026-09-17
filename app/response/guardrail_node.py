@@ -70,11 +70,6 @@ def response_guardrail_node(state: dict[str, Any]) -> dict[str, Any]:
                 if report.hallucination_result
                 else "allow"
             ),
-            "credential_decision": (
-                report.credential_result.decision
-                if report.credential_result
-                else "allow"
-            ),
             "pii_redaction_count": report.pii_result.redaction_count,
             "length_decision": report.length_result.decision,
             "scope_decision": report.scope_result.decision,

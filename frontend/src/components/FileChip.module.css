@@ -12,6 +12,30 @@
   max-width: 200px;
 }
 
+.pdf {
+  background: #fef2f2;
+  border-color: rgba(220, 38, 38, 0.22);
+  color: #b91c1c;
+}
+
+.image {
+  background: #eff6ff;
+  border-color: rgba(37, 99, 235, 0.22);
+  color: #2563eb;
+}
+
+.spreadsheet {
+  background: #ecfdf5;
+  border-color: rgba(5, 150, 105, 0.24);
+  color: #047857;
+}
+
+.file {
+  background: var(--accent-light);
+  border-color: rgba(37, 99, 235, 0.2);
+  color: var(--accent);
+}
+
 .name {
   overflow: hidden;
   text-overflow: ellipsis;

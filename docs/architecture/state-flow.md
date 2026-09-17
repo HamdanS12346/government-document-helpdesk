@@ -28,6 +28,7 @@ Raw user input:
 - User text/query
 - Attached images
 - Attached PDFs
+- Attached spreadsheets
 
 ### Writes
 
@@ -60,6 +61,7 @@ The Intent Classifier uses:
 - `normalized_input.user_query`
 - Preview of each attached image
 - Preview of each attached PDF
+- Bounded preview of each attached spreadsheet
 - Relevant conversation context from `messages`
 - `conversation_summary`
 
@@ -104,7 +106,7 @@ intent_decision.intent_type == "ambiguous"
 
 The node uses the classifier-facing query and conversation context to determine what clarification is needed.
 
-The Clarification Node does not inspect `normalized_input` directly. Attachment context reaches clarification through `intent_decision.query`, because the Intent Classifier has already incorporated relevant image/PDF previews into that query.
+The Clarification Node does not inspect `normalized_input` directly. Attachment context reaches clarification through `intent_decision.query`, because the Intent Classifier has already incorporated relevant image, PDF, and spreadsheet previews into that query.
 
 For the current backend milestone, the node writes a completed graph state result with a clarification message instead of relying on durable interrupt/resume behavior. Durable conversation persistence across HTTP requests is left to the memory/checkpoint branch.
 
@@ -159,7 +161,7 @@ The Retriever uses the relevant state information to understand the current requ
 
 It may perform query optimization before retrieval, using the current user query and relevant conversation context to construct an effective retrieval query.
 
-The Retriever can also use relevant normalized attachment content when the user's request depends on an attached document or image.
+The Retriever can also use relevant normalized attachment content when the user's request depends on an attached document, image, or spreadsheet.
 
 ### Writes
 

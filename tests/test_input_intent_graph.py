@@ -1,7 +1,14 @@
 import pytest
 
 from app.contracts.intent_decision import IntentDecision
-from app.contracts.normalized_input import ImageContent, NormalizedInput, PDFContent
+from app.contracts.normalized_input import (
+    ImageContent,
+    NormalizedInput,
+    PDFContent,
+    SpreadsheetContent,
+    SpreadsheetMetadata,
+    SpreadsheetSheet,
+)
 from app.graph.graph import build_input_intent_graph, invoke_input_intent_graph
 from app.input_processing.schemas import InputProcessingResult
 
@@ -38,10 +45,38 @@ def _successful_result() -> InputProcessingResult:
                     preview="Renewal notice: submit documents by June 30.",
                 )
             ],
+            spreadsheet_content=[
+                SpreadsheetContent(
+                    workbook_name="notice.xlsx",
+                    sheets=[
+                        SpreadsheetSheet(
+                            name="Renewals",
+                            position=1,
+                            max_row=1,
+                            max_column=2,
+                            is_empty=False,
+                        )
+                    ],
+                    preview="Workbook preview: renewal fee is listed.",
+                    warnings=[],
+                    metadata=SpreadsheetMetadata(
+                        workbook_name="notice.xlsx",
+                        processed_sheet_count=1,
+                        total_visible_sheet_count=1,
+                        hidden_sheet_count=0,
+                        max_sheets=5,
+                        max_rows_per_sheet=50,
+                        max_columns_per_sheet=50,
+                        max_text_cell_characters=5000,
+                        preview_row_count=5,
+                    ),
+                )
+            ],
             combined_text=(
                 "<USER_QUERY>\nWhat does this notice mean?\n\n"
                 "<IMAGE_CONTENT>\nFull extracted image text stays outside intent query.\n\n"
-                "<PDF_CONTENT>\nFull extracted PDF text stays outside intent query."
+                "<PDF_CONTENT>\nFull extracted PDF text stays outside intent query.\n\n"
+                "<SPREADSHEET_CONTENT>\nFull spreadsheet projection stays outside intent query."
             ),
         ),
     )
@@ -64,10 +99,14 @@ def test_input_intent_graph_classifies_successful_normalized_input() -> None:
     assert "Photo preview: appointment date is listed." in classifier.query
     assert "PDF Preview 1:" in classifier.query
     assert "Renewal notice: submit documents by June 30." in classifier.query
+    assert "Spreadsheet Preview 1:" in classifier.query
+    assert "notice.xlsx: Workbook preview: renewal fee is listed." in classifier.query
     assert "Full extracted image text" not in classifier.query
     assert "Full extracted PDF text" not in classifier.query
+    assert "Full spreadsheet projection" not in classifier.query
     assert "<IMAGE_CONTENT>" not in classifier.query
     assert "<PDF_CONTENT>" not in classifier.query
+    assert "<SPREADSHEET_CONTENT>" not in classifier.query
 
 
 def test_input_intent_graph_runs_with_only_normalized_input() -> None:

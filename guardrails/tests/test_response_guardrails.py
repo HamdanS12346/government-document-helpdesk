@@ -374,6 +374,15 @@ class TestRunResponseGuardrails:
         assert isinstance(report.scope_result.forbidden_matches, list)
         assert report.hallucination_result is not None
 
+    def test_composite_runner_does_not_replace_pin_language(self):
+        """The response pipeline no longer applies the removed fallback."""
+        ctx = _make_context(1)
+        text = "To get an e-PAN, use the income tax portal and enter your PIN code if required."
+        report = run_response_guardrails(text, ctx, intent_type="document_info")
+
+        assert report.final_text == text
+        assert not report.any_triggered
+
 
 # ---------------------------------------------------------------------------
 # TestFactualityHallucinationGuardrail

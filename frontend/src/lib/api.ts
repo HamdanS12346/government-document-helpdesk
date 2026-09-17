@@ -11,6 +11,18 @@ export type AttachmentStatus = {
   filename?: string;
   status?: "success" | "failed" | "skipped";
   error?: { message?: string } | null;
+  warnings?: ProcessingWarning[];
+};
+
+export type AttachmentSummary = {
+  total: number;
+  images: number;
+  pdfs: number;
+  spreadsheets: number;
+  other: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
 };
 
 export type ProcessingWarning = {
@@ -35,6 +47,7 @@ export type ChatApiResponse = {
   message: string;
   assistant_message: AssistantMessage | null;
   attachment_statuses: AttachmentStatus[];
+  attachment_summary: AttachmentSummary;
   warnings: ProcessingWarning[];
   normalized_input: unknown;
   intent: {

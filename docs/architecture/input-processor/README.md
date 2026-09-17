@@ -29,6 +29,8 @@ Implemented so far:
 - Text-only input.
 - PNG/JPEG/JPG image routing and OCR boundary.
 - PDF routing and PDF processor boundary.
+- Spreadsheet contract and centralized configuration foundation.
+- `.xlsx` modality validation foundation.
 - Sequential multi-attachment orchestration.
 - Partial-success and complete-failure behavior.
 - Safe structured attachment errors.
@@ -48,6 +50,7 @@ app/input_processing/
 |-- errors.py           # safe error taxonomy
 |-- image_processor.py  # image-specific validation/OCR/normalization
 |-- pdf_processor.py    # PDF-specific inspection/extraction/OCR/normalization
+|-- excel_processor.py  # spreadsheet parser boundary and future normalization
 |-- ocr_provider.py     # OCR provider abstraction and Tesseract implementation
 `-- preview.py          # deterministic preview helpers
 
@@ -127,13 +130,14 @@ Messages are safe for display and must not contain stack traces, raw bytes, prov
 
 ## NormalizedInput
 
-The downstream contract is unchanged:
+The downstream contract now includes the spreadsheet extension, while existing text/image/PDF fields remain compatible:
 
 ```text
 NormalizedInput
 |-- user_query: str
 |-- image_content: list[ImageContent]
 |-- pdf_content: list[PDFContent]
+|-- spreadsheet_content: list[SpreadsheetContent]
 `-- combined_text: str
 ```
 
@@ -154,6 +158,80 @@ preview: str
 ```
 
 Only successful image/PDF results are added to `NormalizedInput`. Failed attachment errors do not appear inside `combined_text`.
+
+For current behavior, `spreadsheet_content` is `[]`. `.xlsx` uploads can be recognized by validation, but spreadsheet extraction is added in later milestone tasks.
+
+## Spreadsheet Foundation
+
+Spreadsheet processing is being added as an Input Processor modality. Task 2 records these foundation decisions:
+
+- Supported extension: `.xlsx`
+- Initial parser package: `openpyxl`
+- Requirements entry: `openpyxl>=3.1,<4`
+- Maximum visible worksheets: `5`
+- Maximum rows per worksheet: `50`
+- Maximum columns per worksheet: `50`
+- Maximum textual cell characters: `5,000`
+- Preview sample size: `5` rows
+
+These values are centralized in `app/config/settings.py` so tests and future processor code can inject controlled values through environment variables:
+
+```text
+SPREADSHEET_SUPPORTED_EXTENSION
+SPREADSHEET_PARSER_PACKAGE
+SPREADSHEET_MAX_VISIBLE_SHEETS
+SPREADSHEET_MAX_ROWS_PER_SHEET
+SPREADSHEET_MAX_COLUMNS_PER_SHEET
+SPREADSHEET_MAX_TEXT_CELL_CHARACTERS
+SPREADSHEET_PREVIEW_ROW_COUNT
+```
+
+Out of scope for the spreadsheet MVP:
+
+- `.xls`
+- `.xlsm`
+- protected or encrypted workbooks
+- macros and VBA
+- formula execution
+- long-term upload storage
+
+The future spreadsheet processor must treat uploaded workbooks as request-scoped untrusted content and must not leak parser objects, raw bytes, temporary paths, or unmasked PII into `NormalizedInput`.
+
+Current task 3 validation behavior:
+
+- Accepts the spreadsheet MIME type `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`.
+- Requires the uploaded filename to end in `.xlsx`.
+- Checks that the bytes are an Office Open XML ZIP package with required workbook parts before parser extraction.
+- Rejects `.xls`, `.xlsm`, renamed non-spreadsheet bytes, malformed ZIP packages, and MIME/signature mismatches with safe structured errors.
+- Does not inspect cells or call the workbook parser yet.
+
+Current task 5 provider-boundary behavior:
+
+- `app/input_processing/excel_processor.py` defines the narrow `SpreadsheetParser` protocol.
+- Parser shape: `inspect(content: bytes, filename: str) -> SpreadsheetInspectionResult`.
+- Internal parser results use provider-independent models: `ParsedWorkbook`, `ParsedWorksheet`, and `SpreadsheetInspectionResult`.
+- `PendingSpreadsheetParser` returns a controlled unavailable outcome when no concrete parser is configured.
+- Public orchestration routes validated `.xlsx` uploads to `process_spreadsheet_attachment`.
+- Until full spreadsheet normalization is implemented, a default `.xlsx` upload returns the safe attachment error `EXTRACTION_FAILURE` with message `Spreadsheet parser is not configured.`
+- The parser boundary must never execute formulas, macros, embedded commands, external links, or cell-provided instructions.
+
+Task 4 safe spreadsheet error categories:
+
+- Reused existing categories where they are clear: `UNSUPPORTED_FORMAT`, `SIGNATURE_MISMATCH`, `FILE_TOO_LARGE`, `UNREADABLE_CONTENT`, `EXTRACTION_FAILURE`, `PII_PROCESSING_FAILURE`, and `INTERNAL_PROCESSING_ERROR`.
+- Added `SPREADSHEET_WORKSHEET_LIMIT_EXCEEDED` for workbooks with too many visible worksheets.
+- Added `UNSUPPORTED_WORKBOOK_PROTECTION` for protected or encrypted workbooks that are outside the MVP.
+
+Task 4 safe spreadsheet warning categories:
+
+- `SPREADSHEET_ROW_LIMIT_APPLIED`
+- `SPREADSHEET_COLUMN_LIMIT_APPLIED`
+- `SPREADSHEET_CELL_TRUNCATED`
+- `SPREADSHEET_HIDDEN_CONTENT_EXCLUDED`
+- `SPREADSHEET_CACHED_FORMULA_VALUE_UNAVAILABLE`
+- `SPREADSHEET_TABLE_METADATA_UNAVAILABLE`
+- `SPREADSHEET_PARTIAL_WORKSHEET_EXTRACTION`
+
+Spreadsheet errors and warnings must never include raw cell values, unmasked PII, parser stack traces, internal file paths, raw workbook bytes, or sensitive workbook metadata beyond safe names/counts.
 
 ## Combined Text Format
 

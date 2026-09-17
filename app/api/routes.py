@@ -14,6 +14,7 @@ from app.api.auth import AuthenticatedUser, get_optional_user, require_authentic
 from app.api.serialization import serialize_public_message
 from app.config import get_settings
 from app.contracts.chat import (
+    ChatAttachmentSummary,
     ChatIntentSummary,
     ChatMessage,
     ChatResponse,
@@ -253,12 +254,37 @@ def _build_response_payload(
         message=_build_response_message(result, graph_state),
         assistant_message=_build_assistant_message(graph_state),
         attachment_statuses=result.attachment_statuses,
+        attachment_summary=_build_attachment_summary(result),
         warnings=result.warnings,
         normalized_input=result.normalized_input,
         intent=_build_intent_summary(graph_state),
         conversation_id=resolved_cid,
     )
     return jsonable_encoder(response)
+
+
+def _build_attachment_summary(
+    result: InputProcessingResult,
+) -> ChatAttachmentSummary:
+    summary = ChatAttachmentSummary(total=len(result.attachment_statuses))
+    for attachment_status in result.attachment_statuses:
+        filename = attachment_status.filename.lower()
+        if filename.endswith((".png", ".jpg", ".jpeg")):
+            summary.images += 1
+        elif filename.endswith(".pdf"):
+            summary.pdfs += 1
+        elif filename.endswith(".xlsx"):
+            summary.spreadsheets += 1
+        else:
+            summary.other += 1
+
+        if attachment_status.status == "success":
+            summary.succeeded += 1
+        elif attachment_status.status == "failed":
+            summary.failed += 1
+        else:
+            summary.skipped += 1
+    return summary
 
 
 def _build_chat_status(

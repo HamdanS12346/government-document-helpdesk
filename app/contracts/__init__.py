@@ -13,7 +13,16 @@ from app.contracts.memory import (
     MemorySnapshot,
     MessageRole,
 )
-from app.contracts.normalized_input import ImageContent, NormalizedInput, PDFContent
+from app.contracts.normalized_input import (
+    ImageContent,
+    NormalizedInput,
+    PDFContent,
+    SpreadsheetCell,
+    SpreadsheetContent,
+    SpreadsheetMetadata,
+    SpreadsheetSheet,
+    SpreadsheetTable,
+)
 from app.contracts.response import ContextSource, RetrievedContext
 from app.contracts.retrieval import ChunkMetadata, RetrievalOutput, RetrievedDocument
 
@@ -28,6 +37,11 @@ __all__ = [
     "IntentDecision",
     "NormalizedInput",
     "PDFContent",
+    "SpreadsheetCell",
+    "SpreadsheetContent",
+    "SpreadsheetMetadata",
+    "SpreadsheetSheet",
+    "SpreadsheetTable",
     "RetrievalOutput",
     "RetrievedContext",
     "RetrievedDocument",

@@ -4,11 +4,15 @@ import { useCallback, useRef, useState } from "react";
 import {
   postChat,
   fetchThreadMessages,
+  type AttachmentSummary,
   type AttachmentStatus,
-  type ChatApiResponse,
   type ProcessingWarning,
   type AssistantMessage,
 } from "@/lib/api";
+import {
+  ALL_FAILED_ATTACHMENTS_MESSAGE,
+  buildAttachmentSummary,
+} from "@/lib/attachmentUi";
 
 export type MessageRole = "user" | "bot";
 
@@ -21,6 +25,8 @@ export type ChatMessage = {
   attachmentNames?: string[];
   /** Per-file processing results (bot messages only) */
   attachmentStatuses?: AttachmentStatus[];
+  /** Safe derived attachment counts from public response fields only */
+  attachmentSummary?: AttachmentSummary;
   /** Non-fatal processing warnings */
   warnings?: string[];
   /** True when the API returned success: false */
@@ -78,7 +84,7 @@ function buildBotContent(
   // --- Priority 3: all attachments failed ---
   const failedFiles = attachmentStatuses.filter((s) => s.status === "failed");
   if (failedFiles.length > 0 && attachmentStatuses.every((s) => s.status === "failed")) {
-    return "I received your message but couldn't process the attached files. Please check that they are valid PDF, PNG, or JPEG files.";
+    return ALL_FAILED_ATTACHMENTS_MESSAGE;
   }
 
   // --- Priority 4: generic status fallback (should not normally be seen) ---
@@ -187,6 +193,8 @@ export function useChat(): UseChatReturn {
         isStreaming: shouldStream,
         timestamp: new Date(),
         attachmentStatuses: data.attachment_statuses ?? [],
+        attachmentSummary:
+          data.attachment_summary ?? buildAttachmentSummary(data.attachment_statuses ?? []),
         warnings: (data.warnings ?? []).map((w) =>
           safeText(w.message, "The request was processed with a warning.")
         ),

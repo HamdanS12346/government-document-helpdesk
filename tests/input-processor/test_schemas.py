@@ -3,7 +3,14 @@
 import pytest
 from pydantic import ValidationError
 
-from app.contracts.normalized_input import NormalizedInput
+from app.contracts.normalized_input import (
+    NormalizedInput,
+    SpreadsheetCell,
+    SpreadsheetContent,
+    SpreadsheetMetadata,
+    SpreadsheetSheet,
+    SpreadsheetTable,
+)
 from app.input_processing.schemas import (
     Attachment,
     AttachmentProcessingError,
@@ -11,6 +18,7 @@ from app.input_processing.schemas import (
     AttachmentProcessingWarning,
     InputModality,
     InputProcessingErrorCode,
+    InputProcessingWarningCode,
     InputProcessingResult,
     InputRequest,
     ValidatedAttachment,
@@ -136,6 +144,113 @@ def make_normalized_input() -> NormalizedInput:
         pdf_content=[],
         combined_text="What does this mean?",
     )
+
+
+def make_spreadsheet_content() -> SpreadsheetContent:
+    return SpreadsheetContent(
+        workbook_name="applications.xlsx",
+        sheets=[
+            SpreadsheetSheet(
+                name="Applicants",
+                position=1,
+                max_row=2,
+                max_column=3,
+                is_empty=False,
+                cells=[
+                    SpreadsheetCell(
+                        coordinate="A1",
+                        row=1,
+                        column=1,
+                        value="Applicant",
+                        value_type="string",
+                    ),
+                    SpreadsheetCell(
+                        coordinate="B2",
+                        row=2,
+                        column=2,
+                        value=42,
+                        value_type="number",
+                    ),
+                    SpreadsheetCell(
+                        coordinate="C2",
+                        row=2,
+                        column=3,
+                        value=None,
+                        value_type="formula",
+                        formula="=SUM(B2:B2)",
+                        cached_value=42,
+                    ),
+                ],
+                merged_ranges=["A1:C1"],
+                tables=[
+                    SpreadsheetTable(
+                        name="ApplicantTable",
+                        reference="A1:C2",
+                        columns=["Applicant", "Count", "Total"],
+                    )
+                ],
+            )
+        ],
+        preview="Workbook: applications.xlsx\nSheet: Applicants",
+        warnings=["Hidden sheets were excluded."],
+        metadata=SpreadsheetMetadata(
+            workbook_name="applications.xlsx",
+            processed_sheet_count=1,
+            total_visible_sheet_count=1,
+            hidden_sheet_count=0,
+            max_sheets=5,
+            max_rows_per_sheet=50,
+            max_columns_per_sheet=50,
+            max_text_cell_characters=5000,
+            preview_row_count=5,
+        ),
+    )
+
+
+def test_spreadsheet_contract_serializes_provider_independent_content() -> None:
+    spreadsheet = make_spreadsheet_content()
+
+    payload = spreadsheet.model_dump(mode="json")
+
+    assert payload["workbook_name"] == "applications.xlsx"
+    assert payload["sheets"][0]["cells"][2]["formula"] == "=SUM(B2:B2)"
+    assert payload["sheets"][0]["cells"][2]["cached_value"] == 42
+    assert payload["sheets"][0]["tables"][0]["columns"] == [
+        "Applicant",
+        "Count",
+        "Total",
+    ]
+    assert "raw_bytes" not in payload
+    assert "file_path" not in payload
+    assert "workbook_object" not in payload
+
+
+def test_spreadsheet_contract_rejects_provider_specific_or_raw_fields() -> None:
+    payload = make_spreadsheet_content().model_dump()
+    payload["raw_bytes"] = b"PK\x03\x04"
+
+    with pytest.raises(ValidationError):
+        SpreadsheetContent.model_validate(payload)
+
+
+def test_normalized_input_accepts_spreadsheet_content() -> None:
+    normalized_input = NormalizedInput(
+        user_query="Explain this sheet.",
+        image_content=[],
+        pdf_content=[],
+        spreadsheet_content=[make_spreadsheet_content()],
+        combined_text="<USER_QUERY>\nExplain this sheet.",
+    )
+
+    payload = normalized_input.model_dump(mode="json")
+
+    assert payload["spreadsheet_content"][0]["workbook_name"] == "applications.xlsx"
+
+
+def test_normalized_input_defaults_spreadsheet_content_for_existing_callers() -> None:
+    normalized_input = make_normalized_input()
+
+    assert normalized_input.spreadsheet_content == []
 
 
 def test_input_processing_result_accepts_full_success() -> None:
@@ -272,6 +387,8 @@ def test_error_taxonomy_includes_required_categories() -> None:
         "SIGNATURE_MISMATCH",
         "FILE_TOO_LARGE",
         "PDF_PAGE_LIMIT_EXCEEDED",
+        "SPREADSHEET_WORKSHEET_LIMIT_EXCEEDED",
+        "UNSUPPORTED_WORKBOOK_PROTECTION",
         "OCR_FAILURE",
         "EXTRACTION_FAILURE",
         "UNREADABLE_CONTENT",
@@ -281,6 +398,47 @@ def test_error_taxonomy_includes_required_categories() -> None:
     }
 
     assert {code.value for code in InputProcessingErrorCode} == required_codes
+
+
+def test_warning_taxonomy_includes_spreadsheet_safe_categories() -> None:
+    required_codes = {
+        "LOW_TEXT_CONTENT",
+        "SUSPICIOUS_INSTRUCTION",
+        "SPREADSHEET_ROW_LIMIT_APPLIED",
+        "SPREADSHEET_COLUMN_LIMIT_APPLIED",
+        "SPREADSHEET_CELL_TRUNCATED",
+        "SPREADSHEET_HIDDEN_CONTENT_EXCLUDED",
+        "SPREADSHEET_CACHED_FORMULA_VALUE_UNAVAILABLE",
+        "SPREADSHEET_TABLE_METADATA_UNAVAILABLE",
+        "SPREADSHEET_PARTIAL_WORKSHEET_EXTRACTION",
+    }
+
+    assert {code.value for code in InputProcessingWarningCode} == required_codes
+
+
+def test_spreadsheet_error_and_warning_messages_do_not_require_raw_content() -> None:
+    error = AttachmentProcessingError(
+        filename="applications.xlsx",
+        code=InputProcessingErrorCode.SPREADSHEET_WORKSHEET_LIMIT_EXCEEDED,
+        message="This workbook has too many visible worksheets.",
+    )
+    warning = AttachmentProcessingWarning(
+        filename="applications.xlsx",
+        code=InputProcessingWarningCode.SPREADSHEET_HIDDEN_CONTENT_EXCLUDED,
+        message="Hidden spreadsheet content was excluded.",
+    )
+
+    payload_text = str(
+        {
+            "error": error.model_dump(mode="json"),
+            "warning": warning.model_dump(mode="json"),
+        }
+    )
+
+    assert "raw" not in payload_text.lower()
+    assert "cell value" not in payload_text.lower()
+    assert "traceback" not in payload_text.lower()
+    assert "C:\\" not in payload_text
 
 
 def test_attachment_processing_error_rejects_unknown_error_code() -> None:

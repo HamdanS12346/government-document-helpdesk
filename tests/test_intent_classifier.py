@@ -2,10 +2,17 @@ from pydantic import ValidationError
 import pytest
 
 from app.contracts.intent_decision import IntentDecision
-from app.contracts.normalized_input import ImageContent, NormalizedInput, PDFContent
+from app.contracts.normalized_input import (
+    ImageContent,
+    NormalizedInput,
+    PDFContent,
+    SpreadsheetContent,
+    SpreadsheetMetadata,
+    SpreadsheetSheet,
+)
 from app.intent.classifier import CLASSIFICATION_SYSTEM_PROMPT, OpenAIIntentClassifier
 from app.intent.node import classify_intent
-from app.intent.query_builder import build_classification_query
+from app.intent.query_builder import MAX_PREVIEW_LENGTH, build_classification_query
 
 
 class FakeClassifier:
@@ -29,6 +36,37 @@ class FakeStructuredLLM:
     def invoke(self, messages):
         self.messages = messages
         return self.result
+
+
+def _spreadsheet_content(
+    workbook_name: str = "benefits.xlsx",
+    preview: str = "Sheet: Applicants\nRow 1: applicant status pending",
+) -> SpreadsheetContent:
+    return SpreadsheetContent(
+        workbook_name=workbook_name,
+        sheets=[
+            SpreadsheetSheet(
+                name="Applicants",
+                position=1,
+                max_row=1,
+                max_column=2,
+                is_empty=False,
+            )
+        ],
+        preview=preview,
+        warnings=[],
+        metadata=SpreadsheetMetadata(
+            workbook_name=workbook_name,
+            processed_sheet_count=1,
+            total_visible_sheet_count=1,
+            hidden_sheet_count=0,
+            max_sheets=5,
+            max_rows_per_sheet=50,
+            max_columns_per_sheet=50,
+            max_text_cell_characters=5000,
+            preview_row_count=5,
+        ),
+    )
 
 
 def test_intent_decision_validates_supported_values_and_confidence():
@@ -130,6 +168,12 @@ def test_query_builder_uses_input_previews_and_conversation_context():
                 preview="application requirements preview",
             )
         ],
+        spreadsheet_content=[
+            _spreadsheet_content(
+                workbook_name="applications.xlsx",
+                preview="Sheet: Applicants\nRow 1: appointment status approved",
+            )
+        ],
         combined_text="The user is applying for a passport.",
     )
     messages = [{"role": "human", "content": f"turn {index}"} for index in range(12)]
@@ -143,6 +187,8 @@ def test_query_builder_uses_input_previews_and_conversation_context():
     assert "Can I use this document?" in query
     assert "identity card preview" in query
     assert "application requirements preview" in query
+    assert "applications.xlsx: Sheet: Applicants" in query
+    assert "Row 1: appointment status approved" in query
     assert "The user is applying for a passport." not in query
     assert "human: turn 2" in query
     assert "human: turn 11" in query
@@ -167,8 +213,16 @@ def test_query_builder_uses_attachment_previews_without_full_extracted_text():
                 preview="form deadline preview",
             )
         ],
+        spreadsheet_content=[
+            _spreadsheet_content(
+                workbook_name="private-data.xlsx",
+                preview="bounded spreadsheet preview",
+            )
+        ],
         combined_text=(
-            "private full image extraction\nprivate full PDF extraction"
+            "private full image extraction\n"
+            "private full PDF extraction\n"
+            "<SPREADSHEET_CONTENT>\nprivate full spreadsheet projection"
         ),
     )
 
@@ -176,8 +230,56 @@ def test_query_builder_uses_attachment_previews_without_full_extracted_text():
 
     assert "notice.png: deadline notice preview" in query
     assert "form.pdf: form deadline preview" in query
+    assert "private-data.xlsx: bounded spreadsheet preview" in query
     assert "private full image extraction" not in query
     assert "private full PDF extraction" not in query
+    assert "private full spreadsheet projection" not in query
+
+
+def test_query_builder_uses_spreadsheet_only_preview_context():
+    normalized_input = NormalizedInput(
+        user_query="",
+        image_content=[],
+        pdf_content=[],
+        spreadsheet_content=[
+            _spreadsheet_content(
+                workbook_name="fee-schedule.xlsx",
+                preview="Workbook: fee-schedule.xlsx\nSheet: Fees\nRow 1: certificate 25",
+            )
+        ],
+        combined_text="<SPREADSHEET_CONTENT>\nFull spreadsheet projection stays outside intent query.",
+    )
+
+    query = build_classification_query(normalized_input)
+
+    assert "User Query:" in query
+    assert "Spreadsheet Preview 1:" in query
+    assert "fee-schedule.xlsx: Workbook: fee-schedule.xlsx" in query
+    assert "Sheet: Fees" in query
+    assert "Full spreadsheet projection" not in query
+
+
+def test_query_builder_bounds_spreadsheet_preview_context():
+    query = build_classification_query(
+        NormalizedInput(
+            user_query="Review this workbook.",
+            image_content=[],
+            pdf_content=[],
+            spreadsheet_content=[
+                _spreadsheet_content(
+                    workbook_name="large.xlsx",
+                    preview="a" * 4_100,
+                )
+            ],
+            combined_text="",
+        )
+    )
+
+    assert "Spreadsheet Preview 1:" in query
+    assert "large.xlsx: " in query
+    rendered_preview = query.split("Spreadsheet Preview 1:\n", maxsplit=1)[1]
+    assert len(rendered_preview) == MAX_PREVIEW_LENGTH
+    assert rendered_preview == "large.xlsx: " + ("a" * (MAX_PREVIEW_LENGTH - 12))
 
 
 def test_node_returns_validated_decision_with_constructed_query_only():
