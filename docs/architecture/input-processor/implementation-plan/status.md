@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Milestone 1 is complete, and Milestone 2 tasks 1 through 8 are now implemented. The project has the Excel/spreadsheet foundation inside the Input Processor plus bounded worksheet extraction, spreadsheet structure preservation, cell-level privacy/prompt-boundary handling, deterministic preview generation, `combined_text` projection, mixed-modality orchestration coverage, expanded extraction/privacy/failure tests, and baseline spreadsheet performance measurements.
+Milestone 1 is complete, and Milestone 2 tasks 1 through 12 are now implemented. The project has Excel/spreadsheet support wired from frontend upload through the backend Input Processor, graph handoff, and response-generation path. It includes bounded worksheet extraction, spreadsheet structure preservation, cell-level privacy/prompt-boundary handling, deterministic preview generation, `combined_text` projection, mixed-modality orchestration coverage, expanded extraction/privacy/failure tests, baseline spreadsheet performance measurements, a manual root runner for validating the real fixture workbook, frontend upload affordances that present `.xlsx` alongside PDF, PNG, and JPEG, normalized attachment status display for all supported upload modalities, and frontend-safe attachment summaries derived from public response fields only.
 
 Current `.xlsx` behavior:
 
@@ -17,6 +17,12 @@ Current `.xlsx` behavior:
 - If the user also provides usable text, the request can still succeed as text-only partial success.
 - `NormalizedInput.spreadsheet_content` is populated for successfully processed `.xlsx` workbooks.
 - Successful spreadsheet content is projected into `combined_text` under `<SPREADSHEET_CONTENT>`.
+- The frontend file picker accepts `.xlsx` uploads and sends them through the existing multipart `/chat` API path.
+- The frontend composer hint/attach tooltip list `.xlsx`, and file chips distinguish spreadsheet, PDF, image, and generic file attachments by filename extension only.
+- The chat UI renders backend `attachment_statuses` for assistant messages with filename, safe status labels, and sanitized failed-attachment details while preserving partial-success assistant responses.
+- The chat UI derives modality/status counts from `attachment_statuses` only and does not render `NormalizedInput`, `combined_text`, spreadsheet previews, extracted cells, or PII-bearing workbook content in the transcript.
+- The response generator treats spreadsheet content as attachment context, so the final LLM prompt can see the user's query plus workbook preview/projection instead of only the typed text.
+- `test.py` at the repository root runs the real `tests/input-processor/fixtures/spreadsheets/aadhar_update.xlsx` fixture through `process_input()` and prints the resulting `NormalizedInput`.
 
 ## Milestone 2 Performance Baseline
 
@@ -180,7 +186,7 @@ Current orchestration:
 - Validated `.xlsx` attachments route to `process_spreadsheet_attachment()`.
 - The default `openpyxl` parser performs bounded internal visible-sheet and cell extraction, including formulas, cached/displayed values when available, merged ranges, Excel Table metadata, cell-level truncation, PII masking, and untrusted instruction-like text marking.
 - Successful spreadsheet parser output is converted into `SpreadsheetContent` with deterministic preview text.
-- Graph, intent, RAG, response, memory, API, and frontend logic were not changed.
+- Intent, RAG, memory, and graph routing logic remain unchanged. API upload forwarding, frontend file acceptance, and response-generation attachment context were updated so `.xlsx` content can work end to end.
 
 ### 6. Synthetic Fixture Strategy
 
@@ -197,6 +203,14 @@ Current helper functions:
 - `make_minimal_xlsx_package_bytes()`
 - `make_incomplete_xlsx_package_bytes()`
 - `make_corrupt_zip_like_xlsx_bytes()`
+- `make_openpyxl_xlsx_bytes()`
+- `make_structured_xlsx_bytes()`
+- `make_privacy_xlsx_bytes()`
+- `make_typed_values_xlsx_bytes()`
+- `make_boundary_xlsx_bytes()`
+- `make_formula_heavy_xlsx_bytes()`
+- `make_table_heavy_xlsx_bytes()`
+- `make_merged_range_heavy_xlsx_bytes()`
 
 Fixture policy:
 
@@ -262,6 +276,14 @@ Docs:
 - `tests/input-processor/fixtures/README.md`
 - `tests/input-processor/fixtures/spreadsheets/README.md`
 
+Frontend/API/response integration:
+
+- `frontend/src/components/Composer.tsx`
+- `frontend/src/hooks/useChat.ts`
+- `app/api/routes.py`
+- `app/response/generator.py`
+- `test.py`
+
 Tests:
 
 - `tests/input-processor/test_schemas.py`
@@ -272,43 +294,112 @@ Tests:
 - `tests/input-processor/test_spreadsheet_fixtures.py`
 - `tests/input-processor/test_privacy.py`
 - `tests/input-processor/test_state_integration.py`
+- `tests/input-processor/test_performance.py`
+- `tests/api/test_chat.py`
+- `tests/response/test_generator.py`
 
 ## Latest Test Results
 
-Focused task 7 foundation test run:
+Focused task 9/frontend and response integration checks:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests\input-processor\test_schemas.py tests\input-processor\test_validation.py tests\input-processor\test_excel_processor.py tests\input-processor\test_processors.py tests\input-processor\test_privacy.py tests\input-processor\test_state_integration.py
+.\.venv\Scripts\python.exe -m pytest tests\response\test_generator.py -q
+.\.venv\Scripts\python.exe -m pytest tests\api\test_chat.py -q
+.\.venv\Scripts\python.exe test.py
+npm.cmd run lint
+npm.cmd run build
 ```
 
 Result:
 
 ```text
-178 passed
+17 passed
+39 passed
+test.py printed NormalizedInput for aadhar_update.xlsx
+frontend lint passed
+frontend build passed
 ```
 
-Full Input Processor suite:
+Task 10 frontend affordance check:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests\input-processor
+npm.cmd run lint
 ```
 
 Result:
 
 ```text
-477 passed, 2 skipped
+Failed on pre-existing frontend lint issues outside the Task 10 change:
+- frontend/src/components/Sidebar.tsx react-hooks/set-state-in-effect
+- frontend/src/components/RightPanel.tsx unused useState warning
+- frontend/src/hooks/useChat.ts unused ChatApiResponse warning
+```
+
+Task 11 frontend attachment status check:
+
+```powershell
+npm.cmd run lint
+```
+
+Result:
+
+```text
+Failed on the same pre-existing frontend lint issues outside the Task 11 change:
+- frontend/src/components/Sidebar.tsx react-hooks/set-state-in-effect
+- frontend/src/components/RightPanel.tsx unused useState warning
+- frontend/src/hooks/useChat.ts unused ChatApiResponse warning
+```
+
+Task 12 frontend-safe summary checks:
+
+```powershell
+npm.cmd run lint
+rg -n "normalized_input|combined_text|spreadsheet_content|preview|extracted|cell" frontend/src -S
+```
+
+Result:
+
+```text
+Lint failed on the same pre-existing frontend issues outside the Task 12 change:
+- frontend/src/components/Sidebar.tsx react-hooks/set-state-in-effect
+- frontend/src/components/RightPanel.tsx unused useState warning
+- frontend/src/hooks/useChat.ts unused ChatApiResponse warning
+
+Frontend content scan found no transcript/UI rendering of normalized input, combined text, spreadsheet content, previews, extracted content, or cells. The only match was the opaque normalized_input field in frontend/src/lib/api.ts.
+```
+
+Focused backend integration checks:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\api tests\response tests\input-processor -q
+```
+
+Result:
+
+```text
+591 passed, 2 skipped
 ```
 
 Skipped tests are existing scanned/mixed PDF integration checks that require real page-rendering provider support.
 
-## Milestone 2 Starting Point
+Full backend suite after the latest response-guardrail cleanup:
 
-Start with `docs/architecture/input-processor/implementation-plan/milestone2.md`.
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
 
-Milestone 2 should assume:
+Result:
+
+```text
+977 passed, 2 skipped
+```
+
+## Milestone 2 Operating Notes
+
+The Excel work is implemented against `docs/architecture/input-processor/implementation-plan/milestone2.md`. Current operating assumptions:
 
 - The `NormalizedInput.spreadsheet_content` contract exists.
-- `.xlsx` validation and routing already exist.
+- `.xlsx` validation, routing, frontend file acceptance, and API upload forwarding already exist.
 - `process_input()` can receive `spreadsheet_parser=...`.
 - `excel_processor.py` owns spreadsheet parser/provider work.
 - `processors.py` should remain orchestration only.
@@ -317,27 +408,27 @@ Milestone 2 should assume:
 - Formula text is data only. Do not execute formulas, macros, VBA, external links, embedded commands, or cell-provided instructions.
 - Hidden sheets, rows, and columns must be excluded from structured output, preview, combined text, warnings, logs, and telemetry.
 - `combined_text` includes successful spreadsheet content under `<SPREADSHEET_CONTENT>`.
+- Response generation uses `combined_text` when spreadsheet content is present, so uploaded workbook context reaches the final answer prompt.
 - Spreadsheet-only requests can now succeed when at least one workbook produces `SpreadsheetContent`.
 - Mixed requests with text, image, PDF, and spreadsheet attachments preserve deterministic attachment status order and successful content from each modality independently.
 - Failed spreadsheet attachments do not discard successful text, image, or PDF content.
 
-Recommended next implementation order:
+Recommended manual verification order:
 
-1. Implement real `openpyxl`-backed parser inspection behind `SpreadsheetParser`.
-2. Keep validation-before-parser behavior intact.
-3. Convert provider workbook information into provider-independent internal models.
-4. Enforce worksheet limits before broad extraction.
-5. Add extraction fixtures using generated synthetic workbooks.
-6. Continue with representative performance measurement from task 8.
+1. Use the frontend to manually upload `tests/input-processor/fixtures/spreadsheets/aadhar_update.xlsx` or another owner-selected `.xlsx` workbook.
+2. Confirm the `/chat` response contains populated `normalized_input.spreadsheet_content`.
+3. Confirm `combined_text` contains `<SPREADSHEET_CONTENT>`.
+4. Confirm the final assistant response uses the spreadsheet context.
+5. Repeat with text plus `.xlsx` and one mixed-modality request if practical.
 
-## Known Limitations After Milestone 2 Task 7
+## Known Limitations After Milestone 2 Task 9
 
-- Representative performance measurements are still pending.
-- No frontend `.xlsx` upload advertising yet.
-- No manual live-call verification with owner-selected `.xlsx` yet.
+- `.xls`, `.xlsm`, CSV-as-spreadsheet, protected/encrypted workbooks, macros/VBA, and formula execution remain intentionally out of scope.
+- Manual browser verification depends on local services and external LLM/network availability.
+- Spreadsheet uploads are request-scoped user content only; they are not stored as knowledge-base documents.
 
 ## Commit Message Used/Suggested
 
 ```text
-feat: add xlsx input foundation
+feat: add xlsx input processing
 ```

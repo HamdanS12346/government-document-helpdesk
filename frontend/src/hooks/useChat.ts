@@ -12,6 +12,16 @@ import {
 
 export type MessageRole = "user" | "bot";
 
+export type AttachmentSummary = {
+  total: number;
+  images: number;
+  pdfs: number;
+  spreadsheets: number;
+  other: number;
+  failed: number;
+  skipped: number;
+};
+
 export type ChatMessage = {
   id: string;
   role: MessageRole;
@@ -21,6 +31,8 @@ export type ChatMessage = {
   attachmentNames?: string[];
   /** Per-file processing results (bot messages only) */
   attachmentStatuses?: AttachmentStatus[];
+  /** Safe derived attachment counts from public response fields only */
+  attachmentSummary?: AttachmentSummary;
   /** Non-fatal processing warnings */
   warnings?: string[];
   /** True when the API returned success: false */
@@ -58,6 +70,36 @@ function safeText(text: string | undefined, fallback: string): string {
   return unsafe.some((p) => text.includes(p)) ? fallback : text;
 }
 
+function attachmentKind(filename: string | undefined): "images" | "pdfs" | "spreadsheets" | "other" {
+  const lower = (filename ?? "").toLowerCase();
+  if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "images";
+  if (lower.endsWith(".pdf")) return "pdfs";
+  if (lower.endsWith(".xlsx")) return "spreadsheets";
+  return "other";
+}
+
+function buildAttachmentSummary(statuses: AttachmentStatus[]): AttachmentSummary | undefined {
+  if (statuses.length === 0) return undefined;
+
+  const summary: AttachmentSummary = {
+    total: statuses.length,
+    images: 0,
+    pdfs: 0,
+    spreadsheets: 0,
+    other: 0,
+    failed: 0,
+    skipped: 0,
+  };
+
+  for (const status of statuses) {
+    summary[attachmentKind(status.filename)] += 1;
+    if (status.status === "failed") summary.failed += 1;
+    if (status.status === "skipped") summary.skipped += 1;
+  }
+
+  return summary;
+}
+
 function buildBotContent(
   success: boolean,
   message: string,
@@ -78,7 +120,7 @@ function buildBotContent(
   // --- Priority 3: all attachments failed ---
   const failedFiles = attachmentStatuses.filter((s) => s.status === "failed");
   if (failedFiles.length > 0 && attachmentStatuses.every((s) => s.status === "failed")) {
-    return "I received your message but couldn't process the attached files. Please check that they are valid PDF, PNG, or JPEG files.";
+    return "I received your message but couldn't process the attached files. Please check that they are valid PDF, PNG, JPEG, or XLSX files.";
   }
 
   // --- Priority 4: generic status fallback (should not normally be seen) ---
@@ -187,6 +229,7 @@ export function useChat(): UseChatReturn {
         isStreaming: shouldStream,
         timestamp: new Date(),
         attachmentStatuses: data.attachment_statuses ?? [],
+        attachmentSummary: buildAttachmentSummary(data.attachment_statuses ?? []),
         warnings: (data.warnings ?? []).map((w) =>
           safeText(w.message, "The request was processed with a warning.")
         ),

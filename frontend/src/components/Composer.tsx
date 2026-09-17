@@ -11,7 +11,7 @@ type Props = {
   onValueChange?: (v: string) => void;
 };
 
-const ACCEPTED = ".png,.jpg,.jpeg,.pdf";
+const ACCEPTED = ".png,.jpg,.jpeg,.pdf,.xlsx";
 
 export default function Composer({ onSend, isLoading, initialValue = "", onValueChange }: Props) {
   const [text, setText] = useState(initialValue);
@@ -90,7 +90,7 @@ export default function Composer({ onSend, isLoading, initialValue = "", onValue
           type="button"
           className={styles.attachBtn}
           aria-label="Attach file"
-          title="Attach PDF, PNG or JPEG"
+          title="Attach PDF, PNG, JPEG, or XLSX"
           onClick={() => fileInputRef.current?.click()}
           disabled={isLoading}
         >
@@ -136,7 +136,7 @@ export default function Composer({ onSend, isLoading, initialValue = "", onValue
       </div>
 
       <p className={styles.hint}>
-        Press <kbd>Enter</kbd> to send · <kbd>Shift + Enter</kbd> for new line · Accepts PDF, PNG, JPEG
+        Press <kbd>Enter</kbd> to send · <kbd>Shift + Enter</kbd> for new line · Accepts PDF, PNG, JPEG, XLSX
       </p>
     </div>
   );

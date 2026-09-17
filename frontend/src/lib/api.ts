@@ -11,6 +11,7 @@ export type AttachmentStatus = {
   filename?: string;
   status?: "success" | "failed" | "skipped";
   error?: { message?: string } | null;
+  warnings?: ProcessingWarning[];
 };
 
 export type ProcessingWarning = {

@@ -2,7 +2,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import styles from "./MessageBubble.module.css";
 import FileChip from "./FileChip";
-import type { ChatMessage } from "@/hooks/useChat";
+import type { AttachmentSummary, ChatMessage } from "@/hooks/useChat";
+import type { AttachmentStatus } from "@/lib/api";
 
 type Props = {
   message: ChatMessage;
@@ -10,6 +11,70 @@ type Props = {
 
 function formatTime(date: Date): string {
   return date.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+}
+
+function safeStatusText(text: string | undefined, fallback: string): string {
+  if (!text) return fallback;
+  const unsafe = ["Traceback", 'File "', "site-packages", "RuntimeError", "Exception"];
+  return unsafe.some((marker) => text.includes(marker)) ? fallback : text;
+}
+
+function statusLabel(status: AttachmentStatus["status"]): string {
+  if (status === "success") return "Processed";
+  if (status === "failed") return "Issue";
+  if (status === "skipped") return "Skipped";
+  return "Checked";
+}
+
+function AttachmentStatusList({ statuses }: { statuses: AttachmentStatus[] }) {
+  if (statuses.length === 0) return null;
+
+  return (
+    <div className={styles.statusList} aria-label="Attachment processing results">
+      {statuses.map((status, index) => {
+        const filename = status.filename || "Attachment";
+        const label = statusLabel(status.status);
+        const detail =
+          status.status === "failed"
+            ? safeStatusText(status.error?.message, "This attachment could not be processed safely.")
+            : label;
+
+        return (
+          <div
+            key={`${filename}-${index}`}
+            className={`${styles.statusItem} ${status.status === "failed" ? styles.statusFailed : ""} ${status.status === "skipped" ? styles.statusSkipped : ""}`}
+          >
+            <span className={styles.statusPill}>{label}</span>
+            <span className={styles.statusFilename} title={filename}>{filename}</span>
+            <span className={styles.statusDetail}>{detail}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AttachmentSummaryList({ summary }: { summary: AttachmentSummary }) {
+  const items = [
+    { label: "Images", value: summary.images },
+    { label: "PDFs", value: summary.pdfs },
+    { label: "Spreadsheets", value: summary.spreadsheets },
+    { label: "Other", value: summary.other },
+    { label: "Issues", value: summary.failed },
+    { label: "Skipped", value: summary.skipped },
+  ].filter((item) => item.value > 0);
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className={styles.summaryList} aria-label="Attachment summary">
+      {items.map((item) => (
+        <span key={item.label} className={styles.summaryItem}>
+          {item.label}: {item.value}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function BotIcon() {
@@ -110,6 +175,15 @@ export default function MessageBubble({ message }: Props) {
                 <FileChip key={name} name={name} />
               ))}
             </div>
+          )}
+
+          {!isUser && message.attachmentStatuses && message.attachmentStatuses.length > 0 && (
+            <>
+              {message.attachmentSummary && (
+                <AttachmentSummaryList summary={message.attachmentSummary} />
+              )}
+              <AttachmentStatusList statuses={message.attachmentStatuses} />
+            </>
           )}
         </div>
 
