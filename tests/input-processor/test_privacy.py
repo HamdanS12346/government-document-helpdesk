@@ -22,6 +22,8 @@ from app.input_processing.pdf_processor import (
 )
 from app.input_processing.processors import build_graph_state_update, process_input
 from app.input_processing.schemas import Attachment, InputModality, InputRequest, ValidatedAttachment
+from guardrails.input_processor import XLSX_MEDIA_TYPE
+from spreadsheet_fixture_helpers import make_minimal_xlsx_package_bytes
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -34,6 +36,13 @@ class StaticOCRProvider:
 
     def extract_text(self, image_content: bytes) -> OCRResult:
         return OCRResult(status=OCRStatus.SUCCESS, text=self.text)
+
+
+class LeakySpreadsheetParser:
+    def inspect(self, content: bytes, filename: str):
+        raise RuntimeError(
+            "parser object leaked raw workbook bytes and cell value ABCDE1234F"
+        )
 
 
 def make_validated_image() -> ValidatedAttachment:
@@ -411,3 +420,56 @@ def test_user_uploads_are_not_treated_as_authoritative_knowledge_documents(
     assert not hasattr(result.normalized_input.pdf_content[0], "authoritative")
     assert not hasattr(result.normalized_input.pdf_content[0], "knowledge_base_id")
     assert not hasattr(result.normalized_input.pdf_content[0], "vector_id")
+
+
+def test_failed_spreadsheet_processing_does_not_leak_raw_bytes_or_parser_details() -> None:
+    raw_workbook = make_minimal_xlsx_package_bytes()
+
+    result = process_input(
+        InputRequest(
+            attachments=[
+                Attachment(
+                    filename="applications.xlsx",
+                    media_type=XLSX_MEDIA_TYPE,
+                    content=raw_workbook,
+                )
+            ],
+        ),
+        spreadsheet_parser=LeakySpreadsheetParser(),
+    )
+
+    payload_text = str(result.model_dump(mode="json"))
+
+    assert result.success is False
+    assert result.normalized_input is None
+    assert str(raw_workbook) not in payload_text
+    assert "ABCDE1234F" not in payload_text
+    assert "parser object leaked" not in payload_text
+    assert "raw workbook bytes" not in payload_text
+
+
+def test_partial_success_with_failed_spreadsheet_keeps_graph_state_clean() -> None:
+    raw_workbook = make_minimal_xlsx_package_bytes()
+
+    result = process_input(
+        InputRequest(
+            user_query="Use only my question.",
+            attachments=[
+                Attachment(
+                    filename="applications.xlsx",
+                    media_type=XLSX_MEDIA_TYPE,
+                    content=raw_workbook,
+                )
+            ],
+        )
+    )
+
+    state_update = build_graph_state_update(result)
+    state_payload = str(state_update)
+
+    assert result.success is True
+    assert state_update.keys() == {"normalized_input"}
+    assert state_update["normalized_input"].spreadsheet_content == []
+    assert str(raw_workbook) not in state_payload
+    assert "Spreadsheet parser is not configured" not in state_payload
+    assert "attachment_statuses" not in state_payload

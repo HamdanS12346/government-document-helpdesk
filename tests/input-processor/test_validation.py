@@ -18,16 +18,24 @@ from guardrails.input_processor import (
     MAX_ATTACHMENT_SIZE_BYTES,
     MAX_PDF_PAGE_COUNT,
     SUPPORTED_MEDIA_TYPES,
+    XLSX_MEDIA_TYPE,
     get_pdf_page_count,
     has_jpeg_signature,
     has_pdf_signature,
     has_png_signature,
+    has_xlsx_signature,
     inspect_attachment_signature,
     validate_attachment_modality,
     validate_attachment_size,
     validate_input_presence,
     validate_pdf_page_count,
     validate_supported_media_type,
+    validate_xlsx_filename_extension,
+)
+from spreadsheet_fixture_helpers import (
+    make_corrupt_zip_like_xlsx_bytes,
+    make_incomplete_xlsx_package_bytes,
+    make_minimal_xlsx_package_bytes,
 )
 
 
@@ -48,6 +56,9 @@ PDF_BYTES = make_pdf_bytes(1)
 FIXTURE_ROOT = Path(__file__).parent / "fixtures"
 
 
+XLSX_BYTES = make_minimal_xlsx_package_bytes()
+
+
 def read_fixture(relative_path: str) -> bytes:
     return (FIXTURE_ROOT / relative_path).read_bytes()
 
@@ -57,6 +68,7 @@ def test_supported_media_type_set_contains_only_confirmed_upload_types() -> None
         "image/png",
         "image/jpeg",
         "application/pdf",
+        XLSX_MEDIA_TYPE,
     }
 
 
@@ -67,6 +79,7 @@ def test_supported_media_type_set_contains_only_confirmed_upload_types() -> None
         ("sample.jpg", "image/jpeg", JPEG_BYTES, InputModality.JPEG),
         ("sample.jpeg", "image/jpeg", JPEG_BYTES, InputModality.JPEG),
         ("sample.pdf", "application/pdf", PDF_BYTES, InputModality.PDF),
+        ("sample.xlsx", XLSX_MEDIA_TYPE, XLSX_BYTES, InputModality.XLSX),
     ],
 )
 def test_validate_supported_media_type_accepts_confirmed_types(
@@ -318,12 +331,20 @@ def test_pdf_signature_validation_requires_header_and_eof_marker() -> None:
     assert has_pdf_signature(b"not pdf bytes\n%%EOF") is False
 
 
+def test_xlsx_signature_validation_requires_ooxml_workbook_package() -> None:
+    assert has_xlsx_signature(XLSX_BYTES) is True
+    assert has_xlsx_signature(b"not zip bytes") is False
+    assert has_xlsx_signature(make_incomplete_xlsx_package_bytes()) is False
+    assert has_xlsx_signature(make_corrupt_zip_like_xlsx_bytes()) is False
+
+
 @pytest.mark.parametrize(
     ("content", "expected_modality"),
     [
         (PNG_BYTES, InputModality.PNG),
         (JPEG_BYTES, InputModality.JPEG),
         (PDF_BYTES, InputModality.PDF),
+        (XLSX_BYTES, InputModality.XLSX),
     ],
 )
 def test_inspect_attachment_signature_identifies_supported_modalities(
@@ -344,6 +365,7 @@ def test_inspect_attachment_signature_returns_none_for_unknown_bytes() -> None:
         b"not pdf bytes\n%%EOF",
         b"\x89PNX\r\n\x1a\nnear png bytes",
         b"\xff\xd9\xff\xe0near jpeg bytes",
+        make_corrupt_zip_like_xlsx_bytes(),
     ],
 )
 def test_inspect_attachment_signature_rejects_obvious_invalid_signatures(
@@ -359,6 +381,7 @@ def test_inspect_attachment_signature_rejects_obvious_invalid_signatures(
         ("sample.jpg", "image/jpeg", JPEG_BYTES, InputModality.JPEG),
         ("sample.jpeg", "image/jpeg", JPEG_BYTES, InputModality.JPEG),
         ("sample.pdf", "application/pdf", PDF_BYTES, InputModality.PDF),
+        ("sample.xlsx", XLSX_MEDIA_TYPE, XLSX_BYTES, InputModality.XLSX),
     ],
 )
 def test_validate_attachment_modality_returns_validated_attachment(
@@ -418,12 +441,86 @@ def test_validate_attachment_modality_rejects_over_page_limit_pdf() -> None:
     assert exc_info.value.code == InputProcessingErrorCode.PDF_PAGE_LIMIT_EXCEEDED
 
 
+def test_validate_xlsx_filename_extension_rejects_non_xlsx_workbook_names() -> None:
+    attachment = Attachment(
+        filename="sample.xlsm",
+        media_type=XLSX_MEDIA_TYPE,
+        content=XLSX_BYTES,
+    )
+
+    with pytest.raises(InputProcessingError) as exc_info:
+        validate_xlsx_filename_extension(attachment)
+
+    assert exc_info.value.code == InputProcessingErrorCode.UNSUPPORTED_FORMAT
+    assert exc_info.value.message == "Only .xlsx spreadsheet uploads are supported."
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "sample.xls",
+        "sample.xlsm",
+        "sample.csv",
+    ],
+)
+def test_validate_attachment_modality_rejects_unsupported_spreadsheet_extensions(
+    filename: str,
+) -> None:
+    attachment = Attachment(
+        filename=filename,
+        media_type=XLSX_MEDIA_TYPE,
+        content=XLSX_BYTES,
+    )
+
+    with pytest.raises(InputProcessingError) as exc_info:
+        validate_attachment_modality(attachment)
+
+    assert exc_info.value.code == InputProcessingErrorCode.UNSUPPORTED_FORMAT
+    assert exc_info.value.message == "Only .xlsx spreadsheet uploads are supported."
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"not a spreadsheet",
+        make_corrupt_zip_like_xlsx_bytes(),
+    ],
+)
+def test_validate_attachment_modality_rejects_malformed_xlsx_before_extraction(
+    content: bytes,
+) -> None:
+    attachment = Attachment(
+        filename="sample.xlsx",
+        media_type=XLSX_MEDIA_TYPE,
+        content=content,
+    )
+
+    with pytest.raises(InputProcessingError) as exc_info:
+        validate_attachment_modality(attachment)
+
+    assert exc_info.value.code == InputProcessingErrorCode.SIGNATURE_MISMATCH
+
+
+def test_validate_attachment_modality_rejects_xlsx_mime_signature_mismatch() -> None:
+    attachment = Attachment(
+        filename="sample.xlsx",
+        media_type=XLSX_MEDIA_TYPE,
+        content=PDF_BYTES,
+    )
+
+    with pytest.raises(InputProcessingError) as exc_info:
+        validate_attachment_modality(attachment)
+
+    assert exc_info.value.code == InputProcessingErrorCode.SIGNATURE_MISMATCH
+
+
 @pytest.mark.parametrize(
     ("filename", "media_type", "content"),
     [
         ("sample.png", "image/png", b"not image bytes"),
         ("sample.jpg", "image/jpeg", b"not image bytes"),
         ("sample.pdf", "application/pdf", b"%PDF-1.4\nmissing eof marker"),
+        ("sample.xlsx", XLSX_MEDIA_TYPE, b"not a spreadsheet"),
     ],
 )
 def test_validate_attachment_modality_rejects_declared_type_with_invalid_bytes(

@@ -1,8 +1,18 @@
 """Input Processor orchestration boundary."""
 
-from app.contracts.normalized_input import ImageContent, NormalizedInput, PDFContent
+from app.contracts.normalized_input import (
+    ImageContent,
+    NormalizedInput,
+    PDFContent,
+    SpreadsheetContent,
+)
 from app.graph.state import GraphState
 from app.input_processing.errors import InputProcessingError, InputProcessingErrorCode
+from app.input_processing.excel_processor import (
+    PendingSpreadsheetParser,
+    SpreadsheetParser,
+    process_spreadsheet_attachment,
+)
 from app.input_processing.image_processor import process_image_attachment
 from app.input_processing.ocr_provider import OCRProvider, TesseractOCRProvider
 from app.input_processing.pdf_processor import (
@@ -36,6 +46,7 @@ def process_input(
     ocr_provider: OCRProvider | None = None,
     pdf_extractor: PDFExtractor | None = None,
     page_image_extractor: PDFPageImageExtractor | None = None,
+    spreadsheet_parser: SpreadsheetParser | None = None,
 ) -> InputProcessingResult:
     """Process a public Input Processor request into normalized content."""
 
@@ -59,9 +70,11 @@ def process_input(
 
     active_ocr_provider = ocr_provider or TesseractOCRProvider()
     active_pdf_extractor = pdf_extractor or PendingPDFExtractor()
+    active_spreadsheet_parser = spreadsheet_parser or PendingSpreadsheetParser()
 
     image_content: list[ImageContent] = []
     pdf_content: list[PDFContent] = []
+    spreadsheet_content: list[SpreadsheetContent] = []
     attachment_statuses: list[AttachmentProcessingStatus] = []
 
     for attachment in request.attachments:
@@ -70,12 +83,14 @@ def process_input(
             active_ocr_provider=active_ocr_provider,
             active_pdf_extractor=active_pdf_extractor,
             page_image_extractor=page_image_extractor,
+            active_spreadsheet_parser=active_spreadsheet_parser,
         )
         attachment_statuses.append(status)
         if processed_image_content is not None:
             image_content.append(processed_image_content)
         if processed_pdf_content is not None:
             pdf_content.append(processed_pdf_content)
+        # Full spreadsheet normalization is added in a later milestone task.
 
     try:
         user_query, user_query_warnings = _process_user_query(request.user_query)
@@ -94,7 +109,9 @@ def process_input(
                 )
             ],
         )
-    has_usable_content = bool(user_query.strip() or image_content or pdf_content)
+    has_usable_content = bool(
+        user_query.strip() or image_content or pdf_content or spreadsheet_content
+    )
     if not has_usable_content:
         return InputProcessingResult(
             success=False,
@@ -107,7 +124,7 @@ def process_input(
             user_query=user_query,
             image_content=image_content,
             pdf_content=pdf_content,
-            spreadsheet_content=[],
+            spreadsheet_content=spreadsheet_content,
             combined_text=_build_combined_text(
                 user_query=user_query,
                 image_content=image_content,
@@ -125,6 +142,7 @@ def _process_attachment(
     active_ocr_provider: OCRProvider,
     active_pdf_extractor: PDFExtractor,
     page_image_extractor: PDFPageImageExtractor | None,
+    active_spreadsheet_parser: SpreadsheetParser,
 ) -> tuple[AttachmentProcessingStatus, ImageContent | None, PDFContent | None]:
     """Validate and process one attachment while returning only safe status."""
 
@@ -184,6 +202,23 @@ def _process_attachment(
             )
         result_error = pdf_result.error
         pdf_content = pdf_result.pdf_content
+    elif validated_attachment.modality == InputModality.XLSX:
+        try:
+            spreadsheet_result = process_spreadsheet_attachment(
+                validated_attachment,
+                active_spreadsheet_parser,
+            )
+        except Exception:
+            return (
+                _failed_attachment_status(
+                    attachment.filename,
+                    InputProcessingErrorCode.INTERNAL_PROCESSING_ERROR,
+                    "This attachment could not be processed safely.",
+                ),
+                None,
+                None,
+            )
+        result_error = spreadsheet_result.error
     else:
         result_error = AttachmentProcessingError(
             filename=attachment.filename,

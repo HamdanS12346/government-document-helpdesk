@@ -557,6 +557,57 @@ Performance testing should include:
 * multiple attachments
 No additional hard per-modality latency threshold should be introduced until the performance requirements are explicitly finalized.
 Scanned PDFs and difficult images are expected to have different latency characteristics from text-only requests; this should be measured rather than hidden behind one average.
+
+# 21.1 Spreadsheet Test Fixtures
+Spreadsheet fixtures must be synthetic, deterministic, and safe to commit. Prefer generating workbooks in test code rather than committing many binary `.xlsx` files.
+
+The spreadsheet fixture strategy lives in:
+```text
+tests/input-processor/fixtures/spreadsheets/README.md
+```
+
+Current validation tests use minimal Office Open XML ZIP package bytes from:
+```text
+tests/input-processor/spreadsheet_fixture_helpers.py
+```
+
+Planned spreadsheet fixture groups:
+```text
+XLSX-001 valid workbook
+XLSX-002 five-sheet boundary
+XLSX-003 six-sheet rejection
+XLSX-004 50-row boundary
+XLSX-005 50-column boundary
+XLSX-006 51-row behavior
+XLSX-007 51-column behavior
+XLSX-008 empty workbook or sheet
+XLSX-009 hidden sheet, row, and column
+XLSX-010 formulas with cached/displayed values where available
+XLSX-011 merged ranges
+XLSX-012 Excel Tables
+XLSX-013 long cells at 4,999, 5,000, and 5,001 characters
+XLSX-014 fictional PII-like values
+XLSX-015 legitimate instruction-like content
+XLSX-016 AI-directed instruction-like content treated as data
+XLSX-017 corrupt or renamed non-spreadsheet bytes
+```
+
+Real workbook fixtures should be generated with `openpyxl` only after parser behavior is implemented. Do not add real citizen records, credentials, production exports, private data, or genuine PII.
+
+# 21.2 Spreadsheet Foundation Tests
+Milestone 1 spreadsheet foundation tests cover:
+
+```text
+schema serialization and NormalizedInput compatibility
+.xlsx media type, extension, signature, and package validation
+unsupported .xls/.xlsm and renamed/corrupt file rejection
+validation-before-parser behavior
+provider protocol success, unavailable, malformed, exception, timeout, corrupt, and protected-workbook outcomes
+raw workbook bytes and parser details excluded from processor results and graph state
+existing text, image, and PDF behavior through the input-processor regression suite
+```
+
+These tests do not require real workbook cell extraction yet. Extraction, preview content, PII masking at cell level, formulas, merged ranges, and Excel Tables are covered by later spreadsheet processor milestones.
 # 22. Regression Testing
 Every important discovered failure should become a permanent regression fixture.
 Example:

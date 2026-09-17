@@ -582,6 +582,8 @@ UNSUPPORTED_FORMAT
 SIGNATURE_MISMATCH
 FILE_TOO_LARGE
 PDF_PAGE_LIMIT_EXCEEDED
+SPREADSHEET_WORKSHEET_LIMIT_EXCEEDED
+UNSUPPORTED_WORKBOOK_PROTECTION
 OCR_FAILURE
 EXTRACTION_FAILURE
 UNREADABLE_CONTENT
@@ -590,6 +592,25 @@ SAFETY_REJECTION
 INTERNAL_PROCESSING_ERROR
 ```
 The final error taxonomy may be refined during implementation.
+
+Spreadsheet-specific additions are used only where generic categories would be unclear:
+
+* `SPREADSHEET_WORKSHEET_LIMIT_EXCEEDED`: too many visible worksheets for the configured MVP limit.
+* `UNSUPPORTED_WORKBOOK_PROTECTION`: protected or encrypted workbook handling is outside the MVP.
+
+Spreadsheet processing warnings should use safe category strings:
+
+```text
+SPREADSHEET_ROW_LIMIT_APPLIED
+SPREADSHEET_COLUMN_LIMIT_APPLIED
+SPREADSHEET_CELL_TRUNCATED
+SPREADSHEET_HIDDEN_CONTENT_EXCLUDED
+SPREADSHEET_CACHED_FORMULA_VALUE_UNAVAILABLE
+SPREADSHEET_TABLE_METADATA_UNAVAILABLE
+SPREADSHEET_PARTIAL_WORKSHEET_EXTRACTION
+```
+
+These warnings may mention safe sheet names, coordinates, and counts when needed, but must not echo raw cell values, unmasked PII, parser stack traces, internal paths, raw workbook bytes, or sensitive workbook metadata.
 # 43. Safe Error Boundary
 Internal failures such as:
 ```text

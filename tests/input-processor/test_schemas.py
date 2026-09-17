@@ -18,6 +18,7 @@ from app.input_processing.schemas import (
     AttachmentProcessingWarning,
     InputModality,
     InputProcessingErrorCode,
+    InputProcessingWarningCode,
     InputProcessingResult,
     InputRequest,
     ValidatedAttachment,
@@ -386,6 +387,8 @@ def test_error_taxonomy_includes_required_categories() -> None:
         "SIGNATURE_MISMATCH",
         "FILE_TOO_LARGE",
         "PDF_PAGE_LIMIT_EXCEEDED",
+        "SPREADSHEET_WORKSHEET_LIMIT_EXCEEDED",
+        "UNSUPPORTED_WORKBOOK_PROTECTION",
         "OCR_FAILURE",
         "EXTRACTION_FAILURE",
         "UNREADABLE_CONTENT",
@@ -395,6 +398,47 @@ def test_error_taxonomy_includes_required_categories() -> None:
     }
 
     assert {code.value for code in InputProcessingErrorCode} == required_codes
+
+
+def test_warning_taxonomy_includes_spreadsheet_safe_categories() -> None:
+    required_codes = {
+        "LOW_TEXT_CONTENT",
+        "SUSPICIOUS_INSTRUCTION",
+        "SPREADSHEET_ROW_LIMIT_APPLIED",
+        "SPREADSHEET_COLUMN_LIMIT_APPLIED",
+        "SPREADSHEET_CELL_TRUNCATED",
+        "SPREADSHEET_HIDDEN_CONTENT_EXCLUDED",
+        "SPREADSHEET_CACHED_FORMULA_VALUE_UNAVAILABLE",
+        "SPREADSHEET_TABLE_METADATA_UNAVAILABLE",
+        "SPREADSHEET_PARTIAL_WORKSHEET_EXTRACTION",
+    }
+
+    assert {code.value for code in InputProcessingWarningCode} == required_codes
+
+
+def test_spreadsheet_error_and_warning_messages_do_not_require_raw_content() -> None:
+    error = AttachmentProcessingError(
+        filename="applications.xlsx",
+        code=InputProcessingErrorCode.SPREADSHEET_WORKSHEET_LIMIT_EXCEEDED,
+        message="This workbook has too many visible worksheets.",
+    )
+    warning = AttachmentProcessingWarning(
+        filename="applications.xlsx",
+        code=InputProcessingWarningCode.SPREADSHEET_HIDDEN_CONTENT_EXCLUDED,
+        message="Hidden spreadsheet content was excluded.",
+    )
+
+    payload_text = str(
+        {
+            "error": error.model_dump(mode="json"),
+            "warning": warning.model_dump(mode="json"),
+        }
+    )
+
+    assert "raw" not in payload_text.lower()
+    assert "cell value" not in payload_text.lower()
+    assert "traceback" not in payload_text.lower()
+    assert "C:\\" not in payload_text
 
 
 def test_attachment_processing_error_rejects_unknown_error_code() -> None:

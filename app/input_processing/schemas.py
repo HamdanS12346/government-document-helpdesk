@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.contracts.normalized_input import NormalizedInput
-from app.input_processing.errors import InputProcessingErrorCode
+from app.input_processing.errors import InputProcessingErrorCode, InputProcessingWarningCode
 
 
 class Attachment(BaseModel):
@@ -61,6 +61,7 @@ class InputModality(StrEnum):
     PNG = "png"
     JPEG = "jpeg"
     PDF = "pdf"
+    XLSX = "xlsx"
 
 
 class ValidatedAttachment(BaseModel):
@@ -162,6 +163,7 @@ __all__ = [
     "AttachmentStatus",
     "InputModality",
     "InputProcessingErrorCode",
+    "InputProcessingWarningCode",
     "InputProcessingResult",
     "InputRequest",
     "ValidatedAttachment",

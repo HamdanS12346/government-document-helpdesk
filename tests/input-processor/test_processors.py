@@ -20,6 +20,8 @@ from app.input_processing.pdf_processor import (
 )
 from app.input_processing.processors import process_input
 from app.input_processing.schemas import Attachment, InputRequest
+from guardrails.input_processor import XLSX_MEDIA_TYPE
+from spreadsheet_fixture_helpers import make_minimal_xlsx_package_bytes
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -35,6 +37,15 @@ class StaticOCRProvider:
         self.calls += 1
         assert image_content
         return OCRResult(status=OCRStatus.SUCCESS, text=self.text)
+
+
+class CountingSpreadsheetParser:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def inspect(self, content: bytes, filename: str):
+        self.calls += 1
+        raise AssertionError("spreadsheet parser should not be called")
 
 
 def make_pdf_bytes() -> bytes:
@@ -66,6 +77,14 @@ def make_pdf_attachment(filename: str = "sample.pdf") -> Attachment:
         filename=filename,
         media_type="application/pdf",
         content=make_pdf_bytes(),
+    )
+
+
+def make_xlsx_attachment(filename: str = "sample.xlsx") -> Attachment:
+    return Attachment(
+        filename=filename,
+        media_type=XLSX_MEDIA_TYPE,
+        content=make_minimal_xlsx_package_bytes(),
     )
 
 
@@ -242,6 +261,43 @@ def test_process_input_routes_png_jpeg_and_pdf_to_matching_processors(
     assert [content.pdf_name for content in result.normalized_input.pdf_content] == [
         "three.pdf"
     ]
+
+
+def test_process_input_returns_controlled_failure_for_valid_xlsx_until_processor_exists() -> None:
+    result = process_input(InputRequest(attachments=[make_xlsx_attachment()]))
+
+    assert result.success is False
+    assert result.normalized_input is None
+    assert len(result.attachment_statuses) == 1
+    status = result.attachment_statuses[0]
+    assert status.status == "failed"
+    assert status.error is not None
+    assert status.error.code == InputProcessingErrorCode.EXTRACTION_FAILURE
+    assert status.error.message == "Spreadsheet parser is not configured."
+
+
+def test_process_input_validates_xlsx_before_parser_inspection() -> None:
+    parser = CountingSpreadsheetParser()
+    result = process_input(
+        InputRequest(
+            attachments=[
+                Attachment(
+                    filename="renamed.xlsx",
+                    media_type=XLSX_MEDIA_TYPE,
+                    content=b"not a spreadsheet",
+                )
+            ],
+        ),
+        spreadsheet_parser=parser,
+    )
+
+    assert parser.calls == 0
+    assert result.success is False
+    assert result.attachment_statuses[0].error is not None
+    assert (
+        result.attachment_statuses[0].error.code
+        == InputProcessingErrorCode.SIGNATURE_MISMATCH
+    )
 
 
 def test_process_input_processes_attachments_sequentially(

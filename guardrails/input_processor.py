@@ -1,8 +1,10 @@
 """Input Processor validation and safety guardrail boundary."""
 
 from enum import StrEnum
+from io import BytesIO
 import re
 from typing import Protocol
+from zipfile import BadZipFile, ZipFile
 
 from app.input_processing.errors import InputProcessingError, InputProcessingErrorCode
 from app.input_processing.pdf_processor import (
@@ -22,6 +24,15 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 JPEG_SIGNATURE = b"\xff\xd8\xff"
 PDF_SIGNATURE = b"%PDF-"
 PDF_EOF_MARKER = b"%%EOF"
+ZIP_SIGNATURE = b"PK\x03\x04"
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+XLSX_EXTENSION = ".xlsx"
+XLSX_REQUIRED_PACKAGE_PARTS = frozenset(
+    {
+        "[Content_Types].xml",
+        "xl/workbook.xml",
+    }
+)
 ONE_MEGABYTE = 1024 * 1024
 MAX_ATTACHMENT_SIZE_BYTES = 10 * ONE_MEGABYTE
 
@@ -29,6 +40,7 @@ MEDIA_TYPE_MODALITIES = {
     "image/png": InputModality.PNG,
     "image/jpeg": InputModality.JPEG,
     "application/pdf": InputModality.PDF,
+    XLSX_MEDIA_TYPE: InputModality.XLSX,
 }
 SUPPORTED_MEDIA_TYPES = frozenset(MEDIA_TYPE_MODALITIES)
 PII_MASK = "[REDACTED]"
@@ -299,6 +311,21 @@ def has_pdf_signature(content: bytes) -> bool:
     return content.startswith(PDF_SIGNATURE) and PDF_EOF_MARKER in content[-1024:]
 
 
+def has_xlsx_signature(content: bytes) -> bool:
+    """Return whether bytes look like a minimal Office Open XML workbook package."""
+
+    if not content.startswith(ZIP_SIGNATURE):
+        return False
+
+    try:
+        with ZipFile(BytesIO(content)) as archive:
+            package_parts = set(archive.namelist())
+    except (BadZipFile, OSError):
+        return False
+
+    return XLSX_REQUIRED_PACKAGE_PARTS.issubset(package_parts)
+
+
 def inspect_attachment_signature(content: bytes) -> InputModality | None:
     """Identify an attachment modality from its bytes."""
 
@@ -308,6 +335,8 @@ def inspect_attachment_signature(content: bytes) -> InputModality | None:
         return InputModality.JPEG
     if has_pdf_signature(content):
         return InputModality.PDF
+    if has_xlsx_signature(content):
+        return InputModality.XLSX
     return None
 
 
@@ -335,6 +364,18 @@ def validate_attachment_size(attachment: Attachment) -> InputGuardrailDecision:
     )
 
 
+def validate_xlsx_filename_extension(attachment: Attachment) -> InputGuardrailDecision:
+    """Require `.xlsx` filenames for spreadsheet workbook uploads."""
+
+    if attachment.filename.lower().endswith(XLSX_EXTENSION):
+        return InputGuardrailDecision.ALLOW
+
+    raise InputProcessingError(
+        InputProcessingErrorCode.UNSUPPORTED_FORMAT,
+        "Only .xlsx spreadsheet uploads are supported.",
+    )
+
+
 def validate_pdf_page_count(attachment: Attachment) -> InputGuardrailDecision:
     """Reject PDFs that exceed the configured page limit before processing."""
 
@@ -347,6 +388,8 @@ def validate_attachment_modality(attachment: Attachment) -> ValidatedAttachment:
 
     validate_attachment_size(attachment)
     declared_modality = validate_supported_media_type(attachment)
+    if declared_modality == InputModality.XLSX:
+        validate_xlsx_filename_extension(attachment)
     actual_modality = inspect_attachment_signature(attachment.content)
     if actual_modality != declared_modality:
         raise InputProcessingError(
@@ -372,11 +415,13 @@ __all__ = [
     "RegexPIIMasker",
     "SAFETY_REFUSAL_MESSAGE",
     "SUPPORTED_MEDIA_TYPES",
+    "XLSX_MEDIA_TYPE",
     "USER_QUERY_INJECTION_PATTERNS",
     "UntrustedDocumentText",
     "get_pdf_page_count",
     "has_jpeg_signature",
     "has_pdf_signature",
+    "has_xlsx_signature",
     "has_png_signature",
     "inspect_attachment_signature",
     "mark_document_text_untrusted",
@@ -392,4 +437,5 @@ __all__ = [
     "validate_safety_compliance",
     "validate_supported_media_type",
     "validate_user_query_safety",
+    "validate_xlsx_filename_extension",
 ]

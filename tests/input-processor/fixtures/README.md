@@ -15,6 +15,7 @@ Folder intent:
 - `pdfs/mixed/`: synthetic PDFs with text and scanned pages.
 - `pdfs/over_page_limit/`: synthetic PDFs exceeding the configured page limit.
 - `pdfs/invalid/`: malformed or invalid synthetic PDF fixtures.
+- `spreadsheets/`: spreadsheet fixture strategy and future `.xlsx` fixture notes.
 - `text/`: synthetic text-only input fixtures.
 
 Milestone 2 validation fixtures:
@@ -52,6 +53,13 @@ Milestone 4 PDF fixtures:
 - `pdfs/over_page_limit/pdf_010_over_page_limit.pdf`: PDF-010 PDF exceeding the configured page limit.
 - `pdfs/over_page_limit/below_limit_4_pages.pdf`: PDF below the configured page limit.
 - `pdfs/over_page_limit/at_limit_5_pages.pdf`: PDF at the configured page limit.
+
+Milestone 1 spreadsheet fixture strategy:
+
+- `spreadsheets/README.md`: spreadsheet fixture matrix and safety rules.
+- Prefer helper-generated `.xlsx` bytes over committed binary workbooks unless real parser compatibility requires a small committed fixture.
+- Current validation helpers live in `tests/input-processor/spreadsheet_fixture_helpers.py`.
+- Planned fixture IDs include valid workbook, five-sheet boundary, six-sheet rejection, 50-row and 50-column boundaries, 51-row/column behavior, empty sheet, hidden sheet/row/column, formulas, merged ranges, Excel Tables, long cells, fictional PII, instruction-like cell content, and corrupt or renamed non-spreadsheet bytes.
 
 Oversized upload fixtures should be generated in test code rather than committed.
 
