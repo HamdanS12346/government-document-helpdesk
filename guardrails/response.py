@@ -119,45 +119,6 @@ _SCOPE_REDIRECT = (
     "or services, I am here for that."
 )
 
-_CREDENTIAL_SOLICITATION_FALLBACK = (
-    "To help you with your inquiry, please clarify which government document or "
-    "service you need assistance with. (Note: The helpdesk will never ask for your "
-    "passwords, OTPs, or financial credentials.)"
-)
-
-CREDENTIAL_SOLICITATION_PATTERNS: tuple[re.Pattern, ...] = (
-    # Direct requests for OTP / Passwords / PINs
-    re.compile(
-        r"\b(enter|share|provide|send|give|input|tell|type|verify)\b.*?\b(otp|one[-\s]?time[-\s]?password|password|passcode|mpin|upi[-\s]?pin|atm[-\s]?pin|pin|cvv|cvc|security\s+code)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(what\s+is|give\s+me|send\s+me|share|tell\s+me)\b.*?\b(otp|one[-\s]?time[-\s]?password|password|pin|passcode|cvv|cvc)\b",
-        re.IGNORECASE,
-    ),
-    # Requesting full card number or debit/credit card credentials
-    re.compile(
-        r"\b(enter|provide|share|give)\b.*?\b(debit\s+card|credit\s+card|atm\s+card)\s+(number|details|pin)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(16[-\s]?digit\s+(card\s+number|number)|card\s+verification\s+value)\b",
-        re.IGNORECASE,
-    ),
-    # Banking credentials / internet banking login / netbanking password
-    re.compile(
-        r"\b(net\s*banking|internet\s*banking)\s+(password|login\s+credentials|pin)\b",
-        re.IGNORECASE,
-    ),
-)
-
-_SECURITY_WARNING_PATTERNS: tuple[re.Pattern, ...] = (
-    re.compile(
-        r"\b(never\s+share|do\s+not\s+share|don't\s+share|not\s+ask\s+for|will\s+never\s+ask|beware\s+of|caution)\b",
-        re.IGNORECASE,
-    ),
-)
-
 FORBIDDEN_DOMAIN_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"\b(cricket|football|IPL|match score|scorecard)\b", re.I),
     re.compile(r"\b(stock price|sensex|nifty|share market|trading)\b", re.I),
@@ -183,13 +144,6 @@ class CitationGroundingResult:
     cleaned_text: str
     invalid_citation_indices: list[int]
     total_citations_found: int
-
-
-@dataclass
-class CredentialSolicitationResult:
-    decision: ResponseGuardrailDecision
-    cleaned_text: str
-    detected_solicitations: list[str]
 
 
 @dataclass
@@ -232,7 +186,6 @@ class ResponseGuardrailReport:
     length_result: ResponseLengthResult
     scope_result: ResponseScopeResult
     any_triggered: bool
-    credential_result: Optional[CredentialSolicitationResult] = None
     hallucination_result: Optional[HallucinationCheckResult] = None
 
 
@@ -732,89 +685,12 @@ class ResponseScopeGuardrail:
 
 
 # ---------------------------------------------------------------------------
-# Guardrail 5 — Credential Solicitation Guardrail
-# ---------------------------------------------------------------------------
-
-class CredentialSolicitationGuardrail:
-    """Ensure responses and clarification questions never solicit sensitive credentials.
-
-    Citizens must never be asked for passwords, OTPs, PINs, CVVs, or full card
-    credentials by the helpdesk. When detected, the response is replaced with a safe
-    clarification fallback reminding the citizen that the helpdesk never asks for
-    credentials.
-    """
-
-    def check(self, response_text: str) -> CredentialSolicitationResult:
-        """Scan response text for prohibited credential solicitations."""
-        if not response_text or not response_text.strip():
-            return CredentialSolicitationResult(
-                decision=ResponseGuardrailDecision.ALLOW,
-                cleaned_text=response_text,
-                detected_solicitations=[],
-            )
-
-        try:
-            return self._check(response_text)
-        except Exception as exc:
-            logger.error(
-                "CredentialSolicitationGuardrail: unexpected error — failing closed. %s",
-                exc,
-                exc_info=True,
-            )
-            return CredentialSolicitationResult(
-                decision=ResponseGuardrailDecision.REPLACE_WITH_FALLBACK,
-                cleaned_text=_CREDENTIAL_SOLICITATION_FALLBACK,
-                detected_solicitations=["error_fail_closed"],
-            )
-
-    def _check(self, response_text: str) -> CredentialSolicitationResult:
-        sentences = re.split(r"[.!?\n]+", response_text)
-        detected: list[str] = []
-
-        for sentence in sentences:
-            sentence_str = sentence.strip()
-            if not sentence_str:
-                continue
-
-            for pattern in CREDENTIAL_SOLICITATION_PATTERNS:
-                match = pattern.search(sentence_str)
-                if match:
-                    is_warning = any(
-                        w_pat.search(sentence_str) for w_pat in _SECURITY_WARNING_PATTERNS
-                    )
-                    if not is_warning:
-                        detected.append(match.group(0))
-                        break
-
-        if detected:
-            logger.warning(
-                "CredentialSolicitationGuardrail: prohibited credential solicitation detected: %s",
-                detected,
-            )
-            return CredentialSolicitationResult(
-                decision=ResponseGuardrailDecision.REPLACE_WITH_FALLBACK,
-                cleaned_text=_CREDENTIAL_SOLICITATION_FALLBACK,
-                detected_solicitations=detected,
-            )
-
-        return CredentialSolicitationResult(
-            decision=ResponseGuardrailDecision.ALLOW,
-            cleaned_text=response_text,
-            detected_solicitations=[],
-        )
-
-
-ClarificationCredentialGuardrail = CredentialSolicitationGuardrail
-
-
-# ---------------------------------------------------------------------------
 # Composite runner
 # ---------------------------------------------------------------------------
 
 # Module-level singleton instances — constructed once, reused on every call.
 _citation_guardrail = CitationGroundingGuardrail()
 _factuality_guardrail = FactualityHallucinationGuardrail()
-_credential_guardrail = CredentialSolicitationGuardrail()
 _pii_scanner = ResponsePIIScanner()
 _length_guardrail = ResponseLengthGuardrail()
 _scope_guardrail = ResponseScopeGuardrail()
@@ -828,8 +704,8 @@ def run_response_guardrails(
     """Run all response guardrails in sequence.
 
     Each guardrail receives the output text of the previous one.
-    On REJECT or REPLACE_WITH_FALLBACK, the pipeline continues on the safe
-    fallback text, ensuring downstream checks (PII, Length, Scope) validate it.
+    On REJECT or replacement, the pipeline continues on the safe fallback text,
+    ensuring downstream checks (PII, Length, Scope) validate it.
 
     Args:
         response_text:      Raw text from the LLM AIMessage.
@@ -851,12 +727,6 @@ def run_response_guardrails(
     hallucination_result = _factuality_guardrail.check(text, retrieved_context)
     text = hallucination_result.cleaned_text
     if hallucination_result.decision != ResponseGuardrailDecision.ALLOW:
-        any_triggered = True
-
-    # Step 3 — Credential Solicitation Check (fail-closed if model asks for credentials)
-    credential_result = _credential_guardrail.check(text)
-    text = credential_result.cleaned_text
-    if credential_result.decision != ResponseGuardrailDecision.ALLOW:
         any_triggered = True
 
     # Step 4 — PII Scan (operates on Step 3 output)
@@ -884,18 +754,13 @@ def run_response_guardrails(
         length_result=length_result,
         scope_result=scope_result,
         any_triggered=any_triggered,
-        credential_result=credential_result,
         hallucination_result=hallucination_result,
     )
 
 
 __all__ = [
-    "CREDENTIAL_SOLICITATION_PATTERNS",
     "CitationGroundingGuardrail",
     "CitationGroundingResult",
-    "ClarificationCredentialGuardrail",
-    "CredentialSolicitationGuardrail",
-    "CredentialSolicitationResult",
     "DATE_DEADLINE_PATTERNS",
     "EntityHallucinationGuardrail",
     "FEE_PATTERNS",

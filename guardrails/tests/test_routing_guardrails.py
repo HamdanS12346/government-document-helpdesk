@@ -1,10 +1,8 @@
 """Tests for Graph Routing & Clarification Node (Critical Bypass) Guardrails.
 
 Covers:
-  - Credential Solicitation Guardrail (blocking requests for OTP, PIN, Password, CVV, Card #)
-  - Security warning / advice detection (permitting "Never share your OTP", etc.)
   - Clarification exit edge rewiring in build_full_graph (CLARIFICATION_NODE -> RESPONSE_GUARDRAIL_NODE -> END)
-  - Clarification output sanitization (PII redaction and credential fallback on clarification turn)
+  - Clarification output sanitization (PII redaction on clarification turn)
   - Clarification repetitive question detection and fallback replacement
   - Route loop hardening (safe parsing of corrupt clarification_round_count)
 """
@@ -35,13 +33,7 @@ from app.graph.graph import (
 )
 from app.graph.routing import route_after_intent, route_after_intent_full
 from app.input_processing.schemas import InputProcessingResult
-from guardrails.response import (
-    ClarificationCredentialGuardrail,
-    CredentialSolicitationGuardrail,
-    CredentialSolicitationResult,
-    ResponseGuardrailDecision,
-    run_response_guardrails,
-)
+from guardrails.response import ResponseGuardrailDecision, run_response_guardrails
 
 
 # ---------------------------------------------------------------------------
@@ -92,86 +84,7 @@ def _make_input_result(text: str = "help me with my application") -> InputProces
 
 
 # ---------------------------------------------------------------------------
-# 1. Credential Solicitation Guardrail Tests
-# ---------------------------------------------------------------------------
-
-class TestCredentialSolicitationGuardrail:
-    """Verify that CredentialSolicitationGuardrail blocks credential harvesting while allowing warnings."""
-
-    guardrail = CredentialSolicitationGuardrail()
-
-    def test_alias_is_identical(self):
-        """ClarificationCredentialGuardrail is an alias to CredentialSolicitationGuardrail."""
-        assert ClarificationCredentialGuardrail is CredentialSolicitationGuardrail
-
-    def test_clean_response_allowed(self):
-        """Normal helpful citizen text passes with ALLOW."""
-        result = self.guardrail.check("Please specify if you are applying for a fresh passport or renewal.")
-        assert result.decision == ResponseGuardrailDecision.ALLOW
-        assert result.detected_solicitations == []
-        assert "fresh passport" in result.cleaned_text
-
-    @pytest.mark.parametrize(
-        "solicitation_phrase",
-        [
-            "Please enter your OTP to proceed with verification.",
-            "Share your 6-digit one-time password received on your phone.",
-            "Provide your UPI PIN to check application status.",
-            "What is your ATM PIN for fee processing?",
-            "Enter your net banking password to confirm identity.",
-            "Please share your CVV code on the back of your card.",
-            "Provide your 16-digit debit card number and PIN.",
-            "Input your passcode or mPin to continue.",
-        ],
-    )
-    def test_solicitations_detected_and_replaced(self, solicitation_phrase: str):
-        """Direct requests for sensitive citizen credentials are replaced with fallback."""
-        result = self.guardrail.check(solicitation_phrase)
-        assert result.decision == ResponseGuardrailDecision.REPLACE_WITH_FALLBACK
-        assert len(result.detected_solicitations) >= 1
-        assert "never ask for your passwords, OTPs, or financial credentials" in result.cleaned_text
-
-    @pytest.mark.parametrize(
-        "security_warning",
-        [
-            "Never share your OTP with anyone over the phone or chat.",
-            "Do not share your password or UPI PIN with unauthorized persons.",
-            "The department will never ask for your ATM PIN or CVV.",
-            "Caution: Beware of fraudulent calls asking you to enter your OTP.",
-        ],
-    )
-    def test_security_warnings_allowed(self, security_warning: str):
-        """Educational and scam-warning statements are NOT flagged as solicitations."""
-        result = self.guardrail.check(security_warning)
-        assert result.decision == ResponseGuardrailDecision.ALLOW
-        assert result.cleaned_text == security_warning
-
-    def test_mixed_warning_and_solicitation_is_blocked(self):
-        """If a text contains a warning but also solicits credentials in another sentence, block it."""
-        text = "Beware of fraudsters. However, please share your OTP here to verify your account."
-        result = self.guardrail.check(text)
-        assert result.decision == ResponseGuardrailDecision.REPLACE_WITH_FALLBACK
-        assert len(result.detected_solicitations) >= 1
-
-    def test_empty_input_allowed(self):
-        """Empty or whitespace text passes safely."""
-        result = self.guardrail.check("")
-        assert result.decision == ResponseGuardrailDecision.ALLOW
-        assert result.cleaned_text == ""
-
-    def test_fail_closed_on_unexpected_error(self, monkeypatch):
-        """Guardrail fails closed with REPLACE_WITH_FALLBACK on exception."""
-        def _raise_error(*args, **kwargs):
-            raise RuntimeError("Unexpected internal crash")
-
-        monkeypatch.setattr(self.guardrail, "_check", _raise_error)
-        result = self.guardrail.check("Valid text")
-        assert result.decision == ResponseGuardrailDecision.REPLACE_WITH_FALLBACK
-        assert "error_fail_closed" in result.detected_solicitations
-
-
-# ---------------------------------------------------------------------------
-# 2. Graph Wiring & Clarification Critical Bypass Tests
+# 1. Graph Wiring & Clarification Critical Bypass Tests
 # ---------------------------------------------------------------------------
 
 class TestGraphWiringAndClarificationBypass:
@@ -220,8 +133,8 @@ class TestGraphWiringAndClarificationBypass:
         assert guardrail_flags.get("any_triggered") is True
         assert guardrail_flags.get("pii_redaction_count", 0) >= 2
 
-    def test_clarification_credential_solicitation_is_intercepted_in_full_graph(self):
-        """Clarification generator asking for OTP is intercepted and replaced with fallback."""
+    def test_clarification_text_is_not_replaced_by_removed_fallback(self):
+        """The full graph no longer applies the removed fallback replacement."""
         classifier = FakeClassifier(IntentType.AMBIGUOUS)
         soliciting_generator = MockClarificationGenerator(
             "To verify your identity, please share your 6-digit OTP."
@@ -239,12 +152,10 @@ class TestGraphWiringAndClarificationBypass:
         assert soliciting_generator.called
         assert len(result["messages"]) == 1
         output_content = result["messages"][0].content
-        assert "share your 6-digit OTP" not in output_content
-        assert "never ask for your passwords, OTPs, or financial credentials" in output_content
+        assert output_content == "To verify your identity, please share your 6-digit OTP."
 
         guardrail_flags = result.get("guardrail_flags", {})
-        assert guardrail_flags.get("any_triggered") is True
-        assert guardrail_flags.get("credential_decision") == ResponseGuardrailDecision.REPLACE_WITH_FALLBACK
+        assert guardrail_flags == {}
 
 
 # ---------------------------------------------------------------------------

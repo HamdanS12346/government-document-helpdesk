@@ -142,6 +142,7 @@ def test_chat_accepts_text_only_input() -> None:
         "user_query": "Please explain this notice.",
         "image_content": [],
         "pdf_content": [],
+        "spreadsheet_content": [],
         "combined_text": "<USER_QUERY>\nPlease explain this notice.",
     }
 
