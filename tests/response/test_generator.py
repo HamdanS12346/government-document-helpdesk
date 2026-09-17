@@ -6,7 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.contracts.intent_decision import IntentDecision, IntentType
-from app.contracts.normalized_input import NormalizedInput
+from app.contracts.normalized_input import ImageContent, NormalizedInput, PDFContent
 from app.contracts.response import RetrievedContext
 from app.response.generator import MAX_HISTORY_MESSAGES, ResponseGenerator
 
@@ -283,3 +283,95 @@ class TestEmptyQueryFallback:
         # Last message is the HumanMessage with the query
         human_msg = call_args[-1]
         assert human_msg.content == combined
+
+    def test_non_empty_query_with_uploaded_image_uses_combined_text(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = AIMessage(content="answer")
+        gen = ResponseGenerator(llm=mock_llm)
+
+        combined = (
+            "<USER_QUERY>\nwhats this document\n\n"
+            "<IMAGE_CONTENT>\nFilename: income_pan.png\nPreview: PAN application OCR text"
+        )
+        ni = NormalizedInput(
+            user_query="whats this document",
+            image_content=[
+                ImageContent(
+                    image_name="income_pan.png",
+                    extracted_text="PAN application OCR text",
+                    preview="PAN application OCR text",
+                )
+            ],
+            pdf_content=[],
+            combined_text=combined,
+        )
+
+        gen.generate(
+            normalized_input=ni,
+            intent_decision=_make_intent(IntentType.DOCUMENT_INFO),
+            retrieved_context=_make_retrieved_context(),
+            messages=[],
+            conversation_summary=None,
+        )
+
+        call_args = mock_llm.invoke.call_args[0][0]
+        human_msg = call_args[-1]
+        assert human_msg.content == combined
+
+    def test_non_empty_query_with_uploaded_pdf_uses_combined_text(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = AIMessage(content="answer")
+        gen = ResponseGenerator(llm=mock_llm)
+
+        combined = (
+            "<USER_QUERY>\nwhats this document\n\n"
+            "<PDF_CONTENT>\nFilename: income_pan.pdf\nPreview: PAN application PDF text"
+        )
+        ni = NormalizedInput(
+            user_query="whats this document",
+            image_content=[],
+            pdf_content=[
+                PDFContent(
+                    pdf_name="income_pan.pdf",
+                    extracted_text="PAN application PDF text",
+                    preview="PAN application PDF text",
+                )
+            ],
+            combined_text=combined,
+        )
+
+        gen.generate(
+            normalized_input=ni,
+            intent_decision=_make_intent(IntentType.DOCUMENT_INFO),
+            retrieved_context=_make_retrieved_context(),
+            messages=[],
+            conversation_summary=None,
+        )
+
+        call_args = mock_llm.invoke.call_args[0][0]
+        human_msg = call_args[-1]
+        assert human_msg.content == combined
+
+    def test_non_empty_query_without_attachments_still_uses_user_query(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = AIMessage(content="answer")
+        gen = ResponseGenerator(llm=mock_llm)
+
+        ni = NormalizedInput(
+            user_query="How do I get a PAN card?",
+            image_content=[],
+            pdf_content=[],
+            combined_text="<USER_QUERY>\nHow do I get a PAN card?",
+        )
+
+        gen.generate(
+            normalized_input=ni,
+            intent_decision=_make_intent(IntentType.DOCUMENT_INFO),
+            retrieved_context=_make_retrieved_context(),
+            messages=[],
+            conversation_summary=None,
+        )
+
+        call_args = mock_llm.invoke.call_args[0][0]
+        human_msg = call_args[-1]
+        assert human_msg.content == "How do I get a PAN card?"

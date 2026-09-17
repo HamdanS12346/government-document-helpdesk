@@ -89,9 +89,14 @@ class ResponseGenerator:
         if messages:
             llm_messages.extend(messages[-MAX_HISTORY_MESSAGES:])
 
-        # Prefer user_query; fall back to combined_text when the query is empty
-        # but the citizen sent attachments (the attachment text is in combined_text).
-        query_text = normalized_input.user_query.strip() or normalized_input.combined_text
+        # Use combined_text when attachments exist so the LLM sees the user's
+        # wording together with uploaded filenames, previews, and extracted text.
+        has_attachments = bool(normalized_input.image_content or normalized_input.pdf_content)
+        query_text = (
+            normalized_input.combined_text
+            if has_attachments
+            else normalized_input.user_query.strip() or normalized_input.combined_text
+        )
         llm_messages.append(HumanMessage(content=query_text))
 
         logger.debug(
