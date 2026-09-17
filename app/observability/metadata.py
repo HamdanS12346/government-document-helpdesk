@@ -156,11 +156,30 @@ def build_graph_state_metadata(graph_state: Mapping[str, Any]) -> dict[str, Any]
     return metadata
 
 
+def build_token_usage_metadata(
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    total_tokens: int = 0,
+    cost_usd: float | None = None,
+) -> dict[str, Any]:
+    """Build safe metadata dictionary for token usage."""
+
+    data: dict[str, Any] = {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens or (input_tokens + output_tokens),
+    }
+    if cost_usd is not None:
+        data["cost_usd"] = cost_usd
+    return data
+
+
 def build_chat_graph_response_metadata(
     graph_state: Mapping[str, Any],
     *,
     status: str,
     assistant_message_content: str | None = None,
+    token_usage: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build safe root /chat output metadata after graph execution."""
 
@@ -178,6 +197,8 @@ def build_chat_graph_response_metadata(
     clarification_round_count = graph_state.get("clarification_round_count")
     if clarification_round_count is not None:
         metadata["clarification_round_count"] = clarification_round_count
+    if token_usage is not None:
+        metadata["token_usage"] = dict(token_usage)
     return metadata
 
 
@@ -427,5 +448,6 @@ __all__ = [
     "build_query_rewrite_input_metadata",
     "build_query_rewrite_output_metadata",
     "build_retrieved_context_metadata",
+    "build_token_usage_metadata",
     "TEXT_PREVIEW_MAX_CHARS",
 ]

@@ -25,6 +25,7 @@ No prompt text, no business logic, no LLM calls live here.
 import logging
 from typing import Any
 
+from langchain_community.callbacks import get_openai_callback
 from langchain_core.messages import BaseMessage
 
 from app.contracts.intent_decision import IntentDecision
@@ -108,21 +109,38 @@ def response_node(
     # --- Generate the response ---
     with start_observation(
         "response",
+        as_type="generation",
+        model="gpt-4o-mini",
         input={
             "intent_type": str(intent_decision.intent_type),
             "has_retrieved_context": retrieved_context is not None,
             "history_message_count": len(messages),
         },
     ) as observation:
-        ai_message = active_generator.generate(
-            normalized_input=normalized_input,
-            intent_decision=intent_decision,
-            retrieved_context=retrieved_context,
-            messages=messages,
-            conversation_summary=conversation_summary,
-        )
+        with get_openai_callback() as cb:
+            ai_message = active_generator.generate(
+                normalized_input=normalized_input,
+                intent_decision=intent_decision,
+                retrieved_context=retrieved_context,
+                messages=messages,
+                conversation_summary=conversation_summary,
+            )
+        output_data: dict[str, Any] = {
+            "response_chars": len(str(ai_message.content)),
+        }
+        if cb.total_tokens > 0:
+            output_data["token_usage"] = {
+                "input_tokens": cb.prompt_tokens,
+                "output_tokens": cb.completion_tokens,
+                "total_tokens": cb.total_tokens,
+            }
         observation.update(
-            output={"response_chars": len(str(ai_message.content))}
+            output=output_data,
+            usage_details={
+                "input": cb.prompt_tokens,
+                "output": cb.completion_tokens,
+                "total": cb.total_tokens,
+            },
         )
 
     logger.info(

@@ -53,6 +53,8 @@ def start_observation(
     output: Optional[dict[str, Any]] = None,
     metadata: Optional[dict[str, Any]] = None,
     model: Optional[str] = None,
+    usage_details: Optional[dict[str, int]] = None,
+    cost_details: Optional[dict[str, float]] = None,
 ) -> Iterator[Any]:
     """Start a Langfuse observation or yield a no-op observation.
 
@@ -77,6 +79,10 @@ def start_observation(
         kwargs["metadata"] = metadata
     if model is not None:
         kwargs["model"] = model
+    if usage_details is not None:
+        kwargs["usage_details"] = usage_details
+    if cost_details is not None:
+        kwargs["cost_details"] = cost_details
 
     try:
         manager = client.start_as_current_observation(**kwargs)

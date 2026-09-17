@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 import logging
 from typing import Any, Callable, Iterable, List, Optional, Union
 
+from langchain_community.callbacks import get_openai_callback
 from langchain_core.messages import BaseMessage, HumanMessage
 
 from app.contracts.intent_decision import IntentDecision
@@ -78,6 +79,9 @@ class GraphEvaluationOutput:
     clarification_round_count: int = 0
     thread_id: Optional[str] = None
 
+    # Token Usage & Cost Metrics
+    token_usage: dict[str, Any] = field(default_factory=dict)
+
     # Full Graph Raw State
     raw_state: dict[str, Any] = field(default_factory=dict)
 
@@ -105,6 +109,7 @@ class GraphEvaluationOutput:
             "clarification_round_count": self.clarification_round_count,
             "thread_id": self.thread_id,
             "conversation_summary": self.conversation_summary,
+            "token_usage": self.token_usage,
         }
 
 
@@ -171,20 +176,77 @@ class ConnectedGraphAdapter:
                     input_result=input_result,
                 )
 
-            # Stage 2 to 5: Execute connected graph
-            output_state = invoke_full_graph(
-                result=input_result,
-                classifier=self.classifier,
-                retriever=self.retriever,
-                context_builder=self.context_builder,
-                responder=self.responder,
-                clarification=self.clarification,
-                thread_id=thread_id,
-                memory_manager=self.memory_manager,
-                messages=messages,
-                conversation_summary=conversation_summary,
-                clarification_round_count=clarification_round_count,
-            )
+            # Stage-by-stage token trackers
+            stage_tokens = {
+                "intent": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": 0.0},
+                "retrieval": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": 0.0},
+                "response": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": 0.0},
+                "clarification": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": 0.0},
+            }
+
+            class TrackedClassifier:
+                def __init__(self, inner: Any) -> None:
+                    self.inner = inner
+
+                def classify(self, q: str, **kwargs: Any) -> Any:
+                    with get_openai_callback() as cb:
+                        res = self.inner.classify(q, **kwargs)
+                    stage_tokens["intent"]["input_tokens"] += cb.prompt_tokens
+                    stage_tokens["intent"]["output_tokens"] += cb.completion_tokens
+                    stage_tokens["intent"]["total_tokens"] += cb.total_tokens
+                    stage_tokens["intent"]["cost_usd"] += cb.total_cost
+                    return res
+
+            def tracked_retriever(state: State) -> dict[str, Any]:
+                with get_openai_callback() as cb:
+                    res = self.retriever(state)
+                stage_tokens["retrieval"]["input_tokens"] += cb.prompt_tokens
+                stage_tokens["retrieval"]["output_tokens"] += cb.completion_tokens
+                stage_tokens["retrieval"]["total_tokens"] += cb.total_tokens
+                stage_tokens["retrieval"]["cost_usd"] += cb.total_cost
+                return res
+
+            def tracked_responder(state: State) -> dict[str, Any]:
+                with get_openai_callback() as cb:
+                    res = self.responder(state)
+                stage_tokens["response"]["input_tokens"] += cb.prompt_tokens
+                stage_tokens["response"]["output_tokens"] += cb.completion_tokens
+                stage_tokens["response"]["total_tokens"] += cb.total_tokens
+                stage_tokens["response"]["cost_usd"] += cb.total_cost
+                return res
+
+            def tracked_clarification(state: State) -> dict[str, Any]:
+                with get_openai_callback() as cb:
+                    res = self.clarification(state)
+                stage_tokens["clarification"]["input_tokens"] += cb.prompt_tokens
+                stage_tokens["clarification"]["output_tokens"] += cb.completion_tokens
+                stage_tokens["clarification"]["total_tokens"] += cb.total_tokens
+                stage_tokens["clarification"]["cost_usd"] += cb.total_cost
+                return res
+
+            # Stage 2 to 5: Execute connected graph with callback tracking
+            with get_openai_callback() as pipeline_cb:
+                output_state = invoke_full_graph(
+                    result=input_result,
+                    classifier=TrackedClassifier(self.classifier),
+                    retriever=tracked_retriever,
+                    context_builder=self.context_builder,
+                    responder=tracked_responder,
+                    clarification=tracked_clarification,
+                    thread_id=thread_id,
+                    memory_manager=self.memory_manager,
+                    messages=messages,
+                    conversation_summary=conversation_summary,
+                    clarification_round_count=clarification_round_count,
+                )
+
+            token_metrics = {
+                "input_tokens": pipeline_cb.prompt_tokens,
+                "output_tokens": pipeline_cb.completion_tokens,
+                "total_tokens": pipeline_cb.total_tokens,
+                "cost_usd": pipeline_cb.total_cost,
+                "stages": stage_tokens,
+            }
 
             # Unpack intermediate states
             normalized_input = output_state.get("normalized_input")
@@ -263,6 +325,7 @@ class ConnectedGraphAdapter:
                 conversation_summary=output_state.get("conversation_summary"),
                 clarification_round_count=output_state.get("clarification_round_count", 0),
                 thread_id=output_state.get("thread_id"),
+                token_usage=token_metrics,
                 raw_state=dict(output_state),
             )
 

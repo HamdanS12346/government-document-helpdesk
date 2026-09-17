@@ -394,7 +394,7 @@ class FactualityHallucinationGuardrail:
         retrieved_context: Optional[RetrievedContext],
     ) -> HallucinationCheckResult:
         # If no context is available (general_chat path), skip verification
-        if retrieved_context is None or not retrieved_context.formatted_context:
+        if retrieved_context is None:
             return HallucinationCheckResult(
                 decision=ResponseGuardrailDecision.ALLOW,
                 cleaned_text=response_text,
@@ -403,7 +403,22 @@ class FactualityHallucinationGuardrail:
                 total_entities_found=0,
             )
 
-        context_text = retrieved_context.formatted_context.lower()
+        formatted_context = (
+            retrieved_context.get("formatted_context", "")
+            if isinstance(retrieved_context, dict)
+            else getattr(retrieved_context, "formatted_context", "")
+        ) or ""
+
+        if not formatted_context:
+            return HallucinationCheckResult(
+                decision=ResponseGuardrailDecision.ALLOW,
+                cleaned_text=response_text,
+                unsupported_entities=[],
+                supported_entities=[],
+                total_entities_found=0,
+            )
+
+        context_text = formatted_context.lower()
 
         extracted: list[str] = []
         for pat in FEE_PATTERNS:

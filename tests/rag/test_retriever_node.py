@@ -319,7 +319,7 @@ def test_retriever_pipeline_rewrites_from_combined_text_not_intent_query():
 
     result = pipeline.execute(state)
 
-    assert result == {"documents": []}
+    assert result["documents"] == []
     assert query_rewriter.user_query == combined_text
     assert query_rewriter.user_query != state["intent_decision"].query
     assert query_rewriter.messages == state["messages"]
