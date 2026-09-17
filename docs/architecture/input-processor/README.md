@@ -29,6 +29,7 @@ Implemented so far:
 - Text-only input.
 - PNG/JPEG/JPG image routing and OCR boundary.
 - PDF routing and PDF processor boundary.
+- Spreadsheet contract and centralized configuration foundation.
 - Sequential multi-attachment orchestration.
 - Partial-success and complete-failure behavior.
 - Safe structured attachment errors.
@@ -127,13 +128,14 @@ Messages are safe for display and must not contain stack traces, raw bytes, prov
 
 ## NormalizedInput
 
-The downstream contract is unchanged:
+The downstream contract now includes the spreadsheet extension, while existing text/image/PDF fields remain compatible:
 
 ```text
 NormalizedInput
 |-- user_query: str
 |-- image_content: list[ImageContent]
 |-- pdf_content: list[PDFContent]
+|-- spreadsheet_content: list[SpreadsheetContent]
 `-- combined_text: str
 ```
 
@@ -154,6 +156,44 @@ preview: str
 ```
 
 Only successful image/PDF results are added to `NormalizedInput`. Failed attachment errors do not appear inside `combined_text`.
+
+For current behavior, `spreadsheet_content` is `[]`. Spreadsheet validation and extraction are added in later milestone tasks.
+
+## Spreadsheet Foundation
+
+Spreadsheet processing is being added as an Input Processor modality. Task 2 records these foundation decisions:
+
+- Supported extension: `.xlsx`
+- Initial parser package: `openpyxl`
+- Requirements entry: `openpyxl>=3.1,<4`
+- Maximum visible worksheets: `5`
+- Maximum rows per worksheet: `50`
+- Maximum columns per worksheet: `50`
+- Maximum textual cell characters: `5,000`
+- Preview sample size: `5` rows
+
+These values are centralized in `app/config/settings.py` so tests and future processor code can inject controlled values through environment variables:
+
+```text
+SPREADSHEET_SUPPORTED_EXTENSION
+SPREADSHEET_PARSER_PACKAGE
+SPREADSHEET_MAX_VISIBLE_SHEETS
+SPREADSHEET_MAX_ROWS_PER_SHEET
+SPREADSHEET_MAX_COLUMNS_PER_SHEET
+SPREADSHEET_MAX_TEXT_CELL_CHARACTERS
+SPREADSHEET_PREVIEW_ROW_COUNT
+```
+
+Out of scope for the spreadsheet MVP:
+
+- `.xls`
+- `.xlsm`
+- protected or encrypted workbooks
+- macros and VBA
+- formula execution
+- long-term upload storage
+
+The future spreadsheet processor must treat uploaded workbooks as request-scoped untrusted content and must not leak parser objects, raw bytes, temporary paths, or unmasked PII into `NormalizedInput`.
 
 ## Combined Text Format
 

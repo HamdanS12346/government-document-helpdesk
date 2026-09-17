@@ -38,6 +38,40 @@ class Settings(BaseSettings):
         validation_alias="LANGFUSE_CAPTURE_TEXT",
     )
 
+    spreadsheet_supported_extension: str = Field(
+        default=".xlsx",
+        validation_alias="SPREADSHEET_SUPPORTED_EXTENSION",
+    )
+    spreadsheet_parser_package: str = Field(
+        default="openpyxl",
+        validation_alias="SPREADSHEET_PARSER_PACKAGE",
+    )
+    spreadsheet_max_visible_sheets: int = Field(
+        default=5,
+        ge=1,
+        validation_alias="SPREADSHEET_MAX_VISIBLE_SHEETS",
+    )
+    spreadsheet_max_rows_per_sheet: int = Field(
+        default=50,
+        ge=1,
+        validation_alias="SPREADSHEET_MAX_ROWS_PER_SHEET",
+    )
+    spreadsheet_max_columns_per_sheet: int = Field(
+        default=50,
+        ge=1,
+        validation_alias="SPREADSHEET_MAX_COLUMNS_PER_SHEET",
+    )
+    spreadsheet_max_text_cell_characters: int = Field(
+        default=5_000,
+        ge=1,
+        validation_alias="SPREADSHEET_MAX_TEXT_CELL_CHARACTERS",
+    )
+    spreadsheet_preview_row_count: int = Field(
+        default=5,
+        ge=0,
+        validation_alias="SPREADSHEET_PREVIEW_ROW_COUNT",
+    )
+
 
 @cache
 def get_settings() -> Settings:

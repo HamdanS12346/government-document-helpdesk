@@ -9,6 +9,7 @@ The user can provide:
 * Text query
 * One or more images
 * One or more PDFs
+* One or more spreadsheets, once `.xlsx` processing is implemented
 * A combination of the above
 
 The Input Processor is responsible for processing these inputs and producing a single `NormalizedInput` object.
@@ -23,10 +24,11 @@ Downstream nodes should not need to handle raw file types or modality-specific i
 
 ```text
 NormalizedInput
-├── user_query: str
-├── image_content: List[ImageContent]
-├── pdf_content: List[PDFContent]
-└── combined_text: str
+|-- user_query: str
+|-- image_content: List[ImageContent]
+|-- pdf_content: List[PDFContent]
+|-- spreadsheet_content: List[SpreadsheetContent]
+`-- combined_text: str
 ```
 
 ### `user_query`
@@ -37,14 +39,6 @@ user_query: str
 
 The text entered directly by the user.
 
-This represents the user's actual question or request.
-
-Example:
-
-```text
-"Can I use this document as proof of address?"
-```
-
 ---
 
 ### `image_content`
@@ -53,28 +47,14 @@ Example:
 image_content: List[ImageContent]
 ```
 
-A list containing the processed content of all images attached by the user.
-
-If no images are provided:
-
-```text
-image_content = []
-```
-
-Each image is represented by an `ImageContent` object.
-
-### `ImageContent`
+A list containing the processed content of all images attached by the user. If no images are provided, this is `[]`.
 
 ```text
 ImageContent
-├── image_name: str
-├── extracted_text: str
-└── preview: str
+|-- image_name: str
+|-- extracted_text: str
+`-- preview: str
 ```
-
-* `image_name`: Name of the uploaded image.
-* `extracted_text`: Text extracted/processed from the image.
-* `preview`: A limited representation of the extracted content used to give downstream classification a quick understanding of the attachment without passing the entire content.
 
 The preview is intended to be lightweight and should not be an LLM-generated summary.
 
@@ -86,30 +66,85 @@ The preview is intended to be lightweight and should not be an LLM-generated sum
 pdf_content: List[PDFContent]
 ```
 
-A list containing the processed content of all PDFs attached by the user.
-
-If no PDFs are provided:
-
-```text
-pdf_content = []
-```
-
-Each PDF is represented by a `PDFContent` object.
-
-### `PDFContent`
+A list containing the processed content of all PDFs attached by the user. If no PDFs are provided, this is `[]`.
 
 ```text
 PDFContent
-├── pdf_name: str
-├── extracted_text: str
-└── preview: str
+|-- pdf_name: str
+|-- extracted_text: str
+`-- preview: str
 ```
 
-* `pdf_name`: Name of the uploaded PDF.
-* `extracted_text`: Text extracted/processed from the PDF.
-* `preview`: A limited representation of the extracted content used to give downstream classification a quick understanding of the attachment without passing the entire content.
-
 The preview is intended to be lightweight and should not be an LLM-generated summary.
+
+---
+
+### `spreadsheet_content`
+
+```text
+spreadsheet_content: List[SpreadsheetContent]
+```
+
+A list containing the processed content of all supported spreadsheets attached by the user. If no spreadsheets are provided, or spreadsheet processing has not produced successful spreadsheet output, this is `[]`.
+
+Each spreadsheet is represented by a `SpreadsheetContent` object. The contract is provider-independent and serializable. It must not contain `openpyxl` objects, workbook objects, worksheet objects, cell objects, file handles, temporary paths, raw bytes, or unmasked PII.
+
+```text
+SpreadsheetContent
+|-- workbook_name: str
+|-- sheets: List[SpreadsheetSheet]
+|-- preview: str
+|-- warnings: List[str]
+`-- metadata: SpreadsheetMetadata
+```
+
+```text
+SpreadsheetSheet
+|-- name: str
+|-- position: int
+|-- max_row: int
+|-- max_column: int
+|-- is_empty: bool
+|-- cells: List[SpreadsheetCell]
+|-- merged_ranges: List[str]
+`-- tables: List[SpreadsheetTable]
+```
+
+```text
+SpreadsheetCell
+|-- coordinate: str
+|-- row: int
+|-- column: int
+|-- value: str | int | float | bool | null
+|-- value_type: str
+|-- formula: str | null
+|-- cached_value: str | int | float | bool | null
+`-- truncated: bool
+```
+
+```text
+SpreadsheetTable
+|-- name: str
+|-- reference: str
+`-- columns: List[str]
+```
+
+```text
+SpreadsheetMetadata
+|-- workbook_name: str
+|-- processed_sheet_count: int
+|-- total_visible_sheet_count: int
+|-- hidden_sheet_count: int
+|-- max_sheets: int
+|-- max_rows_per_sheet: int
+|-- max_columns_per_sheet: int
+|-- max_text_cell_characters: int
+`-- preview_row_count: int
+```
+
+Spreadsheet metadata records safe counts and the limits applied while processing. It must not include raw workbook bytes, parser objects, internal paths, or raw cell values.
+
+Formula cells keep formula text separate from cached/displayed values. Cached values must not be described as freshly calculated.
 
 ---
 
@@ -126,218 +161,42 @@ It can contain:
 * The user's query
 * Extracted image content
 * Extracted PDF content
+* A deterministic projection of successful spreadsheet content
 
-This provides a convenient textual representation for downstream components that need access to the normalized textual information together.
-
-`combined_text` should not replace the structured `image_content` and `pdf_content` fields. Those fields remain available when modality-specific information is required.
+`combined_text` should not replace the structured `image_content`, `pdf_content`, and `spreadsheet_content` fields. Those fields remain available when modality-specific information is required.
 
 ---
 
-# Examples
+## Examples
 
-## 1. Text Only
-
-User:
-
-```text
-"What documents are required for PAN application?"
-```
-
-Normalized input:
+### Text Only
 
 ```text
 NormalizedInput(
     user_query="What documents are required for PAN application?",
-
     image_content=[],
-
     pdf_content=[],
-
-    combined_text="""
-    User Query:
-    What documents are required for PAN application?
-    """
+    spreadsheet_content=[],
+    combined_text="<USER_QUERY>\nWhat documents are required for PAN application?"
 )
 ```
 
----
-
-## 2. User Query + One Image
-
-User:
-
-```text
-"Can I use this as proof of address?"
-```
-
-Attachment:
-
-```text
-address_certificate.jpg
-```
-
-Normalized input:
+### User Query + One Spreadsheet
 
 ```text
 NormalizedInput(
-    user_query="Can I use this as proof of address?",
-
-    image_content=[
-        ImageContent(
-            image_name="address_certificate.jpg",
-            extracted_text="Certificate of Residence\nName: Rahul Sharma\nAddress: ...",
-            preview="Certificate of Residence\nName: Rahul Sharma\nAddress: ..."
-        )
-    ],
-
-    pdf_content=[],
-
-    combined_text="""
-    User Query:
-    Can I use this as proof of address?
-
-    Attached Image:
-    address_certificate.jpg
-
-    Content:
-    Certificate of Residence
-    Name: Rahul Sharma
-    Address: ...
-    """
-)
-```
-
----
-
-## 3. User Query + Multiple Images
-
-User:
-
-```text
-"What are these documents?"
-```
-
-Attachments:
-
-```text
-image1.jpg
-image2.jpg
-image3.jpg
-```
-
-Normalized input:
-
-```text
-NormalizedInput(
-    user_query="What are these documents?",
-
-    image_content=[
-        ImageContent(
-            image_name="image1.jpg",
-            extracted_text="...",
-            preview="..."
-        ),
-        ImageContent(
-            image_name="image2.jpg",
-            extracted_text="...",
-            preview="..."
-        ),
-        ImageContent(
-            image_name="image3.jpg",
-            extracted_text="...",
-            preview="..."
-        )
-    ],
-
-    pdf_content=[],
-
-    combined_text="..."
-)
-```
-
-Each attachment is represented independently in the list.
-
----
-
-## 4. User Query + PDF
-
-User:
-
-```text
-"What is the procedure mentioned in this document?"
-```
-
-Attachment:
-
-```text
-pan_procedure.pdf
-```
-
-Normalized input:
-
-```text
-NormalizedInput(
-    user_query="What is the procedure mentioned in this document?",
-
+    user_query="Explain this workbook.",
     image_content=[],
-
-    pdf_content=[
-        PDFContent(
-            pdf_name="pan_procedure.pdf",
-            extracted_text="...",
-            preview="..."
+    pdf_content=[],
+    spreadsheet_content=[
+        SpreadsheetContent(
+            workbook_name="applications.xlsx",
+            sheets=[...],
+            preview="Workbook: applications.xlsx\nSheet: Applicants",
+            warnings=[],
+            metadata=SpreadsheetMetadata(...)
         )
     ],
-
-    combined_text="..."
-)
-```
-
----
-
-## 5. Mixed Input
-
-User:
-
-```text
-"Can these documents be used for the application?"
-```
-
-Attachments:
-
-```text
-identity_proof.jpg
-address_proof.jpg
-application_guidelines.pdf
-```
-
-Normalized input:
-
-```text
-NormalizedInput(
-    user_query="Can these documents be used for the application?",
-
-    image_content=[
-        ImageContent(
-            image_name="identity_proof.jpg",
-            extracted_text="...",
-            preview="..."
-        ),
-        ImageContent(
-            image_name="address_proof.jpg",
-            extracted_text="...",
-            preview="..."
-        )
-    ],
-
-    pdf_content=[
-        PDFContent(
-            pdf_name="application_guidelines.pdf",
-            extracted_text="...",
-            preview="..."
-        )
-    ],
-
     combined_text="..."
 )
 ```
@@ -352,12 +211,14 @@ The Input Processor handles:
 
 ```text
 Raw User Input
-      ↓
+      |
+      v
 Processing / Extraction
-      ↓
+      |
+      v
 NormalizedInput
 ```
 
-After this point, downstream nodes work with the normalized structure rather than dealing directly with raw text, images, or PDFs.
+After this point, downstream nodes work with the normalized structure rather than dealing directly with raw text, images, PDFs, or spreadsheets.
 
-The detailed implementation of text extraction, OCR, PDF parsing, preview generation, and other modality-specific processing belongs inside the Input Processor and its processors. The contract above defines only what the Input Processor exposes to the rest of the system.
+The detailed implementation of text extraction, OCR, PDF parsing, spreadsheet parsing, preview generation, and other modality-specific processing belongs inside the Input Processor and its processors. The contract above defines only what the Input Processor exposes to the rest of the system.

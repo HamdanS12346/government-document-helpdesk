@@ -107,6 +107,7 @@ def process_input(
             user_query=user_query,
             image_content=image_content,
             pdf_content=pdf_content,
+            spreadsheet_content=[],
             combined_text=_build_combined_text(
                 user_query=user_query,
                 image_content=image_content,
