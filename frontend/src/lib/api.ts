@@ -4,8 +4,17 @@
  * Content-Type: multipart/form-data
  */
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export function getApiBase(): string {
+  if (typeof window !== "undefined") {
+    const isLoopback =
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1";
+    if (!isLoopback || window.location.protocol === "https:") {
+      return "/api/py";
+    }
+  }
+  return process.env.NEXT_PUBLIC_API_URL || "/api/py";
+}
 
 export type AttachmentStatus = {
   filename?: string;
@@ -91,7 +100,8 @@ export async function postChat(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE}/chat`, {
+  const apiBase = getApiBase();
+  const response = await fetch(`${apiBase}/chat`, {
     method: "POST",
     headers,
     body: form,
@@ -106,7 +116,8 @@ export async function postChat(
  * Fetch past conversation threads for the authenticated user.
  */
 export async function fetchUserThreads(token: string): Promise<ThreadItem[]> {
-  const response = await fetch(`${API_BASE}/threads`, {
+  const apiBase = getApiBase();
+  const response = await fetch(`${apiBase}/threads`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -127,7 +138,8 @@ export async function fetchThreadMessages(
   threadId: string,
   token: string
 ): Promise<ThreadMessage[]> {
-  const response = await fetch(`${API_BASE}/threads/${threadId}/messages`, {
+  const apiBase = getApiBase();
+  const response = await fetch(`${apiBase}/threads/${threadId}/messages`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -148,7 +160,8 @@ export async function deleteUserThread(
   threadId: string,
   token: string
 ): Promise<boolean> {
-  const response = await fetch(`${API_BASE}/threads/${threadId}`, {
+  const apiBase = getApiBase();
+  const response = await fetch(`${apiBase}/threads/${threadId}`, {
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${token}`,
