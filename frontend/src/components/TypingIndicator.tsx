@@ -1,15 +1,46 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import styles from "./TypingIndicator.module.css";
 
+const STATUS_STAGES = [
+  "Analyzing request & documents...",
+  "Consulting official government databases...",
+  "Cross-checking eligibility & guidelines...",
+  "Verifying citations & formulating response...",
+];
+
 export default function TypingIndicator() {
+  const [stageIndex, setStageIndex] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setStageIndex((prev) => (prev + 1) % STATUS_STAGES.length);
+    }, 2400);
+    return () => clearInterval(interval);
+  }, []);
+
   return (
-    <div className={styles.wrapper} aria-label="Assistant is typing" role="status">
+    <div className={styles.wrapper} aria-label="Assistant is generating a response" role="status">
       <div className={styles.avatar} aria-hidden>
         <BotIcon />
+        <span className={styles.avatarPulse} />
       </div>
       <div className={styles.bubble}>
-        <span className={styles.dot} />
-        <span className={styles.dot} />
-        <span className={styles.dot} />
+        <div className={styles.header}>
+          <div className={styles.equalizer} aria-hidden>
+            <span className={styles.bar} />
+            <span className={styles.bar} />
+            <span className={styles.bar} />
+            <span className={styles.bar} />
+          </div>
+          <span className={styles.stageText} key={stageIndex}>
+            {STATUS_STAGES[stageIndex]}
+          </span>
+        </div>
+        <div className={styles.progressBar}>
+          <div className={styles.progressShimmer} />
+        </div>
       </div>
     </div>
   );
