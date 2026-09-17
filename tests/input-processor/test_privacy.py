@@ -23,7 +23,7 @@ from app.input_processing.pdf_processor import (
 from app.input_processing.processors import build_graph_state_update, process_input
 from app.input_processing.schemas import Attachment, InputModality, InputRequest, ValidatedAttachment
 from guardrails.input_processor import XLSX_MEDIA_TYPE
-from spreadsheet_fixture_helpers import make_minimal_xlsx_package_bytes
+from spreadsheet_fixture_helpers import make_minimal_xlsx_package_bytes, make_privacy_xlsx_bytes
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -472,4 +472,32 @@ def test_partial_success_with_failed_spreadsheet_keeps_graph_state_clean() -> No
     assert state_update["normalized_input"].spreadsheet_content == []
     assert str(raw_workbook) not in state_payload
     assert "Spreadsheet parser is not configured" not in state_payload
+    assert "attachment_statuses" not in state_payload
+
+
+def test_successful_spreadsheet_processing_keeps_graph_state_masked_and_serializable() -> None:
+    raw_workbook = make_privacy_xlsx_bytes()
+
+    result = process_input(
+        InputRequest(
+            attachments=[
+                Attachment(
+                    filename="privacy.xlsx",
+                    media_type=XLSX_MEDIA_TYPE,
+                    content=raw_workbook,
+                )
+            ],
+        )
+    )
+
+    state_update = build_graph_state_update(result)
+    state_payload = str(state_update["normalized_input"].model_dump(mode="json"))
+
+    assert result.success is True
+    assert state_update.keys() == {"normalized_input"}
+    assert "9762541380" not in state_payload
+    assert "[REDACTED]" in state_payload
+    assert str(raw_workbook) not in state_payload
+    assert "raw_workbook" not in state_payload
+    assert "openpyxl" not in state_payload
     assert "attachment_statuses" not in state_payload

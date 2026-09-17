@@ -8,6 +8,7 @@ from pypdf import PdfWriter
 from app.input_processing import pdf_processor
 from app.input_processing import processors
 from app.input_processing.errors import InputProcessingErrorCode
+from app.input_processing.excel_processor import SpreadsheetInspectionStatus
 from app.input_processing.image_processor import ImageProcessingResult
 from app.input_processing.ocr_provider import OCRResult, OCRStatus
 from app.input_processing.pdf_processor import (
@@ -28,6 +29,8 @@ from app.input_processing.schemas import (
     InputRequest,
     ValidatedAttachment,
 )
+from guardrails.input_processor import XLSX_MEDIA_TYPE
+from spreadsheet_fixture_helpers import make_openpyxl_xlsx_bytes
 
 
 def make_pdf_bytes(page_count: int = 1) -> bytes:
@@ -100,6 +103,17 @@ class MalformedPDFPageImageExtractor:
 class RaisingPDFReader:
     def __init__(self, stream: object) -> None:
         raise RuntimeError("parser internals should not leak")
+
+
+class FailingSpreadsheetParser:
+    def __init__(self, status: SpreadsheetInspectionStatus, message: str) -> None:
+        self.status = status
+        self.message = message
+
+    def inspect(self, content: bytes, filename: str):
+        from app.input_processing.excel_processor import SpreadsheetInspectionResult
+
+        return SpreadsheetInspectionResult(status=self.status, message=self.message)
 
 
 def test_mock_provider_text_pdf_extraction_succeeds_without_ocr(
@@ -590,6 +604,62 @@ def test_public_processor_handles_invalid_corrupt_and_unreadable_files(
     assert result.attachment_statuses[0].error is not None
     assert result.attachment_statuses[0].error.code == expected_code
     assert "not a" not in result.attachment_statuses[0].error.message
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_code"),
+    [
+        (
+            SpreadsheetInspectionStatus.UNAVAILABLE,
+            InputProcessingErrorCode.EXTRACTION_FAILURE,
+        ),
+        (
+            SpreadsheetInspectionStatus.MALFORMED_RESPONSE,
+            InputProcessingErrorCode.UNREADABLE_CONTENT,
+        ),
+        (
+            SpreadsheetInspectionStatus.CORRUPT_WORKBOOK,
+            InputProcessingErrorCode.UNREADABLE_CONTENT,
+        ),
+        (
+            SpreadsheetInspectionStatus.PII_PROCESSING_FAILURE,
+            InputProcessingErrorCode.PII_PROCESSING_FAILURE,
+        ),
+    ],
+)
+def test_public_processor_handles_spreadsheet_failures_as_safe_partial_success(
+    status: SpreadsheetInspectionStatus,
+    expected_code: InputProcessingErrorCode,
+) -> None:
+    result = processors.process_input(
+        InputRequest(
+            user_query="Text survives failed workbook.",
+            attachments=[
+                Attachment(
+                    filename="applications.xlsx",
+                    media_type=XLSX_MEDIA_TYPE,
+                    content=make_openpyxl_xlsx_bytes(),
+                )
+            ],
+        ),
+        spreadsheet_parser=FailingSpreadsheetParser(
+            status,
+            "Spreadsheet content could not be processed safely.",
+        ),
+    )
+
+    assert result.success is True
+    assert result.normalized_input is not None
+    assert result.normalized_input.spreadsheet_content == []
+    assert result.normalized_input.combined_text == (
+        "<USER_QUERY>\nText survives failed workbook."
+    )
+    assert result.attachment_statuses[0].error is not None
+    assert result.attachment_statuses[0].error.code == expected_code
+    assert "applications.xlsx" not in result.normalized_input.combined_text
+    assert "Spreadsheet content could not be processed safely." not in (
+        result.normalized_input.combined_text
+    )
 
 
 def make_attachment_pdf() -> Attachment:

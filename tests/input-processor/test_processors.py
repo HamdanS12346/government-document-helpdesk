@@ -21,7 +21,10 @@ from app.input_processing.pdf_processor import (
 from app.input_processing.processors import process_input
 from app.input_processing.schemas import Attachment, InputRequest
 from guardrails.input_processor import XLSX_MEDIA_TYPE
-from spreadsheet_fixture_helpers import make_minimal_xlsx_package_bytes
+from spreadsheet_fixture_helpers import (
+    make_minimal_xlsx_package_bytes,
+    make_openpyxl_xlsx_bytes,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -84,7 +87,7 @@ def make_xlsx_attachment(filename: str = "sample.xlsx") -> Attachment:
     return Attachment(
         filename=filename,
         media_type=XLSX_MEDIA_TYPE,
-        content=make_minimal_xlsx_package_bytes(),
+        content=make_openpyxl_xlsx_bytes(),
     )
 
 
@@ -93,6 +96,7 @@ def expected_combined_text(
     user_query: str | None = None,
     image_texts: list[str] | None = None,
     pdf_texts: list[str] | None = None,
+    spreadsheet_texts: list[str] | None = None,
 ) -> str:
     parts = []
     if user_query and user_query.strip():
@@ -103,7 +107,20 @@ def expected_combined_text(
     if pdf_texts:
         pdf_text = "\n\n".join(pdf_texts)
         parts.append(f"<PDF_CONTENT>\n{pdf_text}")
+    if spreadsheet_texts:
+        spreadsheet_text = "\n\n".join(spreadsheet_texts)
+        parts.append(f"<SPREADSHEET_CONTENT>\n{spreadsheet_text}")
     return "\n\n".join(parts)
+
+
+def expected_default_spreadsheet_text(workbook_name: str = "sample.xlsx") -> str:
+    return (
+        f"Workbook: {workbook_name}\n\n"
+        "Sheet 1: Applicants\n"
+        "Dimensions: 2 rows x 2 columns\n"
+        "Row 1: A1=Name | B1=Status\n"
+        "Row 2: A2=Fictional Applicant | B2=Submitted"
+    )
 
 
 def test_process_input_rejects_empty_request_safely() -> None:
@@ -263,17 +280,43 @@ def test_process_input_routes_png_jpeg_and_pdf_to_matching_processors(
     ]
 
 
-def test_process_input_returns_controlled_failure_for_valid_xlsx_until_processor_exists() -> None:
+def test_process_input_normalizes_valid_xlsx_with_preview_and_combined_text() -> None:
     result = process_input(InputRequest(attachments=[make_xlsx_attachment()]))
 
-    assert result.success is False
-    assert result.normalized_input is None
+    assert result.success is True
+    assert result.normalized_input is not None
     assert len(result.attachment_statuses) == 1
     status = result.attachment_statuses[0]
-    assert status.status == "failed"
-    assert status.error is not None
-    assert status.error.code == InputProcessingErrorCode.EXTRACTION_FAILURE
-    assert status.error.message == "Spreadsheet parser is not configured."
+    assert status.status == "success"
+    assert status.error is None
+    assert len(result.normalized_input.spreadsheet_content) == 1
+    spreadsheet = result.normalized_input.spreadsheet_content[0]
+    assert spreadsheet.workbook_name == "sample.xlsx"
+    assert spreadsheet.preview.startswith("Workbook: sample.xlsx\nSheets:")
+    assert "Sheet: Applicants" in spreadsheet.preview
+    assert "<SPREADSHEET_CONTENT>\nWorkbook: sample.xlsx" in (
+        result.normalized_input.combined_text
+    )
+    assert "Row 2: A2=Fictional Applicant | B2=Submitted" in (
+        result.normalized_input.combined_text
+    )
+
+
+def test_process_input_returns_text_partial_success_for_valid_xlsx_parser_inspection() -> None:
+    result = process_input(
+        InputRequest(
+            user_query="Summarize this workbook.",
+            attachments=[make_xlsx_attachment()],
+        )
+    )
+
+    assert result.success is True
+    assert result.normalized_input is not None
+    assert len(result.normalized_input.spreadsheet_content) == 1
+    assert result.attachment_statuses[0].status == "success"
+    assert result.normalized_input.combined_text.startswith(
+        "<USER_QUERY>\nSummarize this workbook.\n\n<SPREADSHEET_CONTENT>"
+    )
 
 
 def test_process_input_validates_xlsx_before_parser_inspection() -> None:
@@ -1082,6 +1125,7 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
         "expected_combined_text",
         "expected_image_names",
         "expected_pdf_names",
+        "expected_spreadsheet_names",
         "expected_statuses",
     ),
     [
@@ -1091,6 +1135,7 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             [],
             True,
             expected_combined_text(user_query="text only"),
+            [],
             [],
             [],
             [],
@@ -1106,6 +1151,7 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             ),
             ["image.png"],
             [],
+            [],
             ["success"],
         ),
         (
@@ -1119,6 +1165,7 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             ),
             [],
             ["document.pdf"],
+            [],
             ["success"],
         ),
         (
@@ -1133,6 +1180,7 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             ),
             ["image.png"],
             ["document.pdf"],
+            [],
             ["success", "success"],
         ),
         (
@@ -1146,6 +1194,7 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             ),
             ["image.png"],
             ["document.pdf"],
+            [],
             ["success", "success"],
         ),
         (
@@ -1155,6 +1204,7 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             True,
             expected_combined_text(image_texts=["image.png text"]),
             ["image.png"],
+            [],
             [],
             ["success"],
         ),
@@ -1166,6 +1216,7 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             expected_combined_text(pdf_texts=["document.pdf text"]),
             [],
             ["document.pdf"],
+            [],
             ["success"],
         ),
         (
@@ -1186,6 +1237,7 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             ),
             [],
             ["document.pdf"],
+            [],
             ["failed", "success"],
         ),
         (
@@ -1205,6 +1257,7 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             ],
             True,
             expected_combined_text(user_query="text plus failed files"),
+            [],
             [],
             [],
             ["failed", "failed"],
@@ -1228,6 +1281,144 @@ def install_successful_attachment_processors(monkeypatch: pytest.MonkeyPatch) ->
             None,
             [],
             [],
+            [],
+            ["failed", "failed"],
+        ),
+        (
+            "MIX-011",
+            None,
+            [make_xlsx_attachment("sheet.xlsx")],
+            True,
+            expected_combined_text(
+                spreadsheet_texts=[expected_default_spreadsheet_text("sheet.xlsx")]
+            ),
+            [],
+            [],
+            ["sheet.xlsx"],
+            ["success"],
+        ),
+        (
+            "MIX-012",
+            "text plus spreadsheet",
+            [make_xlsx_attachment("sheet.xlsx")],
+            True,
+            expected_combined_text(
+                user_query="text plus spreadsheet",
+                spreadsheet_texts=[expected_default_spreadsheet_text("sheet.xlsx")],
+            ),
+            [],
+            [],
+            ["sheet.xlsx"],
+            ["success"],
+        ),
+        (
+            "MIX-013",
+            "image plus spreadsheet",
+            [make_png_attachment("image.png"), make_xlsx_attachment("sheet.xlsx")],
+            True,
+            expected_combined_text(
+                user_query="image plus spreadsheet",
+                image_texts=["image.png text"],
+                spreadsheet_texts=[expected_default_spreadsheet_text("sheet.xlsx")],
+            ),
+            ["image.png"],
+            [],
+            ["sheet.xlsx"],
+            ["success", "success"],
+        ),
+        (
+            "MIX-014",
+            "pdf plus spreadsheet",
+            [make_pdf_attachment("document.pdf"), make_xlsx_attachment("sheet.xlsx")],
+            True,
+            expected_combined_text(
+                user_query="pdf plus spreadsheet",
+                pdf_texts=["document.pdf text"],
+                spreadsheet_texts=[expected_default_spreadsheet_text("sheet.xlsx")],
+            ),
+            [],
+            ["document.pdf"],
+            ["sheet.xlsx"],
+            ["success", "success"],
+        ),
+        (
+            "MIX-015",
+            "all modalities",
+            [
+                make_png_attachment("image.png"),
+                make_pdf_attachment("document.pdf"),
+                make_xlsx_attachment("sheet.xlsx"),
+            ],
+            True,
+            expected_combined_text(
+                user_query="all modalities",
+                image_texts=["image.png text"],
+                pdf_texts=["document.pdf text"],
+                spreadsheet_texts=[expected_default_spreadsheet_text("sheet.xlsx")],
+            ),
+            ["image.png"],
+            ["document.pdf"],
+            ["sheet.xlsx"],
+            ["success", "success", "success"],
+        ),
+        (
+            "MIX-016",
+            "spreadsheet failure with image success",
+            [
+                make_png_attachment("image.png"),
+                Attachment(
+                    filename="broken.xlsx",
+                    media_type=XLSX_MEDIA_TYPE,
+                    content=make_minimal_xlsx_package_bytes(),
+                ),
+            ],
+            True,
+            expected_combined_text(
+                user_query="spreadsheet failure with image success",
+                image_texts=["image.png text"],
+            ),
+            ["image.png"],
+            [],
+            [],
+            ["success", "failed"],
+        ),
+        (
+            "MIX-017",
+            None,
+            [
+                Attachment(
+                    filename="broken.xlsx",
+                    media_type=XLSX_MEDIA_TYPE,
+                    content=make_minimal_xlsx_package_bytes(),
+                )
+            ],
+            False,
+            None,
+            [],
+            [],
+            [],
+            ["failed"],
+        ),
+        (
+            "MIX-018",
+            None,
+            [
+                Attachment(
+                    filename="bad.png",
+                    media_type="image/png",
+                    content=b"not a png",
+                ),
+                Attachment(
+                    filename="broken.xlsx",
+                    media_type=XLSX_MEDIA_TYPE,
+                    content=make_minimal_xlsx_package_bytes(),
+                ),
+            ],
+            False,
+            None,
+            [],
+            [],
+            [],
             ["failed", "failed"],
         ),
     ],
@@ -1240,6 +1431,7 @@ def test_full_mixed_input_matrix(
     expected_combined_text: str | None,
     expected_image_names: list[str],
     expected_pdf_names: list[str],
+    expected_spreadsheet_names: list[str],
     expected_statuses: list[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1262,5 +1454,9 @@ def test_full_mixed_input_matrix(
         assert [
             content.pdf_name for content in result.normalized_input.pdf_content
         ] == expected_pdf_names
+        assert [
+            content.workbook_name
+            for content in result.normalized_input.spreadsheet_content
+        ] == expected_spreadsheet_names
     else:
         assert result.normalized_input is None
