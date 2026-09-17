@@ -2,8 +2,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import styles from "./MessageBubble.module.css";
 import FileChip from "./FileChip";
-import type { AttachmentSummary, ChatMessage } from "@/hooks/useChat";
-import type { AttachmentStatus } from "@/lib/api";
+import type { ChatMessage } from "@/hooks/useChat";
+import type { AttachmentStatus, AttachmentSummary } from "@/lib/api";
+import { attachmentStatusLabel, safeStatusText } from "@/lib/attachmentUi";
 
 type Props = {
   message: ChatMessage;
@@ -13,19 +14,6 @@ function formatTime(date: Date): string {
   return date.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 }
 
-function safeStatusText(text: string | undefined, fallback: string): string {
-  if (!text) return fallback;
-  const unsafe = ["Traceback", 'File "', "site-packages", "RuntimeError", "Exception"];
-  return unsafe.some((marker) => text.includes(marker)) ? fallback : text;
-}
-
-function statusLabel(status: AttachmentStatus["status"]): string {
-  if (status === "success") return "Processed";
-  if (status === "failed") return "Issue";
-  if (status === "skipped") return "Skipped";
-  return "Checked";
-}
-
 function AttachmentStatusList({ statuses }: { statuses: AttachmentStatus[] }) {
   if (statuses.length === 0) return null;
 
@@ -33,7 +21,7 @@ function AttachmentStatusList({ statuses }: { statuses: AttachmentStatus[] }) {
     <div className={styles.statusList} aria-label="Attachment processing results">
       {statuses.map((status, index) => {
         const filename = status.filename || "Attachment";
-        const label = statusLabel(status.status);
+        const label = attachmentStatusLabel(status.status);
         const detail =
           status.status === "failed"
             ? safeStatusText(status.error?.message, "This attachment could not be processed safely.")

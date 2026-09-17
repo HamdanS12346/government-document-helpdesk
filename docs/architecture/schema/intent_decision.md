@@ -11,6 +11,7 @@ The Intent Classifier receives a classification query constructed from:
 * The user's original query
 * A preview of each attached image, if present
 * A preview of each attached PDF, if present
+* A bounded preview of each attached spreadsheet workbook, if present
 
 The classifier does not need to process the full attachment content at this stage. The previews provide enough context to help determine the user's intent.
 
@@ -38,6 +39,7 @@ It contains:
 1. The user's original query from `NormalizedInput.user_query`
 2. The preview of each attached image
 3. The preview of each attached PDF
+4. The bounded preview of each attached spreadsheet workbook
 
 If there are no attachments, the query is simply the user's original query.
 
@@ -224,6 +226,32 @@ IntentDecision(
     query="...",
     intent_type="document_info",
     confidence_score=0.94
+)
+```
+
+## 5. Document Information with Spreadsheet Attachment
+
+User:
+
+```text
+"What does this uploaded fee schedule say?"
+```
+
+Attachment:
+
+```text
+fee_schedule.xlsx
+```
+
+The classifier receives the user's query plus the workbook name and bounded deterministic spreadsheet preview. It does not receive raw workbook bytes, parser objects, full structured workbook data, or `combined_text`.
+
+The resulting decision could be:
+
+```text
+IntentDecision(
+    query="...",
+    intent_type="document_info",
+    confidence_score=0.92
 )
 ```
 

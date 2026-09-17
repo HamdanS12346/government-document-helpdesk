@@ -34,6 +34,21 @@ class ChatIntentSummary(BaseModel):
     confidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
+class ChatAttachmentSummary(BaseModel):
+    """Safe, public counts for uploaded attachment outcomes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total: int = Field(default=0, ge=0)
+    images: int = Field(default=0, ge=0)
+    pdfs: int = Field(default=0, ge=0)
+    spreadsheets: int = Field(default=0, ge=0)
+    other: int = Field(default=0, ge=0)
+    succeeded: int = Field(default=0, ge=0)
+    failed: int = Field(default=0, ge=0)
+    skipped: int = Field(default=0, ge=0)
+
+
 class ChatResponse(BaseModel):
     """Stable response shape for the /chat endpoint."""
 
@@ -44,6 +59,9 @@ class ChatResponse(BaseModel):
     message: str
     assistant_message: ChatMessage | None = None
     attachment_statuses: list[Any] = Field(default_factory=list)
+    attachment_summary: ChatAttachmentSummary = Field(
+        default_factory=ChatAttachmentSummary
+    )
     warnings: list[Any] = Field(default_factory=list)
     normalized_input: Any | None = None
     intent: ChatIntentSummary | None = None
@@ -51,6 +69,7 @@ class ChatResponse(BaseModel):
 
 
 __all__ = [
+    "ChatAttachmentSummary",
     "ChatIntentSummary",
     "ChatMessage",
     "ChatResponse",

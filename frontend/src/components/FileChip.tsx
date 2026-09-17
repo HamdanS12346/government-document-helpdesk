@@ -1,22 +1,13 @@
 import styles from "./FileChip.module.css";
+import { getAttachmentKind, type AttachmentKind } from "@/lib/attachmentUi";
 
 type Props = {
   name: string;
   onRemove?: () => void;
 };
 
-type FileKind = "spreadsheet" | "pdf" | "image" | "file";
-
-function getFileKind(name: string): FileKind {
-  const lower = name.toLowerCase();
-  if (lower.endsWith(".xlsx")) return "spreadsheet";
-  if (lower.endsWith(".pdf")) return "pdf";
-  if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image";
-  return "file";
-}
-
 export default function FileChip({ name, onRemove }: Props) {
-  const kind = getFileKind(name);
+  const kind = getAttachmentKind(name);
 
   return (
     <div className={`${styles.chip} ${styles[kind]}`}>
@@ -34,7 +25,7 @@ export default function FileChip({ name, onRemove }: Props) {
   );
 }
 
-function FileKindIcon({ kind }: { kind: FileKind }) {
+function FileKindIcon({ kind }: { kind: AttachmentKind }) {
   if (kind === "spreadsheet") {
     return (
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

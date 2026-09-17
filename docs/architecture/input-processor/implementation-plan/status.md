@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Milestone 1 is complete, and Milestone 2 tasks 1 through 12 are now implemented. The project has Excel/spreadsheet support wired from frontend upload through the backend Input Processor, graph handoff, and response-generation path. It includes bounded worksheet extraction, spreadsheet structure preservation, cell-level privacy/prompt-boundary handling, deterministic preview generation, `combined_text` projection, mixed-modality orchestration coverage, expanded extraction/privacy/failure tests, baseline spreadsheet performance measurements, a manual root runner for validating the real fixture workbook, frontend upload affordances that present `.xlsx` alongside PDF, PNG, and JPEG, normalized attachment status display for all supported upload modalities, and frontend-safe attachment summaries derived from public response fields only.
+Milestone 1 is complete, and Milestone 2 tasks 1 through 16 are now implemented. The project has Excel/spreadsheet support wired from frontend upload through the backend Input Processor, graph handoff, and response-generation path. It includes bounded worksheet extraction, spreadsheet structure preservation, cell-level privacy/prompt-boundary handling, deterministic preview generation, `combined_text` projection, mixed-modality orchestration coverage, expanded extraction/privacy/failure tests, baseline spreadsheet performance measurements, a manual root runner for validating the real fixture workbook, frontend upload affordances that present `.xlsx` alongside PDF, PNG, and JPEG, normalized attachment status display for all supported upload modalities, frontend-safe attachment summaries derived from public response fields only, bounded spreadsheet preview context in intent classification queries, a typed public `/chat` attachment summary for frontend consumption, safe observability metadata for spreadsheet counts and limits, and focused frontend regression coverage for spreadsheet upload UX helper behavior.
 
 Current `.xlsx` behavior:
 
@@ -21,6 +21,10 @@ Current `.xlsx` behavior:
 - The frontend composer hint/attach tooltip list `.xlsx`, and file chips distinguish spreadsheet, PDF, image, and generic file attachments by filename extension only.
 - The chat UI renders backend `attachment_statuses` for assistant messages with filename, safe status labels, and sanitized failed-attachment details while preserving partial-success assistant responses.
 - The chat UI derives modality/status counts from `attachment_statuses` only and does not render `NormalizedInput`, `combined_text`, spreadsheet previews, extracted cells, or PII-bearing workbook content in the transcript.
+- Intent classification receives workbook names and bounded spreadsheet previews from `normalized_input.spreadsheet_content`, alongside image and PDF previews, without receiving raw workbook bytes, full structured spreadsheet dumps, or `combined_text`.
+- The `/chat` response includes `attachment_summary` with safe counts by modality and processing outcome, so frontend rendering does not need to inspect `normalized_input`.
+- Observability metadata includes spreadsheet upload/content counts, preview lengths, visible/processed/hidden sheet counts, and warning counts without adding spreadsheet preview text, cell values, raw workbook bytes, parser details, or internal paths.
+- Frontend upload/status helper tests cover `.xlsx` acceptance copy, extension-aware attachment kinds, status labels, safe failed-status text, all-failed supported-type copy, spreadsheet-only summaries, mixed partial-success summaries, all-failed/skipped summaries, and empty response summaries.
 - The response generator treats spreadsheet content as attachment context, so the final LLM prompt can see the user's query plus workbook preview/projection instead of only the typed text.
 - `test.py` at the repository root runs the real `tests/input-processor/fixtures/spreadsheets/aadhar_update.xlsx` fixture through `process_input()` and prints the resulting `NormalizedInput`.
 
@@ -366,6 +370,74 @@ Lint failed on the same pre-existing frontend issues outside the Task 12 change:
 - frontend/src/hooks/useChat.ts unused ChatApiResponse warning
 
 Frontend content scan found no transcript/UI rendering of normalized input, combined text, spreadsheet content, previews, extracted content, or cells. The only match was the opaque normalized_input field in frontend/src/lib/api.ts.
+```
+
+Task 13 intent spreadsheet preview checks:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\test_intent_classifier.py tests\test_input_intent_graph.py -q
+```
+
+Result:
+
+```text
+16 passed, 1 warning
+```
+
+Task 14 typed `/chat` response checks:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\api\test_chat.py -q
+npm.cmd run lint
+npm.cmd run build
+```
+
+Result:
+
+```text
+41 passed, 2 warnings
+
+Frontend lint still failed on pre-existing issues outside the Task 14 changes:
+- frontend/src/components/Sidebar.tsx react-hooks/set-state-in-effect
+- frontend/src/components/RightPanel.tsx unused useState warning
+
+Frontend build failed while fetching the Google Fonts Inter resource from fonts.googleapis.com through next/font. The build reached production compilation before the network/proxy font fetch failure.
+```
+
+Task 15 safe spreadsheet observability checks:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\observability\test_langfuse.py -q
+.\.venv\Scripts\python.exe -m pytest tests\api\test_chat.py -q
+```
+
+Result:
+
+```text
+19 passed
+41 passed, 2 warnings
+```
+
+Task 16 frontend regression checks:
+
+```powershell
+npm.cmd run test
+npm.cmd exec tsc -- --noEmit
+npm.cmd run lint
+npm.cmd run build
+```
+
+Result:
+
+```text
+9 frontend tests passed. Node emitted a MODULE_TYPELESS_PACKAGE_JSON warning for the TypeScript test file, but the test run succeeded.
+TypeScript check passed.
+
+Frontend lint still failed on pre-existing issues outside the Task 16 changes:
+- frontend/src/components/Sidebar.tsx react-hooks/set-state-in-effect
+- frontend/src/components/RightPanel.tsx unused useState warning
+
+Frontend build still failed while fetching the Google Fonts Inter resource from fonts.googleapis.com through next/font.
 ```
 
 Focused backend integration checks:

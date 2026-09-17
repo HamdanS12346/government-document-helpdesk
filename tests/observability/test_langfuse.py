@@ -4,13 +4,27 @@ import pytest
 
 from app.config import Settings, get_settings
 from app.contracts.intent_decision import IntentDecision, IntentType
-from app.contracts.normalized_input import NormalizedInput
+from app.contracts.normalized_input import (
+    NormalizedInput,
+    SpreadsheetContent,
+    SpreadsheetMetadata,
+    SpreadsheetSheet,
+)
+from app.input_processing.schemas import (
+    Attachment,
+    AttachmentProcessingStatus,
+    InputProcessingResult,
+    InputRequest,
+)
 from app.contracts.response import RetrievedContext
 from app.observability.metadata import (
     TEXT_PREVIEW_MAX_CHARS,
     build_chat_graph_response_metadata,
+    build_chat_request_metadata,
     build_clarification_input_metadata,
     build_clarification_output_metadata,
+    build_input_processing_result_metadata,
+    build_input_request_metadata,
     build_normalized_input_metadata,
     build_retrieved_context_metadata,
 )
@@ -26,6 +40,44 @@ from app.observability.langfuse import (
 def teardown_function() -> None:
     get_settings.cache_clear()
     get_langfuse_client.cache_clear()
+
+
+SPREADSHEET_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+
+def _spreadsheet_content() -> SpreadsheetContent:
+    return SpreadsheetContent(
+        workbook_name="benefits.xlsx",
+        sheets=[
+            SpreadsheetSheet(
+                name="Applicants",
+                position=1,
+                max_row=2,
+                max_column=2,
+                is_empty=False,
+            )
+        ],
+        preview="Workbook: benefits.xlsx\nSheet: Applicants\nRow 1: PAN ABCDE1234F",
+        warnings=["Hidden spreadsheet content was excluded."],
+        metadata=SpreadsheetMetadata(
+            workbook_name="benefits.xlsx",
+            processed_sheet_count=1,
+            total_visible_sheet_count=2,
+            hidden_sheet_count=1,
+            max_sheets=5,
+            max_rows_per_sheet=50,
+            max_columns_per_sheet=50,
+            max_text_cell_characters=5000,
+            preview_row_count=5,
+        ),
+    )
+
+
+class FakeUploadFile:
+    def __init__(self, content_type: str) -> None:
+        self.content_type = content_type
 
 
 def test_langfuse_settings_support_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -120,6 +172,123 @@ def test_start_observation_uses_langfuse_client(
         {"output": {"status": "success"}}
     ]
     assert fake_client.manager.exited is True
+
+
+def test_chat_request_metadata_counts_spreadsheet_uploads() -> None:
+    metadata = build_chat_request_metadata(
+        "Review the attachments",
+        [
+            FakeUploadFile("image/png"),
+            FakeUploadFile("application/pdf"),
+            FakeUploadFile(SPREADSHEET_MEDIA_TYPE),
+        ],
+    )
+
+    assert metadata["attachment_count"] == 3
+    assert metadata["image_count"] == 1
+    assert metadata["pdf_count"] == 1
+    assert metadata["spreadsheet_count"] == 1
+    assert metadata["attachment_media_types"] == [
+        "image/png",
+        "application/pdf",
+        SPREADSHEET_MEDIA_TYPE,
+    ]
+
+
+def test_input_request_metadata_counts_spreadsheet_uploads() -> None:
+    metadata = build_input_request_metadata(
+        InputRequest(
+            user_query="Review this workbook",
+            attachments=[
+                Attachment(
+                    filename="benefits.xlsx",
+                    media_type=SPREADSHEET_MEDIA_TYPE,
+                    content=b"raw workbook bytes",
+                )
+            ],
+        )
+    )
+
+    assert metadata["attachment_count"] == 1
+    assert metadata["image_count"] == 0
+    assert metadata["pdf_count"] == 0
+    assert metadata["spreadsheet_count"] == 1
+    assert "raw workbook bytes" not in str(metadata)
+    assert "benefits.xlsx" not in str(metadata)
+
+
+def test_input_processing_result_metadata_reports_spreadsheet_counts_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGFUSE_CAPTURE_TEXT", "false")
+    get_settings.cache_clear()
+    spreadsheet = _spreadsheet_content()
+
+    metadata = build_input_processing_result_metadata(
+        InputProcessingResult(
+            success=True,
+            normalized_input=NormalizedInput(
+                user_query="Review this workbook",
+                image_content=[],
+                pdf_content=[],
+                spreadsheet_content=[spreadsheet],
+                combined_text="<SPREADSHEET_CONTENT>\nPAN ABCDE1234F",
+            ),
+            attachment_statuses=[
+                AttachmentProcessingStatus(
+                    filename="benefits.xlsx",
+                    status="success",
+                )
+            ],
+        )
+    )
+
+    assert metadata["spreadsheet_content_count"] == 1
+    assert metadata["spreadsheet_preview_lengths"] == [len(spreadsheet.preview)]
+    assert metadata["spreadsheet_processed_sheet_counts"] == [1]
+    assert metadata["spreadsheet_visible_sheet_counts"] == [2]
+    assert metadata["spreadsheet_hidden_sheet_counts"] == [1]
+    assert metadata["spreadsheet_warning_counts"] == [1]
+    assert metadata["attachment_statuses"] == [
+        {
+            "filename": "benefits.xlsx",
+            "status": "success",
+            "error_code": None,
+            "warning_count": 0,
+        }
+    ]
+    assert "ABCDE1234F" not in str(metadata)
+    assert "Applicants" not in str(metadata)
+
+
+def test_normalized_input_metadata_reports_spreadsheet_counts_without_preview_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGFUSE_CAPTURE_TEXT", "true")
+    get_settings.cache_clear()
+    spreadsheet = _spreadsheet_content()
+
+    metadata = build_normalized_input_metadata(
+        NormalizedInput(
+            user_query="PAN ABCDE1234F",
+            image_content=[],
+            pdf_content=[],
+            spreadsheet_content=[spreadsheet],
+            combined_text="<USER_QUERY>\nPAN ABCDE1234F",
+        )
+    )
+
+    assert metadata["spreadsheet_content_count"] == 1
+    assert metadata["spreadsheet_preview_lengths"] == [len(spreadsheet.preview)]
+    assert metadata["spreadsheet_processed_sheet_counts"] == [1]
+    assert metadata["spreadsheet_visible_sheet_counts"] == [2]
+    assert metadata["spreadsheet_hidden_sheet_counts"] == [1]
+    assert metadata["spreadsheet_warning_counts"] == [1]
+    assert metadata["normalized_user_query_preview"] == "PAN [REDACTED]"
+    assert metadata["combined_text_preview"] == "<USER_QUERY>\nPAN [REDACTED]"
+    assert "spreadsheet_previews" not in metadata
+    assert "ABCDE1234F" not in str(metadata)
+    assert "Applicants" not in str(metadata)
 
 
 def test_flush_langfuse_uses_client_flush(monkeypatch: pytest.MonkeyPatch) -> None:

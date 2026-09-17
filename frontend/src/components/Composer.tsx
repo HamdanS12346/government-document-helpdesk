@@ -3,6 +3,11 @@
 import { useRef, useState, type KeyboardEvent } from "react";
 import styles from "./Composer.module.css";
 import FileChip from "./FileChip";
+import {
+  ACCEPTED_UPLOAD_HINT,
+  ACCEPTED_UPLOAD_TYPES,
+  ATTACH_TOOLTIP,
+} from "@/lib/attachmentUi";
 
 type Props = {
   onSend: (text: string, files: File[]) => Promise<void>;
@@ -10,8 +15,6 @@ type Props = {
   initialValue?: string;
   onValueChange?: (v: string) => void;
 };
-
-const ACCEPTED = ".png,.jpg,.jpeg,.pdf,.xlsx";
 
 export default function Composer({ onSend, isLoading, initialValue = "", onValueChange }: Props) {
   const [text, setText] = useState(initialValue);
@@ -90,7 +93,7 @@ export default function Composer({ onSend, isLoading, initialValue = "", onValue
           type="button"
           className={styles.attachBtn}
           aria-label="Attach file"
-          title="Attach PDF, PNG, JPEG, or XLSX"
+          title={ATTACH_TOOLTIP}
           onClick={() => fileInputRef.current?.click()}
           disabled={isLoading}
         >
@@ -100,7 +103,7 @@ export default function Composer({ onSend, isLoading, initialValue = "", onValue
         <input
           ref={fileInputRef}
           type="file"
-          accept={ACCEPTED}
+          accept={ACCEPTED_UPLOAD_TYPES}
           multiple
           className={styles.hiddenInput}
           onChange={handleFileChange}
@@ -136,7 +139,7 @@ export default function Composer({ onSend, isLoading, initialValue = "", onValue
       </div>
 
       <p className={styles.hint}>
-        Press <kbd>Enter</kbd> to send · <kbd>Shift + Enter</kbd> for new line · Accepts PDF, PNG, JPEG, XLSX
+        Press <kbd>Enter</kbd> to send · <kbd>Shift + Enter</kbd> for new line · {ACCEPTED_UPLOAD_HINT}
       </p>
     </div>
   );

@@ -11,6 +11,9 @@ from guardrails.input_processor import mask_pii_in_text
 
 
 TEXT_PREVIEW_MAX_CHARS = 4000
+SPREADSHEET_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
 
 
 def build_chat_request_metadata(
@@ -38,6 +41,9 @@ def build_chat_request_metadata(
         "pdf_count": sum(
             1 for media_type in media_types if media_type == "application/pdf"
         ),
+        "spreadsheet_count": sum(
+            1 for media_type in media_types if media_type == SPREADSHEET_MEDIA_TYPE
+        ),
     }
     _add_text_preview(metadata, "message_preview", message or "")
     return metadata
@@ -57,6 +63,9 @@ def build_input_request_metadata(request: InputRequest) -> dict[str, Any]:
         "pdf_count": sum(
             1 for media_type in media_types if media_type == "application/pdf"
         ),
+        "spreadsheet_count": sum(
+            1 for media_type in media_types if media_type == SPREADSHEET_MEDIA_TYPE
+        ),
         "media_types": media_types,
     }
     _add_text_preview(metadata, "user_query_preview", request.user_query or "")
@@ -75,20 +84,48 @@ def build_input_processing_result_metadata(
             "combined_text_length": 0,
             "image_content_count": 0,
             "pdf_content_count": 0,
+            "spreadsheet_content_count": 0,
             "image_preview_lengths": [],
             "pdf_preview_lengths": [],
+            "spreadsheet_preview_lengths": [],
+            "spreadsheet_processed_sheet_counts": [],
+            "spreadsheet_visible_sheet_counts": [],
+            "spreadsheet_hidden_sheet_counts": [],
+            "spreadsheet_warning_counts": [],
         }
     else:
+        spreadsheet_metadata = [
+            spreadsheet.metadata
+            for spreadsheet in normalized_input.spreadsheet_content
+        ]
         normalized_metadata = {
             "normalized_user_query_length": len(normalized_input.user_query),
             "combined_text_length": len(normalized_input.combined_text),
             "image_content_count": len(normalized_input.image_content),
             "pdf_content_count": len(normalized_input.pdf_content),
+            "spreadsheet_content_count": len(normalized_input.spreadsheet_content),
             "image_preview_lengths": [
                 len(image.preview) for image in normalized_input.image_content
             ],
             "pdf_preview_lengths": [
                 len(pdf.preview) for pdf in normalized_input.pdf_content
+            ],
+            "spreadsheet_preview_lengths": [
+                len(spreadsheet.preview)
+                for spreadsheet in normalized_input.spreadsheet_content
+            ],
+            "spreadsheet_processed_sheet_counts": [
+                metadata.processed_sheet_count for metadata in spreadsheet_metadata
+            ],
+            "spreadsheet_visible_sheet_counts": [
+                metadata.total_visible_sheet_count for metadata in spreadsheet_metadata
+            ],
+            "spreadsheet_hidden_sheet_counts": [
+                metadata.hidden_sheet_count for metadata in spreadsheet_metadata
+            ],
+            "spreadsheet_warning_counts": [
+                len(spreadsheet.warnings)
+                for spreadsheet in normalized_input.spreadsheet_content
             ],
         }
         _add_text_preview(
@@ -216,6 +253,27 @@ def build_normalized_input_metadata(
         "combined_text_length": len(normalized_input.combined_text),
         "image_content_count": len(normalized_input.image_content),
         "pdf_content_count": len(normalized_input.pdf_content),
+        "spreadsheet_content_count": len(normalized_input.spreadsheet_content),
+        "spreadsheet_preview_lengths": [
+            len(spreadsheet.preview)
+            for spreadsheet in normalized_input.spreadsheet_content
+        ],
+        "spreadsheet_processed_sheet_counts": [
+            spreadsheet.metadata.processed_sheet_count
+            for spreadsheet in normalized_input.spreadsheet_content
+        ],
+        "spreadsheet_visible_sheet_counts": [
+            spreadsheet.metadata.total_visible_sheet_count
+            for spreadsheet in normalized_input.spreadsheet_content
+        ],
+        "spreadsheet_hidden_sheet_counts": [
+            spreadsheet.metadata.hidden_sheet_count
+            for spreadsheet in normalized_input.spreadsheet_content
+        ],
+        "spreadsheet_warning_counts": [
+            len(spreadsheet.warnings)
+            for spreadsheet in normalized_input.spreadsheet_content
+        ],
         "messages_count": len(message_list),
         "has_conversation_summary": bool(conversation_summary),
         "conversation_summary_length": len(conversation_summary or ""),
