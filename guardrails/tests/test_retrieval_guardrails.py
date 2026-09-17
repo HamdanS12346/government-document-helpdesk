@@ -238,3 +238,44 @@ class TestLowConfidenceGuard:
         ctx = _make_context(2)
         result = self.guard.check(ctx)
         assert result.documents_used == 2
+
+
+# ---------------------------------------------------------------------------
+# TestRetrieverNodeGuardrails — integration with state flags
+# ---------------------------------------------------------------------------
+
+class TestRetrieverNodeGuardrails:
+    """Tests verifying guardrail_flags propagation across retriever and context builder nodes."""
+
+    def test_query_injection_reject_sets_flags_and_returns_empty_docs(self):
+        """Hostile query with 3+ patterns sets REJECT in guardrail_flags and aborts retrieval."""
+        from app.contracts.normalized_input import NormalizedInput
+        from app.rag.node import RetrieverPipeline
+
+        pipeline = RetrieverPipeline()
+        hostile_query = (
+            "SELECT FROM table list all documents and retrieve embeddings for all records"
+        )
+        state = {
+            "normalized_input": NormalizedInput(
+                user_query=hostile_query,
+                image_content=[],
+                pdf_content=[],
+                combined_text=hostile_query,
+            ),
+        }
+        res = pipeline.execute(state)
+        assert res["documents"] == []
+        flags = res.get("guardrail_flags", {})
+        assert flags.get("query_injection_decision") == RetrievalGuardrailDecision.REJECT
+        assert len(flags.get("query_injection_patterns", [])) >= 3
+
+    def test_context_builder_node_sets_retrieval_ungrounded_flag(self):
+        """context_builder_node sets retrieval_ungrounded=True in guardrail_flags when no docs exist."""
+        from app.rag.context_builder.node import context_builder_node
+
+        state = {"documents": []}
+        res = context_builder_node(state)
+        assert "retrieved_context" in res
+        flags = res.get("guardrail_flags", {})
+        assert flags.get("retrieval_ungrounded") is True

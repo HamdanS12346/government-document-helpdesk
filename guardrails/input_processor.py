@@ -37,11 +37,67 @@ PII_PATTERNS = (
     re.compile(r"\b\d{4}[ -]?\d{4}[ -]?\d{4}\b"),
     re.compile(r"\b(?:\+91[- ]?)?[6-9]\d{9}\b"),
     re.compile(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b"),
+    # Voter ID / EPIC
+    re.compile(r"\b[A-Z]{3}[0-9]{7}\b"),
+    # Indian Passport Number (1 letter followed by 7 digits)
+    re.compile(r"\b[A-Z][0-9]{7}\b"),
+    # Indian Driving License
+    re.compile(r"\b[A-Z]{2}[- ]?[0-9]{2}[- ]?[0-9]{4}[- ]?[0-9]{7}\b"),
+    re.compile(r"\b[A-Z]{2}[0-9]{13,15}\b"),
+    # IFSC Code
+    re.compile(r"\b[A-Z]{4}0[A-Z0-9]{6}\b"),
+    # Bank Account Numbers with label/prefix or standalone 13-18 digits
+    re.compile(r"\b(?:A/C|Account(?:\s*No\.?)?|Bank\s*A/C)[\s:#-]*[0-9]{9,18}\b", re.I),
+    re.compile(r"\b[0-9]{13,18}\b"),
 )
 AI_DIRECTED_INSTRUCTION_PATTERNS = (
-    re.compile(r"\bignore (?:all )?(?:previous|prior|above) instructions\b", re.I),
-    re.compile(r"\breveal (?:the )?(?:system|developer) (?:prompt|instructions)\b", re.I),
-    re.compile(r"\b(?:send|show|print|exfiltrate) (?:the )?(?:secret|api key|credentials?)\b", re.I),
+    re.compile(r"\bignore (?:all )?(?:previous |prior |above )?instructions\b", re.I),
+    re.compile(r"\breveal (?:the |your )?(?:system|developer) (?:prompt|instructions)\b", re.I),
+    re.compile(r"\b(?:send|show|print|exfiltrate) (?:the |your )?(?:secret|api key|credentials?)\b", re.I),
+)
+USER_QUERY_INJECTION_PATTERNS = (
+    re.compile(r"\bignore (?:all )?(?:previous |prior |above )?instructions\b", re.I),
+    re.compile(r"\b(?:reveal|show|print|display) (?:the |your |all )?(?:system|developer|hidden) (?:prompt|instructions)\b", re.I),
+    re.compile(r"\b(?:send|show|print|exfiltrate|leak) (?:the |your )?(?:secret|api key|credentials?|environment|env|token)\b", re.I),
+    re.compile(r"\b(?:system override|jailbreak|bypass safety|developer mode)\b", re.I),
+    re.compile(r"\byou are now in (?:DAN|unrestricted|jailbroken) mode\b", re.I),
+    re.compile(r"\bdisregard (?:all )?(?:safety|guardrails?|guidelines?)\b", re.I),
+)
+PROFANITY_ABUSE_PATTERNS = (
+    re.compile(r"\b(?:fuck|shit|bitch|bastard|asshole|cunt)\b", re.I),
+    re.compile(r"\b(?:kill yourself|go to hell|die in a fire)\b", re.I),
+    re.compile(r"\b(?:madarchod|bhenchod|chutiya|harami|bhosdike|kameena)\b", re.I),
+)
+ILLEGAL_PROCEDURE_PATTERNS = (
+    # Bribery / Kickbacks / Speed money
+    re.compile(r"\b(?:pay|paying|give|giving|offer|offering|take|taking|accept|arrange|demand)\s+(?:a\s+)?(?:bribe|kickback|speed\s+money|rishwat|ghoos|under\s+the\s+table\s+(?:money|cash)|chai\s*pani)\b", re.I),
+    re.compile(r"\b(?:how\s+(?:to|can\s+I|much)|where\s+to|who\s+can)\b.*\b(?:bribe|pay\s+off|pay\s+a\s+bribe|pay\s+speed\s+money|rishwat|ghoos)\b", re.I),
+    re.compile(r"\b(?:agent|dalal|middleman|broker)\s+(?:to|who\s+can|for)\s+(?:bribe|pay\s+bribe|speed\s+up\s+illegally)\b", re.I),
+    re.compile(r"\b(?:bribe|pay\s+cash\s+to)\s+(?:for|to\s+pass)\s+(?:driving\s+test|passport|visa|ration\s+card|officer)\b", re.I),
+    re.compile(r"\b(?:money|cash)\s+under\s+the\s+table\b", re.I),
+    re.compile(r"\bchai\s*pani\b.*\b(?:clerk|officer|inspector|babu|official|permission|approval|license)\b", re.I),
+    re.compile(r"\b(?:rishwat|ghoos)\b", re.I),
+    # Tax / Duty / Statutory Evasion
+    re.compile(r"\b(?:how\s+to|how\s+can\s+I|where\s+to)\s+(?:evade|avoid\s+paying|dodge)\s+(?:income\s+tax|gst|taxes?|tax|customs?\s+duty)\b", re.I),
+    re.compile(r"\b(?:evade|evading)\s+(?:income\s+tax|gst|taxes?|tax|customs?\s+duty)\b", re.I),
+    re.compile(r"\b(?:fake|bogus|counterfeit)\s+(?:gst\s+invoice|gst\s+bill|tax\s+invoice|billing)\b", re.I),
+    re.compile(r"\b(?:hide|launder|convert)\s+(?:black\s+money|unaccounted\s+cash)\b", re.I),
+    re.compile(r"\b(?:smuggle|smuggling)\b", re.I),
+    # Document Forgery / Counterfeit / Illegal Procedural Bypasses
+    re.compile(r"\b(?:make|create|buy|get|generate|provide|sell)\s+(?:a\s+)?(?:fake|counterfeit|forged)\s+(?:aadhaar|pan\s+card|passport|driving\s+licen[cs]e|voter\s+id|birth\s+certificate|caste\s+certificate|ration\s+card|certificate|degree|document)\b", re.I),
+    re.compile(r"\b(?:fake|counterfeit|forged)\s+(?:aadhaar|pan\s+card|passport|driving\s+licen[cs]e|voter\s+id|birth\s+certificate|caste\s+certificate|ration\s+card|stamp|seal|signature)\b", re.I),
+    re.compile(r"\b(?:forge|fabricate|falsify)\s+(?:a\s+)?(?:government\s+stamp|gazetted\s+officer\s+signature|seal|stamp|certificate)\b", re.I),
+    re.compile(r"\b(?:bypass|skip|fake)\s+(?:police\s+verification|kyc\s+verification|biometrics?)\s+illegally\b", re.I),
+    re.compile(r"\b(?:fake|counterfeit)\s+(?:aadhaar|pan\s+card|driving\s+licen[cs]e|passport)\s+(?:maker|generator|template)\b", re.I),
+)
+ANTI_CORRUPTION_REPORTING_PATTERNS = (
+    re.compile(r"\b(?:report|complaint\s+against|file\s+a\s+complaint|whistleblower|helpline|vigilance|anti[- ]corruption\s+bureau|lokpal|cbi|cvc|acb|penalt(?:y|ies)\s+for|punishment\s+for|law\s+against)\b", re.I),
+    re.compile(r"\b(?:section\s+80c|80d|tax\s+deduction|tax\s+exemption|tax\s+rebate|legal\s+tax\s+saving|save\s+tax\s+legally)\b", re.I),
+)
+SAFETY_REFUSAL_MESSAGE = (
+    "This helpdesk cannot assist with requests involving bribery, tax evasion, "
+    "document forgery, or bypassing official procedures. Please refer to official "
+    "government portals for lawful guidelines."
 )
 
 
@@ -94,16 +150,95 @@ class RegexPIIMasker:
         return PIIMaskingResult(text=masked_text, decision=decision)
 
 
-def validate_pre_processing_boundary() -> InputGuardrailDecision:
-    """Placeholder for structure, media type, signature, size, and page checks."""
+MAX_IMAGE_PIXELS = 10_000_000
 
+
+def validate_image_dimensions(content: bytes) -> InputGuardrailDecision:
+    """Inspect image dimensions without full decompression to prevent memory bombs."""
+    from io import BytesIO
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(BytesIO(content)) as img:
+            size = getattr(img, "size", None)
+            if size is not None:
+                width, height = size
+                if width * height > MAX_IMAGE_PIXELS:
+                    raise InputProcessingError(
+                        InputProcessingErrorCode.FILE_TOO_LARGE,
+                        f"Image resolution exceeds maximum allowed limit ({MAX_IMAGE_PIXELS} pixels).",
+                    )
+            return InputGuardrailDecision.ALLOW
+    except InputProcessingError:
+        raise
+    except (UnidentifiedImageError, OSError) as exc:
+        raise InputProcessingError(
+            InputProcessingErrorCode.UNREADABLE_CONTENT,
+            "This image could not be inspected safely.",
+        ) from exc
+
+
+def validate_user_query_safety(query: str) -> InputGuardrailDecision:
+    """Actively reject user queries that attempt prompt injection or jailbreaking."""
+    for pattern in USER_QUERY_INJECTION_PATTERNS:
+        if pattern.search(query):
+            raise InputProcessingError(
+                InputProcessingErrorCode.SAFETY_REJECTION,
+                "The request could not be processed because it contains unsupported instruction-like commands.",
+            )
     return InputGuardrailDecision.ALLOW
 
 
-def validate_post_extraction_boundary() -> InputGuardrailDecision:
-    """Placeholder for PII masking and document-content safety checks."""
-
+def validate_content_civility(text: str) -> InputGuardrailDecision:
+    """Detect abusive, profane, or threatening language and reject it."""
+    for pattern in PROFANITY_ABUSE_PATTERNS:
+        if pattern.search(text):
+            raise InputProcessingError(
+                InputProcessingErrorCode.SAFETY_REJECTION,
+                "Please ensure questions are respectful and focused on government services and documents.",
+            )
     return InputGuardrailDecision.ALLOW
+
+
+def validate_safety_compliance(text: str) -> InputGuardrailDecision:
+    """Detect and reject requests involving bribery, tax evasion, forgery, or illegal procedural shortcuts."""
+    if not text:
+        return InputGuardrailDecision.ALLOW
+
+    # Allow benign reporting, complaint filing, whistleblowing, or legal tax deduction inquiries
+    is_reporting = any(pat.search(text) for pat in ANTI_CORRUPTION_REPORTING_PATTERNS)
+    if is_reporting:
+        return InputGuardrailDecision.ALLOW
+
+    for pattern in ILLEGAL_PROCEDURE_PATTERNS:
+        if pattern.search(text):
+            raise InputProcessingError(
+                InputProcessingErrorCode.SAFETY_REJECTION,
+                SAFETY_REFUSAL_MESSAGE,
+            )
+    return InputGuardrailDecision.ALLOW
+
+
+def validate_pre_processing_boundary(request: InputRequest) -> InputGuardrailDecision:
+    """Execute pre-processing boundary validation on the incoming request."""
+    validate_input_presence(request)
+    return InputGuardrailDecision.ALLOW
+
+
+def validate_post_extraction_boundary(
+    text: str,
+    *,
+    is_user_query: bool = False,
+    strict_safety: bool = True,
+    masker: PIIMasker | None = None,
+) -> str:
+    """Execute post-extraction boundary checks: civility, illegal/evasion safety, query safety, and PII masking."""
+    validate_content_civility(text)
+    validate_safety_compliance(text)
+    if is_user_query and strict_safety:
+        validate_user_query_safety(text)
+    masked_result = mask_pii_in_text(text, masker=masker)
+    return masked_result.text
 
 
 def mask_pii_in_text(
@@ -225,13 +360,19 @@ def validate_attachment_modality(attachment: Attachment) -> ValidatedAttachment:
 
 
 __all__ = [
+    "ANTI_CORRUPTION_REPORTING_PATTERNS",
+    "ILLEGAL_PROCEDURE_PATTERNS",
     "InputGuardrailDecision",
     "MAX_ATTACHMENT_SIZE_BYTES",
+    "MAX_IMAGE_PIXELS",
     "MAX_PDF_PAGE_COUNT",
     "PIIMasker",
     "PIIMaskingResult",
+    "PROFANITY_ABUSE_PATTERNS",
     "RegexPIIMasker",
+    "SAFETY_REFUSAL_MESSAGE",
     "SUPPORTED_MEDIA_TYPES",
+    "USER_QUERY_INJECTION_PATTERNS",
     "UntrustedDocumentText",
     "get_pdf_page_count",
     "has_jpeg_signature",
@@ -242,9 +383,13 @@ __all__ = [
     "mask_pii_in_text",
     "validate_attachment_size",
     "validate_attachment_modality",
+    "validate_content_civility",
+    "validate_image_dimensions",
     "validate_input_presence",
     "validate_pdf_page_count",
     "validate_post_extraction_boundary",
     "validate_pre_processing_boundary",
+    "validate_safety_compliance",
     "validate_supported_media_type",
+    "validate_user_query_safety",
 ]

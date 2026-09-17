@@ -146,8 +146,8 @@ def build_full_graph(
     graph.add_edge(CONTEXT_BUILDER_NODE, RESPONSE_NODE)
     graph.add_node(RESPONSE_GUARDRAIL_NODE, response_guardrail_node)
     graph.add_edge(RESPONSE_NODE, RESPONSE_GUARDRAIL_NODE)
+    graph.add_edge(CLARIFICATION_NODE, RESPONSE_GUARDRAIL_NODE)
     graph.add_edge(RESPONSE_GUARDRAIL_NODE, END)
-    graph.add_edge(CLARIFICATION_NODE, END)
     return graph.compile()
 
 

@@ -42,6 +42,8 @@ class ResponseGuardrailDecision(StrEnum):
     REDACT_AND_CONTINUE = "redact_and_continue"
     TRUNCATE = "truncate"
     REPLACE_WITH_REDIRECT = "replace_with_redirect"
+    REPLACE_WITH_FALLBACK = "replace_with_fallback"
+    WARN_AND_APPEND = "warn_and_append"
     REJECT = "reject"
 
 
@@ -56,6 +58,44 @@ HARD_REJECT_CHARS = 8_000    # above this, something is clearly wrong
 
 # Sentence-ending characters used by the truncation logic.
 _SENTENCE_ENDS = frozenset(".?!")
+
+_HALLUCINATION_FALLBACK = (
+    "I was not able to verify the specific fee, date, or requirement details for this query "
+    "against official documents. Please check the official government portal directly for accurate figures."
+)
+
+_HALLUCINATION_NOTICE_SUFFIX = (
+    "\n\n[Official Notice: Specific fee, deadline, or requirement figures in this response "
+    "could not be verified against the retrieved source documents. Please verify directly on the official portal.]"
+)
+
+FEE_PATTERNS: tuple[re.Pattern, ...] = (
+    # ₹ 500, Rs. 250, INR 1000
+    re.compile(r"(?:₹|Rs\.?|INR)\s*([0-9]+(?:,[0-9]+)*(?:\.[0-9]{1,2})?)", re.IGNORECASE),
+    # 500 rupees / 500 Rs
+    re.compile(r"\b([0-9]+(?:,[0-9]+)*)\s*(?:rupees|lakhs?|crores?)\b", re.IGNORECASE),
+)
+
+DATE_DEADLINE_PATTERNS: tuple[re.Pattern, ...] = (
+    # Explicit dates: 15th August 2024, 31 March, 01/04/2025
+    re.compile(
+        r"\b([0-9]{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:\s+[0-9]{2,4})?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})\b"),
+    # Deadlines: within 30 days, within 6 months
+    re.compile(r"\b(within\s+[0-9]+\s+(?:days?|weeks?|months?|years?))\b", re.IGNORECASE),
+    # Validity: valid for 10 years, validity of 5 years
+    re.compile(r"\b(valid\s+(?:for|of)\s+[0-9]+\s+(?:days?|weeks?|months?|years?))\b", re.IGNORECASE),
+)
+
+REQUIREMENT_PATTERNS: tuple[re.Pattern, ...] = (
+    # Age requirements: minimum age of 18 years, at least 21 years
+    re.compile(
+        r"\b((?:minimum|maximum|at\s+least|above|below)\s+(?:age\s+(?:of\s+)?)?[0-9]+\s+(?:years?|yrs?))\b",
+        re.IGNORECASE,
+    ),
+)
 
 _CITATION_REJECT_FALLBACK = (
     "I was not able to verify the sources for this response. "
@@ -77,6 +117,45 @@ _SCOPE_REDIRECT = (
     "That is a bit outside what I can help with here. "
     "If you have any questions about government documents, applications, "
     "or services, I am here for that."
+)
+
+_CREDENTIAL_SOLICITATION_FALLBACK = (
+    "To help you with your inquiry, please clarify which government document or "
+    "service you need assistance with. (Note: The helpdesk will never ask for your "
+    "passwords, OTPs, or financial credentials.)"
+)
+
+CREDENTIAL_SOLICITATION_PATTERNS: tuple[re.Pattern, ...] = (
+    # Direct requests for OTP / Passwords / PINs
+    re.compile(
+        r"\b(enter|share|provide|send|give|input|tell|type|verify)\b.*?\b(otp|one[-\s]?time[-\s]?password|password|passcode|mpin|upi[-\s]?pin|atm[-\s]?pin|pin|cvv|cvc|security\s+code)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(what\s+is|give\s+me|send\s+me|share|tell\s+me)\b.*?\b(otp|one[-\s]?time[-\s]?password|password|pin|passcode|cvv|cvc)\b",
+        re.IGNORECASE,
+    ),
+    # Requesting full card number or debit/credit card credentials
+    re.compile(
+        r"\b(enter|provide|share|give)\b.*?\b(debit\s+card|credit\s+card|atm\s+card)\s+(number|details|pin)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(16[-\s]?digit\s+(card\s+number|number)|card\s+verification\s+value)\b",
+        re.IGNORECASE,
+    ),
+    # Banking credentials / internet banking login / netbanking password
+    re.compile(
+        r"\b(net\s*banking|internet\s*banking)\s+(password|login\s+credentials|pin)\b",
+        re.IGNORECASE,
+    ),
+)
+
+_SECURITY_WARNING_PATTERNS: tuple[re.Pattern, ...] = (
+    re.compile(
+        r"\b(never\s+share|do\s+not\s+share|don't\s+share|not\s+ask\s+for|will\s+never\s+ask|beware\s+of|caution)\b",
+        re.IGNORECASE,
+    ),
 )
 
 FORBIDDEN_DOMAIN_PATTERNS: tuple[re.Pattern, ...] = (
@@ -107,6 +186,13 @@ class CitationGroundingResult:
 
 
 @dataclass
+class CredentialSolicitationResult:
+    decision: ResponseGuardrailDecision
+    cleaned_text: str
+    detected_solicitations: list[str]
+
+
+@dataclass
 class ResponsePIIScanResult:
     decision: ResponseGuardrailDecision
     cleaned_text: str
@@ -130,6 +216,15 @@ class ResponseScopeResult:
 
 
 @dataclass
+class HallucinationCheckResult:
+    decision: ResponseGuardrailDecision
+    cleaned_text: str
+    unsupported_entities: list[str]
+    supported_entities: list[str]
+    total_entities_found: int
+
+
+@dataclass
 class ResponseGuardrailReport:
     final_text: str
     citation_result: CitationGroundingResult
@@ -137,6 +232,8 @@ class ResponseGuardrailReport:
     length_result: ResponseLengthResult
     scope_result: ResponseScopeResult
     any_triggered: bool
+    credential_result: Optional[CredentialSolicitationResult] = None
+    hallucination_result: Optional[HallucinationCheckResult] = None
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +342,157 @@ class CitationGroundingGuardrail:
             invalid_citation_indices=invalid,
             total_citations_found=total,
         )
+
+
+# ---------------------------------------------------------------------------
+# Guardrail 2 — Factuality & Hallucination Check (Fees, Dates & Requirements)
+# ---------------------------------------------------------------------------
+
+class FactualityHallucinationGuardrail:
+    """Verify that fees, application deadlines, and numerical requirements mentioned
+    in the response are grounded in the retrieved context.
+
+    Prevents hallucinating fabricated fees (e.g. claiming ₹2,500 when document says ₹200)
+    or invalid application deadlines.
+    """
+
+    MAX_UNGROUNDED_FRACTION: float = 0.50
+
+    def check(
+        self,
+        response_text: str,
+        retrieved_context: Optional[RetrievedContext],
+    ) -> HallucinationCheckResult:
+        if not response_text or not response_text.strip():
+            return HallucinationCheckResult(
+                decision=ResponseGuardrailDecision.ALLOW,
+                cleaned_text=response_text,
+                unsupported_entities=[],
+                supported_entities=[],
+                total_entities_found=0,
+            )
+
+        try:
+            return self._check(response_text, retrieved_context)
+        except Exception as exc:
+            logger.error(
+                "FactualityHallucinationGuardrail: unexpected error — failing closed. %s",
+                exc,
+                exc_info=True,
+            )
+            return HallucinationCheckResult(
+                decision=ResponseGuardrailDecision.REPLACE_WITH_FALLBACK,
+                cleaned_text=_HALLUCINATION_FALLBACK,
+                unsupported_entities=["error_fail_closed"],
+                supported_entities=[],
+                total_entities_found=1,
+            )
+
+    def _check(
+        self,
+        response_text: str,
+        retrieved_context: Optional[RetrievedContext],
+    ) -> HallucinationCheckResult:
+        # If no context is available (general_chat path), skip verification
+        if retrieved_context is None or not retrieved_context.formatted_context:
+            return HallucinationCheckResult(
+                decision=ResponseGuardrailDecision.ALLOW,
+                cleaned_text=response_text,
+                unsupported_entities=[],
+                supported_entities=[],
+                total_entities_found=0,
+            )
+
+        context_text = retrieved_context.formatted_context.lower()
+
+        extracted: list[str] = []
+        for pat in FEE_PATTERNS:
+            for match in pat.finditer(response_text):
+                extracted.append(match.group(0))
+
+        for pat in DATE_DEADLINE_PATTERNS:
+            for match in pat.finditer(response_text):
+                extracted.append(match.group(0))
+
+        for pat in REQUIREMENT_PATTERNS:
+            for match in pat.finditer(response_text):
+                extracted.append(match.group(0))
+
+        # Deduplicate while preserving order
+        unique_entities: list[str] = []
+        for ent in extracted:
+            clean = ent.strip()
+            if clean and clean not in unique_entities:
+                unique_entities.append(clean)
+
+        if not unique_entities:
+            return HallucinationCheckResult(
+                decision=ResponseGuardrailDecision.ALLOW,
+                cleaned_text=response_text,
+                unsupported_entities=[],
+                supported_entities=[],
+                total_entities_found=0,
+            )
+
+        supported: list[str] = []
+        unsupported: list[str] = []
+
+        for entity in unique_entities:
+            norm = entity.lower()
+            # 1. Exact or direct substring match
+            if norm in context_text:
+                supported.append(entity)
+                continue
+
+            # 2. Check numeric value presence
+            nums = re.findall(r"\d+", norm)
+            words = [w for w in re.findall(r"[a-z]+", norm) if len(w) > 2]
+
+            if nums and all(n in context_text for n in nums):
+                if not words or any(w in context_text for w in words):
+                    supported.append(entity)
+                    continue
+
+            unsupported.append(entity)
+
+        total = len(unique_entities)
+        if not unsupported:
+            return HallucinationCheckResult(
+                decision=ResponseGuardrailDecision.ALLOW,
+                cleaned_text=response_text,
+                unsupported_entities=[],
+                supported_entities=supported,
+                total_entities_found=total,
+            )
+
+        unsupported_fraction = len(unsupported) / total
+        logger.warning(
+            "FactualityHallucinationGuardrail: ungrounded entities detected: %s (total: %d, fraction: %.2f)",
+            unsupported,
+            total,
+            unsupported_fraction,
+        )
+
+        if unsupported_fraction > self.MAX_UNGROUNDED_FRACTION:
+            return HallucinationCheckResult(
+                decision=ResponseGuardrailDecision.REPLACE_WITH_FALLBACK,
+                cleaned_text=_HALLUCINATION_FALLBACK,
+                unsupported_entities=unsupported,
+                supported_entities=supported,
+                total_entities_found=total,
+            )
+
+        cleaned = response_text.rstrip() + _HALLUCINATION_NOTICE_SUFFIX
+        return HallucinationCheckResult(
+            decision=ResponseGuardrailDecision.WARN_AND_APPEND,
+            cleaned_text=cleaned,
+            unsupported_entities=unsupported,
+            supported_entities=supported,
+            total_entities_found=total,
+        )
+
+
+EntityHallucinationGuardrail = FactualityHallucinationGuardrail
 
 
 # ---------------------------------------------------------------------------
@@ -469,11 +717,89 @@ class ResponseScopeGuardrail:
 
 
 # ---------------------------------------------------------------------------
+# Guardrail 5 — Credential Solicitation Guardrail
+# ---------------------------------------------------------------------------
+
+class CredentialSolicitationGuardrail:
+    """Ensure responses and clarification questions never solicit sensitive credentials.
+
+    Citizens must never be asked for passwords, OTPs, PINs, CVVs, or full card
+    credentials by the helpdesk. When detected, the response is replaced with a safe
+    clarification fallback reminding the citizen that the helpdesk never asks for
+    credentials.
+    """
+
+    def check(self, response_text: str) -> CredentialSolicitationResult:
+        """Scan response text for prohibited credential solicitations."""
+        if not response_text or not response_text.strip():
+            return CredentialSolicitationResult(
+                decision=ResponseGuardrailDecision.ALLOW,
+                cleaned_text=response_text,
+                detected_solicitations=[],
+            )
+
+        try:
+            return self._check(response_text)
+        except Exception as exc:
+            logger.error(
+                "CredentialSolicitationGuardrail: unexpected error — failing closed. %s",
+                exc,
+                exc_info=True,
+            )
+            return CredentialSolicitationResult(
+                decision=ResponseGuardrailDecision.REPLACE_WITH_FALLBACK,
+                cleaned_text=_CREDENTIAL_SOLICITATION_FALLBACK,
+                detected_solicitations=["error_fail_closed"],
+            )
+
+    def _check(self, response_text: str) -> CredentialSolicitationResult:
+        sentences = re.split(r"[.!?\n]+", response_text)
+        detected: list[str] = []
+
+        for sentence in sentences:
+            sentence_str = sentence.strip()
+            if not sentence_str:
+                continue
+
+            for pattern in CREDENTIAL_SOLICITATION_PATTERNS:
+                match = pattern.search(sentence_str)
+                if match:
+                    is_warning = any(
+                        w_pat.search(sentence_str) for w_pat in _SECURITY_WARNING_PATTERNS
+                    )
+                    if not is_warning:
+                        detected.append(match.group(0))
+                        break
+
+        if detected:
+            logger.warning(
+                "CredentialSolicitationGuardrail: prohibited credential solicitation detected: %s",
+                detected,
+            )
+            return CredentialSolicitationResult(
+                decision=ResponseGuardrailDecision.REPLACE_WITH_FALLBACK,
+                cleaned_text=_CREDENTIAL_SOLICITATION_FALLBACK,
+                detected_solicitations=detected,
+            )
+
+        return CredentialSolicitationResult(
+            decision=ResponseGuardrailDecision.ALLOW,
+            cleaned_text=response_text,
+            detected_solicitations=[],
+        )
+
+
+ClarificationCredentialGuardrail = CredentialSolicitationGuardrail
+
+
+# ---------------------------------------------------------------------------
 # Composite runner
 # ---------------------------------------------------------------------------
 
 # Module-level singleton instances — constructed once, reused on every call.
 _citation_guardrail = CitationGroundingGuardrail()
+_factuality_guardrail = FactualityHallucinationGuardrail()
+_credential_guardrail = CredentialSolicitationGuardrail()
 _pii_scanner = ResponsePIIScanner()
 _length_guardrail = ResponseLengthGuardrail()
 _scope_guardrail = ResponseScopeGuardrail()
@@ -484,16 +810,16 @@ def run_response_guardrails(
     retrieved_context: Optional[RetrievedContext],
     intent_type: str,
 ) -> ResponseGuardrailReport:
-    """Run all four response guardrails in sequence.
+    """Run all response guardrails in sequence.
 
     Each guardrail receives the output text of the previous one.
-    On REJECT, the pipeline short-circuits — later guardrails still run but on
-    the safe fallback text, not the original.
+    On REJECT or REPLACE_WITH_FALLBACK, the pipeline continues on the safe
+    fallback text, ensuring downstream checks (PII, Length, Scope) validate it.
 
     Args:
         response_text:      Raw text from the LLM AIMessage.
-        retrieved_context:  RetrievedContext from state, or None for general_chat.
-        intent_type:        String intent type ("document_info", "general_chat", etc.).
+        retrieved_context:  RetrievedContext from state, or None for general_chat / clarification.
+        intent_type:        String intent type ("document_info", "general_chat", "ambiguous", etc.).
 
     Returns:
         ResponseGuardrailReport with the final cleaned text and per-guardrail results.
@@ -506,19 +832,31 @@ def run_response_guardrails(
     if citation_result.decision != ResponseGuardrailDecision.ALLOW:
         any_triggered = True
 
-    # Step 2 — PII Scan (operates on Step 1 output)
+    # Step 2 — Factuality & Hallucination Check (Fees, Dates & Requirements)
+    hallucination_result = _factuality_guardrail.check(text, retrieved_context)
+    text = hallucination_result.cleaned_text
+    if hallucination_result.decision != ResponseGuardrailDecision.ALLOW:
+        any_triggered = True
+
+    # Step 3 — Credential Solicitation Check (fail-closed if model asks for credentials)
+    credential_result = _credential_guardrail.check(text)
+    text = credential_result.cleaned_text
+    if credential_result.decision != ResponseGuardrailDecision.ALLOW:
+        any_triggered = True
+
+    # Step 4 — PII Scan (operates on Step 3 output)
     pii_result = _pii_scanner.scan(text)
     text = pii_result.cleaned_text
     if pii_result.decision != ResponseGuardrailDecision.ALLOW:
         any_triggered = True
 
-    # Step 3 — Length Cap (operates on Step 2 output)
+    # Step 5 — Length Cap (operates on Step 4 output)
     length_result = _length_guardrail.check(text)
     text = length_result.cleaned_text
     if length_result.decision != ResponseGuardrailDecision.ALLOW:
         any_triggered = True
 
-    # Step 4 — Scope Enforcer (operates on Step 3 output)
+    # Step 6 — Scope Enforcer (operates on Step 5 output)
     scope_result = _scope_guardrail.check(text, intent_type)
     text = scope_result.cleaned_text
     if scope_result.decision != ResponseGuardrailDecision.ALLOW:
@@ -531,16 +869,28 @@ def run_response_guardrails(
         length_result=length_result,
         scope_result=scope_result,
         any_triggered=any_triggered,
+        credential_result=credential_result,
+        hallucination_result=hallucination_result,
     )
 
 
 __all__ = [
+    "CREDENTIAL_SOLICITATION_PATTERNS",
     "CitationGroundingGuardrail",
     "CitationGroundingResult",
+    "ClarificationCredentialGuardrail",
+    "CredentialSolicitationGuardrail",
+    "CredentialSolicitationResult",
+    "DATE_DEADLINE_PATTERNS",
+    "EntityHallucinationGuardrail",
+    "FEE_PATTERNS",
     "FORBIDDEN_DOMAIN_PATTERNS",
+    "FactualityHallucinationGuardrail",
     "GOVERNMENT_SIGNAL_PATTERN",
     "HARD_REJECT_CHARS",
+    "HallucinationCheckResult",
     "MAX_RESPONSE_CHARS",
+    "REQUIREMENT_PATTERNS",
     "ResponseGuardrailDecision",
     "ResponseGuardrailReport",
     "ResponseLengthGuardrail",
