@@ -1,0 +1,39 @@
+# Virtual environments & Python cache
+.venv/
+venv/
+ENV/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Git & IDEs
+.git/
+.gitignore
+.gitattributes
+.vscode/
+.idea/
+
+# Environment files & Secrets
+.env
+.env.*
+!.env.example
+
+# Frontend (handled in its own build context)
+frontend/
+node_modules/
+.next/
+
+# Databases & local data
+chroma_db/
+*.sqlite3
+*.db
+
+# Logs & temporary files
+*.log
+.system_generated/
+scratch/
+tmp/
