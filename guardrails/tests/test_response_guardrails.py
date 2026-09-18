@@ -17,6 +17,7 @@ from guardrails.response import (
     CitationGroundingResult,
     FactualityHallucinationGuardrail,
     HallucinationCheckResult,
+    NO_DOCUMENTS_FALLBACK,
     ResponseGuardrailDecision,
     ResponseGuardrailReport,
     ResponseLengthGuardrail,
@@ -614,3 +615,39 @@ class TestFactualityHallucinationGuardrail:
         assert report.hallucination_result is not None
         assert report.hallucination_result.decision == ResponseGuardrailDecision.REPLACE_WITH_FALLBACK
         assert "official government portal" in report.final_text
+
+    def test_reject_when_no_relevant_documents_or_fallback_applied(self):
+        """Direct test: 0 sources, has_relevant_documents=False, fallback_applied=True gets replaced."""
+        ctx = _make_context(0, fallback_applied=True)
+        ctx.formatted_context = "No relevant government documents were found for this query."
+        response = (
+            "To link your EPF account with UAN, log in to the EPFO member portal "
+            "and submit your details within 30 days."
+        )
+        result = self.guardrail.check(response, ctx)
+        assert result.decision == ResponseGuardrailDecision.REPLACE_WITH_FALLBACK
+        assert result.unsupported_entities == ["no_relevant_documents"]
+        assert result.supported_entities == []
+        assert result.total_entities_found == 1
+        assert result.cleaned_text == NO_DOCUMENTS_FALLBACK
+        assert "No relevant government documents were found for this query" in result.cleaned_text
+        assert "EPF" not in result.cleaned_text
+        assert "UAN" not in result.cleaned_text
+
+    def test_run_response_guardrails_no_relevant_documents(self):
+        """Full run_response_guardrails test for a document_info response with no relevant docs."""
+        ctx = _make_context(0, fallback_applied=True)
+        ctx.formatted_context = "No relevant government documents were found for this query."
+        response = (
+            "You can update your EPF nomination online by accessing the unified member portal "
+            "using your active UAN and password."
+        )
+        report = run_response_guardrails(response, ctx, intent_type="document_info")
+        assert report.any_triggered is True
+        assert report.hallucination_result is not None
+        assert report.hallucination_result.decision == ResponseGuardrailDecision.REPLACE_WITH_FALLBACK
+        assert report.final_text == NO_DOCUMENTS_FALLBACK
+        assert "No relevant government documents were found for this query" in report.final_text
+        assert "EPF" not in report.final_text
+        assert "UAN" not in report.final_text
+

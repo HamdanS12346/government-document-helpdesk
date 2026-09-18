@@ -638,7 +638,47 @@ def test_retriever_pipeline_filters_reranked_scores_at_or_below_point_two():
         lexical_searcher=StaticLexicalSearcher(docs),
         vector_retriever=EmptyVectorRetriever(),
         reranker=ScoredReranker([0.9, 0.21, 0.2, 0.1]),
+        rerank_min_score=0.2,
         final_top_k=4,
+    )
+    state = {
+        "normalized_input": NormalizedInput(
+            user_query="candidate",
+            image_content=[],
+            pdf_content=[],
+            combined_text="candidate",
+        ),
+        "messages": [],
+        "conversation_summary": None,
+    }
+
+    result = pipeline.execute(state)
+
+    assert [doc.id for doc in result["documents"]] == ["candidate-0", "candidate-1"]
+    assert result["retrieval_status"].final_document_count == 2
+
+
+def test_retriever_pipeline_default_rerank_min_score_is_point_three_five():
+    docs = [
+        RetrievedDocument(
+            id=f"candidate-{idx}",
+            text_content=f"Candidate document {idx}",
+            metadata=ChunkMetadata(
+                document_id=f"candidate-{idx}",
+                category="general",
+                document_name=f"candidate-{idx}",
+            ),
+            score=8.0,
+        )
+        for idx in range(3)
+    ]
+    pipeline = RetrieverPipeline(
+        query_rewriter=QueryRewriter(),
+        metadata_extractor=FakeMetadataExtractor(),
+        lexical_searcher=StaticLexicalSearcher(docs),
+        vector_retriever=EmptyVectorRetriever(),
+        reranker=ScoredReranker([0.9, 0.36, 0.35]),
+        final_top_k=3,
     )
     state = {
         "normalized_input": NormalizedInput(
