@@ -117,3 +117,43 @@ def test_document_text_boundary_never_outputs_system_or_policy_instructions() ->
     assert not hasattr(result, "system_instruction")
     assert not hasattr(result, "developer_instruction")
     assert not hasattr(result, "routing_override")
+
+
+def test_pii_masker_preserves_official_government_emails_and_helplines() -> None:
+    text = (
+        "Official support is available at support@uidai.gov.in, "
+        "helpdesk@incometax.gov.in, or info@nic.in. "
+        "You can also call the national helpline 1800-180-1947 or dial 1947."
+    )
+
+    result = mask_pii_in_text(text)
+
+    assert result.decision == InputGuardrailDecision.ALLOW
+    assert "support@uidai.gov.in" in result.text
+    assert "helpdesk@incometax.gov.in" in result.text
+    assert "info@nic.in" in result.text
+    assert "1800-180-1947" in result.text
+    assert "1947" in result.text
+    assert "[REDACTED]" not in result.text
+
+
+def test_pii_masker_redacts_citizen_pii_while_preserving_official_contacts_in_same_text() -> None:
+    text = (
+        "Applicant Aadhaar 1234 5678 9012, PAN ABCDE1234F, phone 9876543210, "
+        "email citizen@gmail.com submitted inquiry. "
+        "Official inquiry sent to passport.helpdesk@mea.gov.in, helpline 1800-258-1800."
+    )
+
+    result = mask_pii_in_text(text)
+
+    assert result.decision == InputGuardrailDecision.MASK_AND_CONTINUE
+    # Citizen data is redacted
+    assert "1234 5678 9012" not in result.text
+    assert "ABCDE1234F" not in result.text
+    assert "9876543210" not in result.text
+    assert "citizen@gmail.com" not in result.text
+    # Government contacts are preserved
+    assert "passport.helpdesk@mea.gov.in" in result.text
+    assert "1800-258-1800" in result.text
+    assert "[REDACTED]" in result.text
+

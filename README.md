@@ -49,9 +49,16 @@ tests/                # Backend tests grouped by feature area
 
 ## Prerequisites
 
+### If Running with Docker (Recommended)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (includes Docker Compose v2)
+- Cloud API credentials in `.env` (OpenAI, Supabase, Chroma Cloud)
+*(No need to install Python, Node.js, Tesseract OCR, or Poppler on your host machine—Docker bundles all native C-binaries and runtimes automatically).*
+
+### If Running Locally without Docker
 - Python 3.11+ with `venv`
-- Node.js and npm
-- Tesseract OCR for real image OCR
+- Node.js (v20+ or v22+) and npm
+- Tesseract OCR installed locally (with English and Hindi models) and added to system `PATH`
+- Poppler utilities (for PDF parsing)
 - API credentials for the services you want to use locally
 
 ## Environment Variables
@@ -112,7 +119,42 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=
 
 Never commit `.env`, `frontend/.env.local`, API keys, access tokens, or private user documents.
 
-## Backend Setup
+## Option 1: Running with Docker (Recommended)
+
+Docker packages both the FastAPI backend (including native Tesseract OCR, Poppler C-libraries, and Python dependencies) and Next.js frontend into isolated containers managed by `docker-compose.yml`.
+
+### 1. Start the Containers
+
+**Standard Production Stack** (builds and runs both services in background):
+```bash
+docker compose up --build -d
+```
+
+**Development Mode with Live Code Sync** (uses bind mounts so edits to `app/` and `frontend/` reflect immediately):
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+```
+
+### 2. Access the Application
+
+- **Frontend Chat UI**: [http://localhost:3000](http://localhost:3000)
+- **FastAPI Interactive Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Next.js API Proxy**: Next.js automatically rewrites `/api/py/:path*` to the internal backend container (`http://backend:8000/:path*`). Test this at [http://localhost:3000/api/py/docs](http://localhost:3000/api/py/docs).
+
+### 3. Docker Management Commands
+
+| Task | Command |
+| --- | --- |
+| **Check container health** | `docker compose ps` |
+| **Stream live logs across services** | `docker compose logs -f` |
+| **Run tests inside backend container** | `docker compose exec backend pytest` |
+| **Stop and remove containers** | `docker compose down` |
+
+---
+
+## Option 2: Running Locally without Docker (Manual Setup)
+
+### Backend Setup
 
 From the project root, create and activate a virtual environment:
 
@@ -154,7 +196,7 @@ The API runs at:
 http://localhost:8000
 ```
 
-## Frontend Setup
+### Frontend Setup
 
 In a second terminal:
 
@@ -174,10 +216,26 @@ The frontend sends multipart chat requests to the backend, including uploaded fi
 
 ## Tests
 
+### Running Tests with Docker
+
+Run the backend test suite inside the containerized Linux environment:
+
+```bash
+docker compose exec backend pytest
+```
+
+### Running Tests Locally without Docker
+
 Run the backend test suite from the project root:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
+```
+
+On macOS/Linux:
+
+```bash
+pytest
 ```
 
 Run frontend lint and frontend tests:
