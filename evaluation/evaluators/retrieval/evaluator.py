@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -43,7 +43,13 @@ def _idcg_at_k(relevant: List[str], k: int) -> float:
             idcg += 1 / math.log2(i + 0)
     return idcg
 
-def evaluate_retrieval_case(case: Dict[str, Any], retrieved_chunks: List[str]) -> Dict[str, Any]:
+def evaluate_retrieval_case(
+    case: Dict[str, Any],
+    retrieved_chunks: List[str],
+    *,
+    dense_result_count: Optional[int] = None,
+    lexical_result_count: Optional[int] = None,
+) -> Dict[str, Any]:
     """Evaluate a single retrieval case.
 
     Returns a dictionary containing:
@@ -55,6 +61,8 @@ def evaluate_retrieval_case(case: Dict[str, Any], retrieved_chunks: List[str]) -
         - precision_at_5
         - mrr
         - ndcg_at_5
+        - dense_result_count (optional)
+        - lexical_result_count (optional)
     """
     case_id = case.get("id")
     query = case.get("query")
@@ -74,27 +82,41 @@ def evaluate_retrieval_case(case: Dict[str, Any], retrieved_chunks: List[str]) -
         else 0.0
     )
 
-    return {
+    result: Dict[str, Any] = {
         "id": case_id,
         "query": query,
         "expected_chunks": expected,
         "retrieved_chunks": retrieved_chunks,
-        "recall_at_5": recall_at_5,
-        "precision_at_5": precision_at_5,
-        "mrr": mrr,
-        "ndcg_at_5": ndcg_at_5,
+        "recall_at_5": round(recall_at_5, 4),
+        "precision_at_5": round(precision_at_5, 4),
+        "mrr": round(mrr, 4),
+        "ndcg_at_5": round(ndcg_at_5, 4),
     }
+    if dense_result_count is not None:
+        result["dense_result_count"] = dense_result_count
+    if lexical_result_count is not None:
+        result["lexical_result_count"] = lexical_result_count
+
+    return result
 
 def summarize_retrieval_results(cases_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Aggregate metrics across all cases (simple average)."""
     if not cases_results:
         return {}
     total_cases = len(cases_results)
-    agg = {
+    agg: Dict[str, Any] = {
         "total_cases": total_cases,
-        "average_recall_at_5": sum(r["recall_at_5"] for r in cases_results) / total_cases,
-        "average_precision_at_5": sum(r["precision_at_5"] for r in cases_results) / total_cases,
-        "average_mrr": sum(r["mrr"] for r in cases_results) / total_cases,
-        "average_ndcg_at_5": sum(r["ndcg_at_5"] for r in cases_results) / total_cases,
+        "average_recall_at_5": round(sum(r["recall_at_5"] for r in cases_results) / total_cases, 4),
+        "average_precision_at_5": round(sum(r["precision_at_5"] for r in cases_results) / total_cases, 4),
+        "average_mrr": round(sum(r["mrr"] for r in cases_results) / total_cases, 4),
+        "average_ndcg_at_5": round(sum(r["ndcg_at_5"] for r in cases_results) / total_cases, 4),
     }
+    if any("dense_result_count" in r for r in cases_results):
+        agg["average_dense_result_count"] = round(
+            sum(r.get("dense_result_count", 0) for r in cases_results) / total_cases, 2
+        )
+    if any("lexical_result_count" in r for r in cases_results):
+        agg["average_lexical_result_count"] = round(
+            sum(r.get("lexical_result_count", 0) for r in cases_results) / total_cases, 2
+        )
     return agg

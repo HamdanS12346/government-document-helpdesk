@@ -12,7 +12,7 @@ import os
 os.environ["LANGFUSE_ENABLED"] = "true"
 from pathlib import Path
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
@@ -32,26 +32,31 @@ from app.rag.node import get_default_retriever_pipeline
 from app.rag.vector_store import VectorStoreRetriever
 from evaluation.case_loader import load_cases
 from evaluation.evaluators.response.evaluator import evaluate_response_case
+from evaluation.evaluators.retrieval.evaluator import (
+    evaluate_retrieval_case,
+    summarize_retrieval_results,
+)
 from evaluation.graph.adapter import ConnectedGraphAdapter, GraphEvaluationOutput
+from evaluation.runners.run_retrieval import initialize_and_validate_corpus
 
 
-def ensure_corpus_indexed() -> None:
-    """Ensure the lexical searcher (BM25) is loaded with documents from Chroma."""
-    print("Connecting to ChromaDB and preparing lexical search index...", flush=True)
-    retriever = VectorStoreRetriever()
-    documents: List[RetrievedDocument] = retriever.get_all_documents()
-    if documents:
-        pipeline = get_default_retriever_pipeline()
-        pipeline.lexical_searcher.index(documents)
-        print(f"[OK] Loaded {len(documents)} documents into BM25 index (Chroma vector store already active).\n", flush=True)
-    else:
-        print("[WARN] No documents found in ChromaDB, proceeding with available store.\n", flush=True)
+def ensure_corpus_indexed() -> tuple[int, int]:
+    """Ensure both dense vector store and BM25 lexical index are populated and validated."""
+    pipeline = get_default_retriever_pipeline()
+    return initialize_and_validate_corpus(pipeline)
 
 
-def run_demo(start: int = 1, end: int = 3) -> None:
-    ensure_corpus_indexed()
+def run_demo(
+    start: int = 1,
+    end: int = 3,
+    output: Optional[Path] = None,
+    adapter: Optional[ConnectedGraphAdapter] = None,
+    cases_file: Optional[Path] = None,
+) -> dict[str, Any]:
+    chroma_count, bm25_count = ensure_corpus_indexed()
 
-    cases_file = PROJECT_ROOT / "evaluation/datasets/response/cases.jsonl"
+    if cases_file is None:
+        cases_file = PROJECT_ROOT / "evaluation/datasets/response/cases.jsonl"
     all_cases = load_cases(cases_file)
     
     start_idx = max(1, start)
@@ -59,7 +64,8 @@ def run_demo(start: int = 1, end: int = 3) -> None:
     cases_to_run = all_cases[start_idx - 1 : end_idx]
 
     langfuse_client = get_langfuse_client()
-    adapter = ConnectedGraphAdapter()
+    if adapter is None:
+        adapter = ConnectedGraphAdapter()
 
     print("=" * 80, flush=True)
     print(f"RUNNING CONNECTED GRAPH EVALUATION ON RECORDS {start_idx} TO {end_idx} ({len(cases_to_run)} TEST CASES)", flush=True)
@@ -100,9 +106,39 @@ def run_demo(start: int = 1, end: int = 3) -> None:
                 continue
 
             print(f"  -> Intent: {graph_output.intent} (confidence: {graph_output.confidence_score})", flush=True)
+            print(f"  -> Hybrid Candidates: Dense: {graph_output.dense_result_count} | Lexical: {graph_output.lexical_result_count}", flush=True)
             print(f"  -> Retrieved chunks ({len(graph_output.retrieved_chunk_ids)}): {graph_output.retrieved_chunk_ids}", flush=True)
             print(f"  -> Response preview: {graph_output.response[:120] if graph_output.response else 'None'}...", flush=True)
             print(f"  -> Citations ({len(graph_output.citations)}): {graph_output.citations}", flush=True)
+
+            # Evaluate retrieval ranking quality against ground-truth chunks
+            expected_chunks = case.get("expected_chunks") or [
+                c["chunk_id"] for c in case.get("context", []) if isinstance(c, dict) and "chunk_id" in c
+            ]
+            retrieval_metrics = {
+                "dense_result_count": graph_output.dense_result_count,
+                "lexical_result_count": graph_output.lexical_result_count,
+            }
+            if expected_chunks:
+                retrieval_eval = evaluate_retrieval_case(
+                    case={"id": case_id, "query": query, "expected_chunks": expected_chunks},
+                    retrieved_chunks=graph_output.retrieved_chunk_ids,
+                    dense_result_count=graph_output.dense_result_count,
+                    lexical_result_count=graph_output.lexical_result_count,
+                )
+                retrieval_metrics.update({
+                    "recall_at_5": retrieval_eval.get("recall_at_5", 0.0),
+                    "precision_at_5": retrieval_eval.get("precision_at_5", 0.0),
+                    "mrr": retrieval_eval.get("mrr", 0.0),
+                    "ndcg_at_5": retrieval_eval.get("ndcg_at_5", 0.0),
+                })
+                print(
+                    f"  -> Retrieval Quality (Top-5): Recall: {retrieval_metrics['recall_at_5']:.2f} | "
+                    f"Precision: {retrieval_metrics['precision_at_5']:.2f} | "
+                    f"MRR: {retrieval_metrics['mrr']:.2f} | "
+                    f"nDCG: {retrieval_metrics['ndcg_at_5']:.2f}",
+                    flush=True,
+                )
 
             # Construct case evaluation with ACTUAL retrieved context
             eval_case_data = {
@@ -125,7 +161,7 @@ def run_demo(start: int = 1, end: int = 3) -> None:
                 )
 
             scores = eval_res.get("scores", {})
-            composite_score = eval_res.get("composite_score", 0.0)
+            composite_score = eval_res.get("composite_score") or eval_res.get("average_score", 0.0)
             passed = eval_res.get("passed", False)
 
             # Aggregate token usage across pipeline and evaluation judges
@@ -172,6 +208,44 @@ def run_demo(start: int = 1, end: int = 3) -> None:
                         langfuse_client.create_score(
                             name=f"eval_{crit}",
                             value=float(score),
+                            trace_id=trace_id,
+                            data_type="NUMERIC",
+                        )
+                    # Retrieval Quality Metrics on Langfuse
+                    if retrieval_metrics:
+                        langfuse_client.create_score(
+                            name="retrieval_recall_at_5",
+                            value=float(retrieval_metrics["recall_at_5"]),
+                            trace_id=trace_id,
+                            data_type="NUMERIC",
+                        )
+                        langfuse_client.create_score(
+                            name="retrieval_precision_at_5",
+                            value=float(retrieval_metrics["precision_at_5"]),
+                            trace_id=trace_id,
+                            data_type="NUMERIC",
+                        )
+                        langfuse_client.create_score(
+                            name="retrieval_mrr",
+                            value=float(retrieval_metrics["mrr"]),
+                            trace_id=trace_id,
+                            data_type="NUMERIC",
+                        )
+                        langfuse_client.create_score(
+                            name="retrieval_ndcg_at_5",
+                            value=float(retrieval_metrics["ndcg_at_5"]),
+                            trace_id=trace_id,
+                            data_type="NUMERIC",
+                        )
+                        langfuse_client.create_score(
+                            name="retrieval_dense_result_count",
+                            value=float(graph_output.dense_result_count),
+                            trace_id=trace_id,
+                            data_type="NUMERIC",
+                        )
+                        langfuse_client.create_score(
+                            name="retrieval_lexical_result_count",
+                            value=float(graph_output.lexical_result_count),
                             trace_id=trace_id,
                             data_type="NUMERIC",
                         )
@@ -231,6 +305,9 @@ def run_demo(start: int = 1, end: int = 3) -> None:
                 output={
                     "intent": graph_output.intent,
                     "retrieved_chunk_ids": graph_output.retrieved_chunk_ids,
+                    "dense_result_count": graph_output.dense_result_count,
+                    "lexical_result_count": graph_output.lexical_result_count,
+                    "retrieval_metrics": retrieval_metrics,
                     "response": graph_output.response,
                     "citations": graph_output.citations,
                     "evaluation_scores": scores,
@@ -245,6 +322,9 @@ def run_demo(start: int = 1, end: int = 3) -> None:
                 "query": query,
                 "intent": graph_output.intent,
                 "retrieved_chunks": len(graph_output.retrieved_chunk_ids),
+                "dense_result_count": graph_output.dense_result_count,
+                "lexical_result_count": graph_output.lexical_result_count,
+                "retrieval_metrics": retrieval_metrics,
                 "composite_score": composite_score,
                 "passed": passed,
                 "tokens": turn_tokens,
@@ -256,14 +336,79 @@ def run_demo(start: int = 1, end: int = 3) -> None:
     flush_langfuse()
     print("[OK] All observations and scores flushed to Langfuse.", flush=True)
 
-    print("\n" + "=" * 80, flush=True)
+    # Compute aggregate hybrid evidence and retrieval performance
+    total_cases = len(summary_results)
+    avg_dense = (
+        sum(r.get("dense_result_count", 0) for r in summary_results) / total_cases
+        if total_cases > 0
+        else 0.0
+    )
+    avg_lexical = (
+        sum(r.get("lexical_result_count", 0) for r in summary_results) / total_cases
+        if total_cases > 0
+        else 0.0
+    )
+    hybrid_verified = (
+        chroma_count > 0
+        and bm25_count > 0
+        and avg_dense > 0
+        and avg_lexical > 0
+    )
+
+    corpus_evidence = {
+        "chroma_document_count": chroma_count,
+        "bm25_document_count": bm25_count,
+        "average_dense_result_count": avg_dense,
+        "average_lexical_result_count": avg_lexical,
+        "hybrid_retrieval_verified": hybrid_verified,
+    }
+
+    print("\n" + "=" * 60, flush=True)
+    print("HYBRID RETRIEVAL EVALUATION EVIDENCE SUMMARY", flush=True)
+    print("=" * 60, flush=True)
+    print(f"Total Cases Evaluated:       {total_cases}", flush=True)
+    print(f"Chroma Indexed Documents:    {chroma_count}", flush=True)
+    print(f"BM25 Indexed Documents:      {bm25_count}", flush=True)
+    print(f"Average Dense Candidates:    {avg_dense:.2f}", flush=True)
+    print(f"Average Lexical Candidates:  {avg_lexical:.2f}", flush=True)
+    verified_str = "YES" if hybrid_verified else "NO"
+    print(f"Hybrid Evaluation Verified:  {verified_str}", flush=True)
+    print("=" * 60 + "\n", flush=True)
+
+    print("=" * 80, flush=True)
     print("SUMMARY OF CONNECTED GRAPH EVALUATION RUN", flush=True)
     print("=" * 80, flush=True)
+
+    # Aggregate retrieval metrics across cases where ground truth was present
+    evaluated_retrievals = [
+        r["retrieval_metrics"] for r in summary_results
+        if r.get("retrieval_metrics") and "recall_at_5" in r["retrieval_metrics"]
+    ]
+    avg_rec = 0.0
+    avg_prec = 0.0
+    avg_mrr = 0.0
+    avg_ndcg = 0.0
+    if evaluated_retrievals:
+        avg_rec = sum(r["recall_at_5"] for r in evaluated_retrievals) / len(evaluated_retrievals)
+        avg_prec = sum(r["precision_at_5"] for r in evaluated_retrievals) / len(evaluated_retrievals)
+        avg_mrr = sum(r["mrr"] for r in evaluated_retrievals) / len(evaluated_retrievals)
+        avg_ndcg = sum(r["ndcg_at_5"] for r in evaluated_retrievals) / len(evaluated_retrievals)
+        print("OVERALL RETRIEVAL PERFORMANCE (Top-5):", flush=True)
+        print(f"  Average Recall@5:    {avg_rec:.2f}", flush=True)
+        print(f"  Average Precision@5: {avg_prec:.2f}", flush=True)
+        print(f"  Average MRR:         {avg_mrr:.2f}", flush=True)
+        print(f"  Average nDCG@5:      {avg_ndcg:.2f}", flush=True)
+        print("-" * 80, flush=True)
+
     for res in summary_results:
         print(f"Case: {res['case_id']}", flush=True)
         print(f"  Query:            {res['query']}", flush=True)
         print(f"  Intent:           {res['intent']}", flush=True)
+        print(f"  Hybrid Candidates: Dense={res.get('dense_result_count', 0)}, Lexical={res.get('lexical_result_count', 0)}", flush=True)
         print(f"  Chunks Retrieved: {res['retrieved_chunks']}", flush=True)
+        rm = res.get("retrieval_metrics")
+        if rm and "recall_at_5" in rm:
+            print(f"  Retrieval (k=5):  Recall={rm['recall_at_5']:.2f}, Precision={rm['precision_at_5']:.2f}, MRR={rm['mrr']:.2f}, nDCG={rm['ndcg_at_5']:.2f}", flush=True)
         tokens = res.get("tokens", {})
         print(f"  Tokens:           {tokens.get('input_tokens', 0)} in / {tokens.get('output_tokens', 0)} out (Total: {tokens.get('total_tokens', 0)}, Cost: ${tokens.get('cost_usd', 0.0):.5f})", flush=True)
         print(f"  Composite Score:  {res['composite_score']:.2f}", flush=True)
@@ -272,11 +417,36 @@ def run_demo(start: int = 1, end: int = 3) -> None:
             print(f"  Langfuse Trace ID: {res['trace_id']}", flush=True)
         print("-" * 80, flush=True)
 
+    report = {
+        "corpus_evidence": corpus_evidence,
+        "metrics": {
+            "total_cases": total_cases,
+            "average_dense_result_count": avg_dense,
+            "average_lexical_result_count": avg_lexical,
+            "chroma_document_count": chroma_count,
+            "bm25_document_count": bm25_count,
+            "hybrid_retrieval_verified": hybrid_verified,
+            "average_recall_at_5": avg_rec,
+            "average_precision_at_5": avg_prec,
+            "average_mrr": avg_mrr,
+            "average_ndcg_at_5": avg_ndcg,
+        },
+        "cases": summary_results,
+    }
+
+    report_path = output or (PROJECT_ROOT / "evaluation/reports/e2e/latest.json")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(f"\n[OK] End-to-end evaluation report written to {report_path}", flush=True)
+
+    return report
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run connected graph evaluation with Langfuse tracing.")
     parser.add_argument("--start", type=int, default=1, help="1-based start record index (inclusive, default: 1)")
     parser.add_argument("--end", type=int, default=3, help="1-based end record index (inclusive, default: 3)")
+    parser.add_argument("--output", type=Path, default=None, help="Path to write the JSON evaluation report (default: evaluation/reports/e2e/latest.json)")
     args = parser.parse_args()
 
-    run_demo(start=args.start, end=args.end)
+    run_demo(start=args.start, end=args.end, output=args.output)

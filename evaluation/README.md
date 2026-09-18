@@ -1,148 +1,267 @@
-# Current Evaluation Guide
+# Evaluation Guide
 
-Evaluation is currently implemented for:
+Comprehensive guide for evaluating the Government Document Helpdesk assistant across all pipeline stages: Input Processing, Intent Classification, Hybrid Retrieval, Response Generation, and End-to-End Connected Graph Execution.
 
-- Input Processor
-- Intent Classifier
+---
 
-Retrieval and response evaluation are intentionally not included yet.
+## Overview of Evaluation Modules
 
-Langfuse publishing runs by default for the two implemented evaluations. Use
-`--no-langfuse` for a deliberate local-only run.
+| Evaluation Stage | Runner Script | Default Dataset | Evaluated Dimensions | Required Keys |
+| :--- | :--- | :--- | :--- | :--- |
+| **Input Processor** | `evaluation/runners/run_input_processor.py` | `evaluation/datasets/input_processor/cases.json` | Parsing success/failure, modality extraction | None (Deterministic fixtures) |
+| **Intent Classifier** | `evaluation/runners/run_intent.py` | `evaluation/datasets/intent/cases.json` | Intent classification accuracy, macro/per-class Precision, Recall, F1 | None (offline) or `OPENAI_API_KEY` (online) |
+| **Hybrid Retrieval** | `evaluation/runners/run_retrieval.py` | `evaluation/datasets/retrieval/cases.jsonl` | Recall@5, Precision@5, MRR, nDCG@5, Hybrid Evidence | `OPENAI_API_KEY`, optional `COHERE_API_KEY` |
+| **Response Generation** | `evaluation/runners/run_response.py` | `evaluation/datasets/response/cases.jsonl` | 6 LLM judges (Correctness, Faithfulness, Relevance, Completeness, Citation, Safety) | `OPENAI_API_KEY` |
+| **End-to-End Graph** | `evaluation/runners/run_e2e_demo.py` | `evaluation/datasets/response/cases.jsonl` | Full graph execution, dynamic grounding, IR metrics, LLM judges, token usage | `OPENAI_API_KEY`, optional `COHERE_API_KEY` |
 
-## Datasets
+> [!NOTE]
+> All runners support Langfuse observability publishing by default when credentials (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`) are present. Pass `--no-langfuse` to run purely locally.
 
-The runners support both the planned JSON Lines format and the current datasets:
+---
+
+## Datasets Directory
+
+The evaluation datasets reside under `evaluation/datasets/`:
 
 ```text
-evaluation/datasets/input_processor/cases.json
-evaluation/datasets/intent/cases.json
+evaluation/datasets/
+├── input_processor/
+│   └── cases.json           # Valid/invalid document upload and text inputs
+├── intent/
+│   └── cases.json           # Queries labeled by intent (document_info, general_chat, ambiguous)
+├── retrieval/
+│   └── cases.jsonl          # Government queries paired with expected ground-truth chunk IDs
+└── response/
+    └── cases.jsonl          # Queries with expected answers, citations, and ground-truth contexts
 ```
 
-Ground truth remains independent of system predictions.
+---
 
-## Input Processor
+## 1. Input Processor Evaluation
 
-Run:
+Evaluates text normalization, file validation, and modality detection using deterministic fixtures.
+
+### Commands
 
 ```powershell
+# Run evaluation (publishes to Langfuse if configured)
 .\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py
+
+# Run local only without publishing
+.\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py --no-langfuse
+
+# Save JSON report to custom path
+.\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py --output evaluation\reports\input_processor.json
 ```
 
-The runner publishes the same run to Langfuse automatically:
+- **Required Keys**: None. Uses real sample fixtures from `evaluation/fixtures/input_processor/` without calling external OCR or PDF services.
+- **Cost**: $0.00 (local processing).
+- **Metrics**:
+  - `valid_accuracy`: Whether processor validation outcome matches the expected ground truth.
+  - `modality_accuracy`: Whether detected modalities (`text`, `pdf`, `image`) match the declared input types.
+- **Limitations**: Attachment files are reused test fixtures matching the expected MIME types, not dynamic OCR outputs.
+
+---
+
+## 2. Intent Classifier Evaluation
+
+Evaluates routing accuracy across `document_info`, `general_chat`, and `ambiguous`.
+
+### Commands
 
 ```powershell
-.\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py --langfuse
-```
-
-Optional JSON report:
-
-```powershell
-.\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py `
-  --output evaluation\reports\input_processor.json
-```
-
-The runner uses the real Input Processor and deterministic evaluation fixtures/providers. It does not call Tesseract or an external PDF provider.
-
-Metrics:
-
-- `valid_accuracy`: whether the processor's success/failure matches the label.
-- `modality_accuracy`: whether the normalized output's modality list matches the label.
-- Per-case results and mismatches.
-
-The fixture adapter loads real image/PDF files from `evaluation/fixtures/input_processor/` because the current dataset's attachment `content` fields are descriptions, not upload bytes. The same source fixtures are reused across cases while preserving each dataset filename and declared MIME type. This does not modify the Input Processor.
-
-Evaluation validity requires `process_input()` success and every attachment status to be successful. The Input Processor itself intentionally supports partial success, so a request with valid user text and a failed attachment can still have `success=True`; the evaluator still marks that case invalid because one supplied attachment failed.
-
-## Intent Classifier
-
-### Offline, no API call
-
-```powershell
+# Offline heuristic baseline (no API call, $0 cost)
 .\.venv\Scripts\python.exe evaluation\runners\run_intent.py --offline
-```
 
-This uses a deterministic heuristic baseline. Its score measures the baseline, not OpenAI model quality. Langfuse publishing is automatic when credentials are configured.
-
-Publish the offline baseline scores to Langfuse:
-
-```powershell
-.\.venv\Scripts\python.exe evaluation\runners\run_intent.py --offline --langfuse
-```
-
-### Real OpenAI evaluation
-
-```powershell
+# Real model evaluation with OpenAI
 .\.venv\Scripts\python.exe evaluation\runners\run_intent.py
+
+# Local only (skip Langfuse)
+.\.venv\Scripts\python.exe evaluation\runners\run_intent.py --no-langfuse
+
+# Save JSON report
+.\.venv\Scripts\python.exe evaluation\runners\run_intent.py --output evaluation\reports\intent_openai.json
 ```
 
-This invokes the real `OpenAIIntentClassifier` once per case and requires a valid `OPENAI_API_KEY`. It may incur API usage.
+- **Required Keys**:
+  - Offline: None.
+  - Online: `OPENAI_API_KEY` (invokes `gpt-4o-mini`).
+- **Cost**:
+  - Offline: $0.00.
+  - Online: ~$0.0001 per test case (~$0.005 for full 50-case dataset).
+- **Metrics**:
+  - `accuracy`: Overall classification accuracy.
+  - Macro and per-intent `precision`, `recall`, `f1`, and `support`.
+  - Confusion matrix and per-case prediction details.
+- **Limitations**: Evaluates standalone classification outside conversation memory context.
 
-The real-model evaluation is also published automatically when credentials are configured:
+---
+
+## 3. Hybrid Retrieval Evaluation
+
+Evaluates the multi-stage retriever (query rewriting, metadata filtering, BM25 lexical search, Chroma dense vector search, Reciprocal Rank Fusion, and Cohere reranking) against ground-truth document chunks.
+
+### Commands
 
 ```powershell
-.\.venv\Scripts\python.exe evaluation\runners\run_intent.py --langfuse
+# Run full retrieval dataset (50 cases)
+.\.venv\Scripts\python.exe -m evaluation.runners.run_retrieval
+
+# Run limited subset (e.g. 10 cases)
+.\.venv\Scripts\python.exe -m evaluation.runners.run_retrieval --limit 10
+
+# Run specific record slice
+.\.venv\Scripts\python.exe -m evaluation.runners.run_retrieval --start 1 --end 10
+
+# Evaluate with custom top-k and write report locally
+.\.venv\Scripts\python.exe -m evaluation.runners.run_retrieval --top-k 5 --no-langfuse --output evaluation\reports\retrieval\latest.json
 ```
 
-Metrics:
+### Required Keys & Configuration
 
-- Accuracy
-- Macro precision
-- Macro recall
-- Macro F1
-- Per-intent precision, recall, F1, and support
-- Confusion matrix
-- Per-case predictions
+- `OPENAI_API_KEY`: **Required**. Used for dense query embeddings (`text-embedding-3-small`) and LLM metadata filter extraction.
+- `COHERE_API_KEY`: **Optional** (recommended). Enables Cohere reranking (`rerank-v3.5`). If omitted, the pipeline falls back gracefully to Reciprocal Rank Fusion (RRF) scores without failing.
+- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`: Optional for publishing.
+
+### Costs & Resource Usage
+
+- Dense embeddings: ~$0.02 per 1,000 queries.
+- BM25: In-memory lexical search (free).
+- Cohere reranker: ~$1.00 per 1,000 queries (if key provided).
+- Total cost for 50 cases: ~$0.05.
+
+### Metrics & Evidence
+
+- **Information Retrieval (IR) Metrics**:
+  - `recall_at_5`: Fraction of expected chunks found in top-5 results.
+  - `precision_at_5`: Proportion of top-5 results that are relevant.
+  - `mrr` (Mean Reciprocal Rank): Reciprocal rank of the first relevant chunk.
+  - `ndcg_at_5`: Normalized Discounted Cumulative Gain accounting for rank positions.
+- **Evaluation Evidence Block (`corpus_evidence`)**:
+  - `chroma_document_count`: Total indexed documents in vector store (e.g., 1948).
+  - `bm25_document_count`: Total indexed documents in lexical index (e.g., 1948).
+  - `average_dense_result_count`: Mean candidate chunks returned by Chroma search.
+  - `average_lexical_result_count`: Mean candidate chunks returned by BM25 search.
+  - `hybrid_retrieval_verified`: Confirms both dense and lexical candidates were retrieved and evaluated.
+
+### Limitations
+
+- Fails fast (`RuntimeError`) if the Chroma vector store or BM25 index contains 0 documents.
+- Evaluates exact chunk ID matches (`expected_chunks`); re-chunking or re-indexing the corpus requires updating dataset IDs.
+
+---
+
+## 4. Response Node Evaluation
+
+Evaluates response generation and citation precision using LLM-as-a-judge across 6 distinct criteria.
+
+### Commands
+
+```powershell
+# Run full response dataset with all 6 LLM judges
+.\.venv\Scripts\python.exe -m evaluation.runners.run_response
+
+# Limit to first 10 cases
+.\.venv\Scripts\python.exe -m evaluation.runners.run_response --limit 10
+
+# Evaluate a specific subset of criteria
+.\.venv\Scripts\python.exe -m evaluation.runners.run_response --limit 5 --criteria correctness,faithfulness
+
+# Run local only and output report
+.\.venv\Scripts\python.exe -m evaluation.runners.run_response --no-langfuse --output evaluation\reports\response\latest.json
+```
+
+### Required Keys
+
+- `OPENAI_API_KEY`: **Required**. Used for both response generation (`gpt-4o-mini`) and executing the 6 LLM judges.
+- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`: Optional for publishing.
+
+### Costs
+
+- Generation & Judges: ~$0.001 - $0.005 per case evaluated across all 6 criteria.
+- Full 50-case evaluation: ~$0.15 - $0.25.
+
+### Metrics
+
+Each criterion is scored from 0.0 to 1.0:
+
+1. `correctness`: Factual alignment with expected answer.
+2. `faithfulness`: Strict grounding in context without hallucination.
+3. `relevance`: Directness and helpfulness for the citizen query.
+4. `completeness`: Thorough coverage of necessary steps, rules, or fees.
+5. `citation`: Precision and validity of citation links.
+6. `safety`: Absence of harmful, deceptive, or unsafe guidance.
+- `composite_score`: Weighted average across criteria.
+- `passed`: Whether composite score meets threshold (default >= 0.70).
+
+### Limitations
+
+- Evaluates the generator against static ground-truth context provided in the dataset. To evaluate responses grounded on live retrieved documents, use the End-to-End Evaluation.
+
+---
+
+## 5. End-to-End Connected Graph Evaluation
+
+Executes cases through the complete connected LangGraph pipeline (`process_input` -> `intent_classifier` -> `retriever` -> `context_builder` -> `response`), evaluating dynamic grounding, full IR quality, response judges, and token consumption in a single workflow.
+
+### Commands
+
+```powershell
+# Run demo on records 1 to 3
+.\.venv\Scripts\python.exe -m evaluation.runners.run_e2e_demo --start 1 --end 3
+
+# Run on 10 records with custom report output
+.\.venv\Scripts\python.exe -m evaluation.runners.run_e2e_demo --start 1 --end 10 --output evaluation\reports\e2e\latest.json
+```
+
+### Metrics & Outputs
+
+- **Corpus Evidence Summary**: Verifies Chroma document count (1948), BM25 document count (1948), and average candidate counts.
+- **Dynamic Retrieval Metrics**: Evaluates Recall@5, Precision@5, MRR, and nDCG@5 against ground-truth chunks using live retrieved chunks.
+- **Response Quality**: Evaluates live generated answers against expected answers across all 6 LLM judge criteria.
+- **Token & Cost Observability**: Tracks input, output, total tokens, and estimated cost across both pipeline nodes and evaluation judges.
+- **Langfuse Integration**: Creates hierarchical traces with intermediate node outputs and registers numeric metric scores.
+
+---
 
 ## Langfuse Publishing
 
-Set these variables in `.env` before running a runner:
+Set these variables in `.env`:
 
-```text
-LANGFUSE_PUBLIC_KEY=...
-LANGFUSE_SECRET_KEY=...
-LANGFUSE_BASE_URL=https://cloud.langfuse.com
+```env
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_BASE_URL=https://cloud.langfuse.com  # or https://jp.cloud.langfuse.com
 ```
 
-The reporter creates one evaluator observation per run and publishes:
-
-- The entire report content (aggregate metrics and per-case evaluation details) stored in the observation `output`.
-- Aggregate scalar metrics such as accuracy and F1 recorded as numeric scores.
-- One `case_passed` score per case.
-- The run name and case count.
-
-Publishing fails clearly when credentials are missing. Use `--no-langfuse` when evaluation must remain local.
-
-### Publishing Existing Saved Reports
-
-You can also publish saved report files from `evaluation/reports/` directly to Langfuse without re-running evaluations:
+To publish previously generated reports without re-running evaluations:
 
 ```powershell
-# Publish all report files in evaluation/reports/
+# Publish all saved reports in evaluation/reports/
 .\.venv\Scripts\python.exe evaluation\langfuse_reporting.py
 
-# Or publish a specific report file:
-.\.venv\Scripts\python.exe evaluation\langfuse_reporting.py evaluation\reports\input_processor.json
+# Publish a specific report file:
+.\.venv\Scripts\python.exe evaluation\langfuse_reporting.py evaluation\reports\retrieval\latest.json
 ```
 
-## Output Reports
+---
 
-Reports are JSON and should normally be written outside source control, for example:
+## Summary & Best Practices
 
-```powershell
-New-Item -ItemType Directory -Force evaluation\reports
-.\.venv\Scripts\python.exe evaluation\runners\run_intent.py --offline `
-  --output evaluation\reports\intent-offline.json
-```
-
-Do not commit API keys, raw uploads, or generated private evaluation data.
-
-## Current Dataset Follow-Up
-
-The first run should be reviewed before setting pass thresholds. In particular:
-
-- `IP-008` and `IP-040` are labeled valid but use unsupported `.webp` and `.tif` extensions.
-- Several invalid cases include user text. Under the current partial-success contract, the request may remain successful even when an attachment fails.
-- `IP-038` combines a valid image with a broken PDF and should be reviewed against partial-success behavior.
-
-These are evaluation-label decisions, not changes to the Input Processor.
+1. **Quick Smoke Test (No Cost)**:
+   ```powershell
+   .\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py --no-langfuse
+   .\.venv\Scripts\python.exe evaluation\runners\run_intent.py --offline --no-langfuse
+   ```
+2. **Retrieval Verification (Low Cost)**:
+   ```powershell
+   .\.venv\Scripts\python.exe -m evaluation.runners.run_retrieval --limit 5 --no-langfuse
+   ```
+3. **Response Verification (Controlled Budget)**:
+   ```powershell
+   .\.venv\Scripts\python.exe -m evaluation.runners.run_response --limit 3 --no-langfuse
+   ```
+4. **End-to-End System Verification**:
+   ```powershell
+   .\.venv\Scripts\python.exe -m evaluation.runners.run_e2e_demo --start 1 --end 3
+   ```

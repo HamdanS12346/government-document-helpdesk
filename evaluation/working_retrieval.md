@@ -43,6 +43,9 @@ The executable script is **`evaluation/runners/run_retrieval.py`**. Key usage:
     [--dataset PATH]          # optional – path to a custom cases file
     [--output PATH]           # optional – where to write the JSON report
     [--top-k N]               # number of top documents to return (default 5)
+    [--limit N]               # maximum number of cases to evaluate (e.g. 10)
+    [--start N]               # 1-based start index of cases
+    [--end N]                 # 1-based end index of cases (inclusive)
     [--no-langfuse]           # skip publishing to Langfuse
 ```
 
@@ -50,7 +53,10 @@ The script performs the following steps:
 
 1. **Load cases** via `evaluation.case_loader.load_cases`.
 2. **Validate case IDs** to avoid duplicates.
-3. **Create a default retriever pipeline** (`app.rag.node.get_default_retriever_pipeline`).
+3. **Initialize and validate corpora in-process**:
+   - Connects to ChromaDB, warms dense embedding resources, and confirms non-empty document count.
+   - Populates the in-memory BM25 lexical index from the Chroma document corpus.
+   - **Fail-Fast**: If either Chroma or BM25 is empty (`count == 0`), the runner aborts immediately with an informative error and exit code 1.
 4. **For each case**:
    - Build a minimal LangGraph state containing a `normalized_input` dict with the query (no attachments).
    - Execute the pipeline → get documents.
@@ -69,8 +75,27 @@ The script performs the following steps:
 | `precision_at_5` | Proportion of the top‑5 results that are expected. |
 | `mrr` (Mean Reciprocal Rank) | Reciprocal of the rank of the first relevant chunk (0 if none). |
 | `ndcg_at_5` | Normalized Discounted Cumulative Gain@5 – accounts for rank ordering of relevant chunks. |
+| `average_dense_result_count` | Average number of candidate chunks returned by the Chroma dense search across all evaluated cases. |
+| `average_lexical_result_count` | Average number of candidate chunks returned by the BM25 lexical search across all evaluated cases. |
 
 The aggregated report contains both the per‑case entries and an `average_*` summary.
+
+### Evaluation Evidence Block
+In addition to accuracy metrics, the report contains a top-level `corpus_evidence` block confirming that the full hybrid retrieval system is active:
+
+```json
+"corpus_evidence": {
+  "chroma_document_count": 1948,
+  "bm25_document_count": 1948,
+  "average_dense_result_count": 5.0,
+  "average_lexical_result_count": 5.0,
+  "hybrid_retrieval_verified": true
+}
+```
+
+Each case under `cases` also records:
+- `dense_result_count`: number of candidates retrieved by Chroma dense search for this query.
+- `lexical_result_count`: number of candidates retrieved by BM25 lexical search for this query.
 
 ---
 

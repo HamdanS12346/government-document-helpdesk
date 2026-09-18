@@ -1,16 +1,15 @@
 #!/usr/bin/env python
-"""Index the existing Chroma collection and load it into the RetrieverPipeline.
+"""Verify Chroma collection connectivity and test corpus loading into RetrieverPipeline.
 
-This script connects to the Chroma DB (using the same environment variables that the
-retriever uses), fetches all stored `RetrievedDocument` objects and registers them
-as the active corpus for the default retrieval pipeline.
+This script connects to Chroma DB (using the configured environment variables),
+fetches all stored `RetrievedDocument` chunks, and registers them into the
+pipeline to verify corpus integrity.
 
-Run it before executing the evaluation runner:
-
-    python -m evaluation.runners.index_corpus
-
-The pipeline will then use the populated vector store when `run_retrieval.py`
-executes, producing non‑zero metrics and a JSON report.
+Note:
+    BM25 lexical search uses an in-memory index. `run_retrieval.py` now
+    automatically warms and initializes both Chroma and BM25 inside its own
+    process before running evaluation cases. This script serves as a standalone
+    diagnostic tool to inspect Chroma connectivity and document counts.
 """
 
 import sys

@@ -1,9 +1,9 @@
 # Chatbot Evaluation Implementation Plan
 
-> **Current implementation status:** Input Processor and Intent Classifier evaluation
-> runners and deterministic metric evaluators are implemented. Retrieval and response
-> evaluation remain future phases. The current datasets are supported as either JSON
-> arrays or JSON Lines files.
+> **Current implementation status:** All evaluation phases are implemented: Input Processor,
+> Intent Classifier, Hybrid Retrieval (with BM25 + Chroma + Cohere evidence), Response Generation
+> (with 6 LLM judges), and End-to-End Connected Graph execution (`run_e2e_demo.py`).
+> Langfuse tracing and local JSON reporting are available across all runners.
 
 ## 1. Overview
 
@@ -1116,33 +1116,33 @@ This should be inspected before writing the final evaluation runners so the eval
 
 # 20. Definition of Done
 
-- [ ] Input Processor has an evaluation dataset.
-- [ ] Input Processor evaluator works.
-- [ ] Input Processor runner works.
-- [ ] Modality accuracy is reported.
-- [ ] Validation accuracy is reported.
-- [ ] Intent dataset is implemented.
-- [ ] Intent evaluator works.
-- [ ] Intent runner works.
-- [ ] Accuracy, Precision, Recall and F1 are reported.
-- [ ] Confusion matrix is available.
-- [ ] Langfuse tracing is integrated.
-- [ ] Retrieval ground truth is created.
-- [ ] Retrieval evaluator works.
-- [ ] Recall@5 is reported.
-- [ ] Precision@5 is reported.
-- [ ] MRR is reported.
-- [ ] nDCG is reported.
-- [ ] Response dataset is implemented.
-- [ ] Correctness evaluation works.
-- [ ] Faithfulness evaluation works.
-- [ ] Relevance evaluation works.
-- [ ] Completeness evaluation works.
-- [ ] Citation evaluation works.
-- [ ] Safety evaluation works.
-- [ ] Insufficient-evidence cases are tested.
-- [ ] LLM-as-a-Judge is integrated where appropriate.
-- [ ] A human-reviewed subset validates the judge.
-- [ ] Evaluation results are visible/tracked in Langfuse.
-- [ ] Evaluation failures can be reproduced.
-- [ ] New failures can be added as regression cases.
+- [x] Input Processor has an evaluation dataset.
+- [x] Input Processor evaluator works.
+- [x] Input Processor runner works.
+- [x] Modality accuracy is reported.
+- [x] Validation accuracy is reported.
+- [x] Intent dataset is implemented.
+- [x] Intent evaluator works.
+- [x] Intent runner works.
+- [x] Accuracy, Precision, Recall and F1 are reported.
+- [x] Confusion matrix is available.
+- [x] Langfuse tracing is integrated.
+- [x] Retrieval ground truth is created.
+- [x] Retrieval evaluator works.
+- [x] Recall@5 is reported.
+- [x] Precision@5 is reported.
+- [x] MRR is reported.
+- [x] nDCG is reported.
+- [x] Response dataset is implemented.
+- [x] Correctness evaluation works.
+- [x] Faithfulness evaluation works.
+- [x] Relevance evaluation works.
+- [x] Completeness evaluation works.
+- [x] Citation evaluation works.
+- [x] Safety evaluation works.
+- [x] Insufficient-evidence cases are tested.
+- [x] LLM-as-a-Judge is integrated where appropriate.
+- [x] A human-reviewed subset validates the judge.
+- [x] Evaluation results are visible/tracked in Langfuse.
+- [x] Evaluation failures can be reproduced.
+- [x] New failures can be added as regression cases.
