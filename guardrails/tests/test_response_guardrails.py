@@ -22,6 +22,10 @@ from guardrails.response import (
     ResponseLengthGuardrail,
     ResponsePIIScanner,
     ResponseScopeGuardrail,
+    ResponseScopeResult,
+    extract_document_chunks,
+    extract_enclosing_statement,
+    is_statement_supported_by_chunk,
     run_response_guardrails,
 )
 
@@ -43,6 +47,30 @@ def _make_context(num_sources: int, fallback_applied: bool = False) -> Retrieved
         documents_used=num_sources,
         has_relevant_documents=num_sources > 0 and not fallback_applied,
         fallback_applied=fallback_applied,
+    )
+
+
+def _make_context_with_chunks(chunks_dict: dict[int, str]) -> RetrievedContext:
+    """Build a RetrievedContext with full [Document N] formatted context blocks."""
+    formatted_blocks = []
+    sources = []
+    for idx, content in chunks_dict.items():
+        formatted_blocks.append(
+            f"[Document {idx}]\n"
+            f"Document: doc-{idx}\n"
+            f"Category: general\n"
+            f"Content:\n{content}"
+        )
+        sources.append(
+            ContextSource(index=idx, chunk_id=f"chunk-{idx}", document_name=f"doc-{idx}")
+        )
+    return RetrievedContext(
+        formatted_context="\n\n---\n\n".join(formatted_blocks),
+        sources=sources,
+        total_documents_retrieved=len(sources),
+        documents_used=len(sources),
+        has_relevant_documents=len(sources) > 0,
+        fallback_applied=False,
     )
 
 
@@ -114,6 +142,113 @@ class TestCitationGroundingGuardrail:
         text = "See [Document 1] and [Document 9]."  # 1 of 2 = 50%
         result = self.guardrail.check(text, ctx)
         assert result.decision == ResponseGuardrailDecision.STRIP_INVALID_CITATIONS
+
+    def test_allow_when_citation_statement_supported_by_chunk(self):
+        """Citation [Document 1] exists AND its content supports the claim → ALLOW."""
+        ctx = _make_context_with_chunks({
+            1: "Applicants must submit Form 9 and a medical fitness certificate to renew their driving licence at the RTO.",
+        })
+        text = "To renew your driving licence, submit Form 9 to the zonal RTO [Document 1]."
+        result = self.guardrail.check(text, ctx)
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+        assert result.supported_citations_found == 1
+        assert result.unsupported_citation_indices == []
+        assert "[Document 1]" in result.cleaned_text
+
+    def test_reject_when_citation_statement_not_supported_by_chunk(self):
+        """Citation [Document 1] exists in sources but chunk content is about an unrelated topic → REJECT."""
+        ctx = _make_context_with_chunks({
+            1: "To apply for a passport, visit the Passport Seva Kendra with birth certificate and address proof.",
+        })
+        # Claim is about driving licence, citing passport document
+        text = "To renew your driving licence, submit Form 9 to the zonal RTO [Document 1]."
+        result = self.guardrail.check(text, ctx)
+        assert result.decision == ResponseGuardrailDecision.REJECT
+        assert 1 in result.unsupported_citation_indices
+        assert 1 in result.invalid_citation_indices
+        assert "government portals" in result.cleaned_text
+
+    def test_strip_when_minority_citation_unsupported_by_chunk(self):
+        """One citation is supported and one is unsupported (50%) → STRIP_INVALID_CITATIONS."""
+        ctx = _make_context_with_chunks({
+            1: "To renew your driving licence, submit Form 9 to the RTO office.",
+            2: "To apply for a passport, visit the Passport Seva Kendra with proof of birth.",
+        })
+        # Sentence 1 is supported by Doc 1. Sentence 2 misattributes passport claim to Doc 2.
+        text = (
+            "To renew your driving licence, submit Form 9 to the RTO [Document 1]. "
+            "Your tax assessment will be completed in 7 days [Document 2]."
+        )
+        result = self.guardrail.check(text, ctx)
+        assert result.decision == ResponseGuardrailDecision.STRIP_INVALID_CITATIONS
+        assert 2 in result.unsupported_citation_indices
+        assert "[Document 1]" in result.cleaned_text
+        assert "[source unavailable]" in result.cleaned_text
+
+    def test_multicitation_in_same_sentence_supported(self):
+        """Multiple citations in a single sentence supported by their respective chunks → ALLOW."""
+        ctx = _make_context_with_chunks({
+            1: "Driving licence renewal requires identity verification.",
+            2: "Aadhaar card is accepted as valid proof of identity.",
+        })
+        text = "You can submit your driving licence [Document 1] or Aadhaar card [Document 2] for verification."
+        result = self.guardrail.check(text, ctx)
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+        assert result.supported_citations_found == 2
+        assert result.unsupported_citation_indices == []
+
+
+# ---------------------------------------------------------------------------
+# TestCitationAttributionVerification
+# ---------------------------------------------------------------------------
+
+class TestCitationAttributionVerification:
+    """Unit tests for statement extraction, chunk parsing, and lexical grounding helpers."""
+
+    def test_extract_document_chunks(self):
+        raw = (
+            "[Document 1]\n"
+            "Document: dl-guide\n"
+            "Category: transport\n"
+            "Content:\n"
+            "Driving licence rules and renewal.\n"
+            "---\n"
+            "[Document 2]\n"
+            "Document: pan-guide\n"
+            "Category: finance\n"
+            "Content:\n"
+            "PAN card application instructions.\n"
+        )
+        chunks = extract_document_chunks(raw)
+        assert 1 in chunks
+        assert 2 in chunks
+        assert "Driving licence rules" in chunks[1]
+        assert "PAN card application" in chunks[2]
+
+    def test_extract_enclosing_statement_sentence(self):
+        text = "First step is simple. Renew your driving licence at the RTO [Document 1]. Then pay fees."
+        match_start = text.index("[Document 1]")
+        match_end = match_start + len("[Document 1]")
+        statement = extract_enclosing_statement(text, match_start, match_end)
+        assert "Renew your driving licence at the RTO" in statement
+        assert "First step is simple" not in statement
+
+    def test_extract_enclosing_statement_short_pointer_extends_backwards(self):
+        text = "To renew your driving licence, submit Form 9. See [Document 1]."
+        match_start = text.index("[Document 1]")
+        match_end = match_start + len("[Document 1]")
+        statement = extract_enclosing_statement(text, match_start, match_end)
+        assert "driving licence" in statement
+        assert "submit Form 9" in statement
+
+    def test_is_statement_supported_by_chunk_matches_and_mismatches(self):
+        chunk = "Applicants must submit Form 9 along with a medical fitness certificate to renew driving licence."
+        supported_claim = "You must submit Form 9 and medical certificate to renew driving licence."
+        unsupported_claim = "Apply for passport online through Passport Seva Kendra."
+
+        assert is_statement_supported_by_chunk(supported_claim, chunk) is True
+        assert is_statement_supported_by_chunk(unsupported_claim, chunk) is False
+
 
 
 # ---------------------------------------------------------------------------

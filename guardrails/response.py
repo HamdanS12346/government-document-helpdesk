@@ -134,6 +134,165 @@ GOVERNMENT_SIGNAL_PATTERN = re.compile(
 )
 
 
+# Stop words for citation statement grounding checks
+_CITATION_COMMON_STOP_WORDS: frozenset[str] = frozenset({
+    "a", "about", "above", "after", "again", "against", "all", "also", "am", "an",
+    "and", "any", "are", "as", "at", "be", "because", "been", "before", "being",
+    "below", "between", "both", "but", "by", "can", "could", "did", "do", "does",
+    "doing", "down", "during", "each", "few", "for", "from", "further", "had",
+    "has", "have", "having", "he", "her", "here", "hers", "herself", "him",
+    "himself", "his", "how", "i", "if", "in", "into", "is", "it", "its", "itself",
+    "just", "me", "more", "most", "my", "myself", "no", "nor", "not", "now",
+    "of", "off", "on", "once", "only", "or", "other", "our", "ours", "ourselves",
+    "out", "over", "own", "same", "she", "should", "so", "some", "such", "than",
+    "that", "the", "their", "theirs", "them", "themselves", "then", "there",
+    "these", "they", "this", "those", "through", "to", "too", "under", "until",
+    "up", "very", "was", "we", "were", "what", "when", "where", "which", "while",
+    "who", "whom", "why", "will", "with", "would", "you", "your", "yours",
+    "yourself", "yourselves",
+})
+
+_CITATION_PROCEDURAL_WORDS: frozenset[str] = frozenset({
+    "see", "refer", "details", "document", "documents", "content", "source",
+    "sources", "url", "portal", "official", "please", "note", "per", "according",
+    "given", "mentioned", "stated", "state", "states", "information", "info",
+    "guidance", "visit", "website", "follow", "following", "step", "steps",
+    "procedure", "process", "provide", "provides", "provided", "check", "online",
+    "available", "link", "form", "forms", "application", "apply", "applying",
+    "service", "services", "requirement", "requirements", "submit", "submitting",
+    "submission",
+})
+
+
+# ---------------------------------------------------------------------------
+# Citation grounding helper functions
+# ---------------------------------------------------------------------------
+
+def extract_document_chunks(formatted_context: str) -> dict[int, str]:
+    """Parse formatted_context into a mapping of document index -> chunk text."""
+    if not formatted_context or not isinstance(formatted_context, str):
+        return {}
+    chunks: dict[int, str] = {}
+    pattern = re.compile(
+        r"\[Document\s+(\d+)\](.*?)(?=(?:\[Document\s+\d+\]|\Z))",
+        re.DOTALL | re.IGNORECASE,
+    )
+    for m in pattern.finditer(formatted_context):
+        idx = int(m.group(1))
+        body = m.group(2).strip()
+        body = re.sub(r"\n*---\s*$", "", body).strip()
+        chunks[idx] = body
+    return chunks
+
+
+def _find_boundary_backwards(text: str, start: int) -> int:
+    pos = start
+    while pos > 0:
+        char = text[pos - 1]
+        if char == "\n":
+            break
+        if char in ".?!":
+            # Don't break on decimal numbers like 3.14 or abbreviations
+            if char == "." and pos > 1 and text[pos - 2].isdigit() and pos < len(text) and text[pos].isdigit():
+                pos -= 1
+                continue
+            if char == "." and pos >= 3 and text[pos - 3:pos - 1].lower() in {"rs", "no", "dr", "mr", "ms"}:
+                pos -= 1
+                continue
+            break
+        pos -= 1
+    return pos
+
+
+def _find_boundary_forwards(text: str, end: int) -> int:
+    pos = end
+    while pos < len(text):
+        char = text[pos]
+        if char == "\n":
+            break
+        if char in ".?!":
+            if char == "." and pos + 1 < len(text) and text[pos - 1].isdigit() and text[pos + 1].isdigit():
+                pos += 1
+                continue
+            pos += 1
+            break
+        pos += 1
+    return pos
+
+
+def extract_statement_tokens(statement: str) -> tuple[list[str], list[str]]:
+    """Extract substantive and procedural tokens from statement text, stripping citations."""
+    clean = CITATION_PATTERN.sub("", statement)
+    clean = re.sub(r"\[source unavailable\]", "", clean, flags=re.I)
+    raw_tokens = re.findall(r"\b[a-z0-9_-]{2,}\b", clean.lower())
+    substantive = [
+        t for t in raw_tokens
+        if t not in _CITATION_COMMON_STOP_WORDS and t not in _CITATION_PROCEDURAL_WORDS
+    ]
+    procedural = [
+        t for t in raw_tokens
+        if t in _CITATION_PROCEDURAL_WORDS and t not in _CITATION_COMMON_STOP_WORDS
+    ]
+    return substantive, procedural
+
+
+def extract_enclosing_statement(text: str, start: int, end: int) -> str:
+    """Extract the sentence or clause enclosing the citation at text[start:end]."""
+    left = _find_boundary_backwards(text, start)
+    right = _find_boundary_forwards(text, end)
+    statement = text[left:right].strip()
+
+    substantive, _ = extract_statement_tokens(statement)
+    # If the statement is too short to carry semantic claim content (e.g. "See [Document 1]."),
+    # extend backwards to include the preceding sentence if available.
+    if len(substantive) < 2 and left > 0:
+        prev_left = _find_boundary_backwards(text, left - 1)
+        extended = text[prev_left:right].strip()
+        ext_substantive, _ = extract_statement_tokens(extended)
+        if len(ext_substantive) >= len(substantive):
+            statement = extended
+
+    return statement
+
+
+def is_statement_supported_by_chunk(
+    statement: str,
+    chunk_content: str,
+    threshold: float = 0.30,
+) -> bool:
+    """Verify whether chunk_content provides textual evidence for the statement."""
+    if not chunk_content or not chunk_content.strip():
+        return False
+
+    substantive, procedural = extract_statement_tokens(statement)
+    chunk_lower = chunk_content.lower()
+
+    if substantive:
+        unique_substantive = set(substantive)
+        matched = [
+            t for t in unique_substantive
+            if re.search(r"\b" + re.escape(t) + r"\b", chunk_lower)
+        ]
+        n = len(unique_substantive)
+        if n <= 2:
+            return len(matched) >= 1
+        elif n == 3:
+            return len(matched) >= 1 and (len(matched) / n) >= 0.25
+        else:
+            return len(matched) >= 2 and (len(matched) / n) >= threshold
+
+    if procedural:
+        unique_procedural = set(procedural)
+        matched = [
+            t for t in unique_procedural
+            if re.search(r"\b" + re.escape(t) + r"\b", chunk_lower)
+        ]
+        return len(matched) >= 1
+
+    # Neither substantive nor procedural words found (e.g. punctuation or empty)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Result dataclasses
 # ---------------------------------------------------------------------------
@@ -144,6 +303,8 @@ class CitationGroundingResult:
     cleaned_text: str
     invalid_citation_indices: list[int]
     total_citations_found: int
+    unsupported_citation_indices: list[int] = field(default_factory=list)
+    supported_citations_found: int = 0
 
 
 @dataclass
@@ -195,7 +356,8 @@ class ResponseGuardrailReport:
 
 class CitationGroundingGuardrail:
     """Verify that every [Document N] reference in the response exists in the
-    retrieved context. Strip invalid citations; reject if hallucination is severe.
+    retrieved context and that the cited document chunk actually supports the claim.
+    Strip invalid/unsupported citations; reject if hallucination is severe.
 
     Skipped when retrieved_context is None (general_chat path has no context).
     """
@@ -220,6 +382,8 @@ class CitationGroundingGuardrail:
                 cleaned_text=_CITATION_REJECT_FALLBACK,
                 invalid_citation_indices=[],
                 total_citations_found=0,
+                unsupported_citation_indices=[],
+                supported_citations_found=0,
             )
 
     def _check(
@@ -234,12 +398,12 @@ class CitationGroundingGuardrail:
                 cleaned_text=response_text,
                 invalid_citation_indices=[],
                 total_citations_found=0,
+                unsupported_citation_indices=[],
+                supported_citations_found=0,
             )
 
-        cited_indices = [
-            int(m) for m in CITATION_PATTERN.findall(response_text)
-        ]
-        total = len(cited_indices)
+        matches = list(CITATION_PATTERN.finditer(response_text))
+        total = len(matches)
 
         if total == 0:
             return CitationGroundingResult(
@@ -247,53 +411,104 @@ class CitationGroundingGuardrail:
                 cleaned_text=response_text,
                 invalid_citation_indices=[],
                 total_citations_found=0,
+                unsupported_citation_indices=[],
+                supported_citations_found=0,
             )
 
-        valid_indices = {src.index for src in retrieved_context.sources}
-        invalid = [n for n in cited_indices if n not in valid_indices]
+        sources = (
+            retrieved_context.get("sources", [])
+            if isinstance(retrieved_context, dict)
+            else getattr(retrieved_context, "sources", [])
+        ) or []
+        valid_indices = {
+            src.get("index") if isinstance(src, dict) else getattr(src, "index", None)
+            for src in sources
+        }
+        valid_indices = {idx for idx in valid_indices if idx is not None}
 
-        if not invalid:
+        formatted_context = (
+            retrieved_context.get("formatted_context", "")
+            if isinstance(retrieved_context, dict)
+            else getattr(retrieved_context, "formatted_context", "")
+        ) or ""
+
+        chunks = extract_document_chunks(formatted_context)
+
+        invalid_indices: list[int] = []
+        unsupported_indices: list[int] = []
+        supported_count = 0
+        replacements: list[tuple[int, int, str]] = []
+
+        for match in matches:
+            idx = int(match.group(1))
+            if idx not in valid_indices:
+                if idx not in invalid_indices:
+                    invalid_indices.append(idx)
+                replacements.append((match.start(), match.end(), "[source unavailable]"))
+                continue
+
+            # Index exists in sources. If chunks were parsed, verify statement support.
+            if chunks and idx in chunks:
+                statement = extract_enclosing_statement(response_text, match.start(), match.end())
+                if is_statement_supported_by_chunk(statement, chunks[idx]):
+                    supported_count += 1
+                else:
+                    if idx not in invalid_indices:
+                        invalid_indices.append(idx)
+                    if idx not in unsupported_indices:
+                        unsupported_indices.append(idx)
+                    replacements.append((match.start(), match.end(), "[source unavailable]"))
+            else:
+                # No chunk blocks parsed (e.g. minimal test fixtures) -> fallback to valid index check
+                supported_count += 1
+
+        if not replacements:
             return CitationGroundingResult(
                 decision=ResponseGuardrailDecision.ALLOW,
                 cleaned_text=response_text,
                 invalid_citation_indices=[],
                 total_citations_found=total,
+                unsupported_citation_indices=[],
+                supported_citations_found=supported_count,
             )
 
-        invalid_fraction = len(invalid) / total
+        invalid_fraction = len(replacements) / total
 
         if invalid_fraction > self.MAX_INVALID_CITATION_FRACTION:
             logger.error(
                 "CitationGroundingGuardrail: REJECT — %.0f%% of %d citations are "
-                "hallucinated (invalid indices: %s).",
+                "invalid or unsupported (invalid: %s, unsupported: %s).",
                 invalid_fraction * 100,
                 total,
-                invalid,
+                invalid_indices,
+                unsupported_indices,
             )
             return CitationGroundingResult(
                 decision=ResponseGuardrailDecision.REJECT,
                 cleaned_text=_CITATION_REJECT_FALLBACK,
-                invalid_citation_indices=invalid,
+                invalid_citation_indices=invalid_indices,
                 total_citations_found=total,
+                unsupported_citation_indices=unsupported_indices,
+                supported_citations_found=supported_count,
             )
 
-        # Strip the invalid citations from the text.
-        def _replace_citation(match: re.Match) -> str:
-            if int(match.group(1)) not in valid_indices:
-                return "[source unavailable]"
-            return match.group(0)
+        # Apply replacements in reverse order so character offsets remain valid
+        cleaned = response_text
+        for start, end, repl in reversed(replacements):
+            cleaned = cleaned[:start] + repl + cleaned[end:]
 
-        cleaned = CITATION_PATTERN.sub(_replace_citation, response_text)
         logger.warning(
-            "CitationGroundingGuardrail: STRIP — removed %d invalid citation(s): %s.",
-            len(invalid),
-            invalid,
+            "CitationGroundingGuardrail: STRIP — removed %d invalid/unsupported citation(s): %s.",
+            len(replacements),
+            invalid_indices,
         )
         return CitationGroundingResult(
             decision=ResponseGuardrailDecision.STRIP_INVALID_CITATIONS,
             cleaned_text=cleaned,
-            invalid_citation_indices=invalid,
+            invalid_citation_indices=invalid_indices,
             total_citations_found=total,
+            unsupported_citation_indices=unsupported_indices,
+            supported_citations_found=supported_count,
         )
 
 
@@ -775,5 +990,9 @@ __all__ = [
     "ResponsePIIScanner",
     "ResponseScopeGuardrail",
     "ResponseScopeResult",
+    "extract_document_chunks",
+    "extract_enclosing_statement",
+    "is_statement_supported_by_chunk",
     "run_response_guardrails",
 ]
+
