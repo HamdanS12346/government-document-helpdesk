@@ -47,7 +47,7 @@ class RetrieverPipeline:
         rrf_k: int = 60,
         dense_min_score: float = 0.0,
         lexical_min_score: float = 8.0,
-        rerank_min_score: float = 0.2,
+        rerank_min_score: float = 0.35,
     ):
         self.query_rewriter = query_rewriter or QueryRewriter()
         self.metadata_extractor = metadata_extractor or MetadataExtractor()

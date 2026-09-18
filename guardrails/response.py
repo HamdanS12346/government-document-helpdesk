@@ -64,6 +64,13 @@ _HALLUCINATION_FALLBACK = (
     "against official documents. Please check the official government portal directly for accurate figures."
 )
 
+_NO_DOCUMENTS_FALLBACK = (
+    "No relevant government documents were found for this query. "
+    "Please check the relevant official government portal or contact the concerned department directly."
+)
+NO_DOCUMENTS_FALLBACK = _NO_DOCUMENTS_FALLBACK
+
+
 _HALLUCINATION_NOTICE_SUFFIX = (
     "\n\n[Official Notice: Specific fee, deadline, or requirement figures in this response "
     "could not be verified against the retrieved source documents. Please verify directly on the official portal.]"
@@ -571,6 +578,33 @@ class FactualityHallucinationGuardrail:
                 total_entities_found=0,
             )
 
+        # Check if retrieval/context builder found zero relevant documents or applied fallback
+        has_relevant_documents = (
+            retrieved_context.get("has_relevant_documents", True)
+            if isinstance(retrieved_context, dict)
+            else getattr(retrieved_context, "has_relevant_documents", True)
+        )
+        fallback_applied = (
+            retrieved_context.get("fallback_applied", False)
+            if isinstance(retrieved_context, dict)
+            else getattr(retrieved_context, "fallback_applied", False)
+        )
+
+        if not has_relevant_documents or fallback_applied:
+            logger.info(
+                "FactualityHallucinationGuardrail: zero relevant documents in context "
+                "(has_relevant_documents=%s, fallback_applied=%s) — replacing with fallback.",
+                has_relevant_documents,
+                fallback_applied,
+            )
+            return HallucinationCheckResult(
+                decision=ResponseGuardrailDecision.REPLACE_WITH_FALLBACK,
+                cleaned_text=_NO_DOCUMENTS_FALLBACK,
+                unsupported_entities=["no_relevant_documents"],
+                supported_entities=[],
+                total_entities_found=1,
+            )
+
         formatted_context = (
             retrieved_context.get("formatted_context", "")
             if isinstance(retrieved_context, dict)
@@ -935,10 +969,19 @@ def run_response_guardrails(
         any_triggered = True
 
     # Step 2 — Factuality & Hallucination Check (Fees, Dates & Requirements)
-    hallucination_result = _factuality_guardrail.check(text, retrieved_context)
-    text = hallucination_result.cleaned_text
-    if hallucination_result.decision != ResponseGuardrailDecision.ALLOW:
-        any_triggered = True
+    if citation_result.decision == ResponseGuardrailDecision.REJECT:
+        hallucination_result = HallucinationCheckResult(
+            decision=ResponseGuardrailDecision.ALLOW,
+            cleaned_text=text,
+            unsupported_entities=[],
+            supported_entities=[],
+            total_entities_found=0,
+        )
+    else:
+        hallucination_result = _factuality_guardrail.check(text, retrieved_context)
+        text = hallucination_result.cleaned_text
+        if hallucination_result.decision != ResponseGuardrailDecision.ALLOW:
+            any_triggered = True
 
     # Step 4 — PII Scan (operates on Step 3 output)
     pii_result = _pii_scanner.scan(text)
@@ -981,6 +1024,7 @@ __all__ = [
     "HARD_REJECT_CHARS",
     "HallucinationCheckResult",
     "MAX_RESPONSE_CHARS",
+    "NO_DOCUMENTS_FALLBACK",
     "REQUIREMENT_PATTERNS",
     "ResponseGuardrailDecision",
     "ResponseGuardrailReport",
