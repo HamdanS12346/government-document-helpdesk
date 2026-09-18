@@ -6,7 +6,14 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.contracts.intent_decision import IntentDecision, IntentType
-from app.contracts.normalized_input import ImageContent, NormalizedInput, PDFContent
+from app.contracts.normalized_input import (
+    ImageContent,
+    NormalizedInput,
+    PDFContent,
+    SpreadsheetContent,
+    SpreadsheetMetadata,
+    SpreadsheetSheet,
+)
 from app.contracts.response import RetrievedContext
 from app.response.generator import MAX_HISTORY_MESSAGES, ResponseGenerator
 
@@ -365,6 +372,62 @@ class TestEmptyQueryFallback:
                     preview="PAN application PDF text",
                 )
             ],
+            combined_text=combined,
+        )
+
+        gen.generate(
+            normalized_input=ni,
+            intent_decision=_make_intent(IntentType.DOCUMENT_INFO),
+            retrieved_context=_make_retrieved_context(),
+            messages=[],
+            conversation_summary=None,
+        )
+
+        call_args = mock_llm.invoke.call_args[0][0]
+        human_msg = call_args[-1]
+        assert human_msg.content == combined
+
+    def test_non_empty_query_with_uploaded_spreadsheet_uses_combined_text(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = AIMessage(content="answer")
+        gen = ResponseGenerator(llm=mock_llm)
+
+        combined = (
+            "<USER_QUERY>\nwhats the address which is mentioned in the document\n\n"
+            "<SPREADSHEET_CONTENT>\nWorkbook: aadhar_update.xlsx\n\n"
+            "Sheet 1: Aadhaar Sample\n"
+            "Dimensions: 16 rows x 2 columns\n"
+            "Row 7: A7=Address | B7=House 00, Sample Orchid Lane, Test Colony"
+        )
+        spreadsheet = SpreadsheetContent(
+            workbook_name="aadhar_update.xlsx",
+            sheets=[
+                SpreadsheetSheet(
+                    name="Aadhaar Sample",
+                    position=1,
+                    max_row=16,
+                    max_column=2,
+                    is_empty=False,
+                )
+            ],
+            preview="Aadhaar Sample address row",
+            metadata=SpreadsheetMetadata(
+                workbook_name="aadhar_update.xlsx",
+                processed_sheet_count=1,
+                total_visible_sheet_count=1,
+                hidden_sheet_count=0,
+                max_sheets=5,
+                max_rows_per_sheet=100,
+                max_columns_per_sheet=30,
+                max_text_cell_characters=500,
+                preview_row_count=16,
+            ),
+        )
+        ni = NormalizedInput(
+            user_query="whats the address which is mentioned in the document",
+            image_content=[],
+            pdf_content=[],
+            spreadsheet_content=[spreadsheet],
             combined_text=combined,
         )
 

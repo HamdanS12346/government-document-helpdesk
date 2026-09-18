@@ -141,6 +141,60 @@ class TestResponseNodeObservability:
         )
         assert "response_text" not in updates[-1]["output"]
 
+    def test_response_observation_input_includes_full_node_inputs(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from app.config import get_settings
+        import app.response.node as response_node_module
+
+        observations: list[dict] = []
+
+        class CapturingObservation:
+            def update(self, **kwargs):
+                pass
+
+        @contextmanager
+        def capture_observation(*args, **kwargs):
+            observations.append(kwargs)
+            yield CapturingObservation()
+
+        monkeypatch.setenv("LANGFUSE_CAPTURE_TEXT", "true")
+        get_settings.cache_clear()
+        monkeypatch.setattr(
+            response_node_module,
+            "start_observation",
+            capture_observation,
+        )
+
+        state = _base_state()
+        state["messages"] = [HumanMessage(content="Earlier question")]
+        state["conversation_summary"] = "User asked about ration card documents."
+        state["retrieved_context"] = RetrievedContext(
+            formatted_context="[Document 1] Ration card application details.",
+            sources=[],
+            total_documents_retrieved=1,
+            documents_used=1,
+            has_relevant_documents=True,
+            truncated=False,
+            fallback_applied=False,
+        )
+
+        response_node(state, generator=_mock_generator())
+
+        response_input = observations[-1]["input"]
+        assert "normalized_input" in response_input
+        assert "intent_decision" in response_input
+        assert "retrieved_context" in response_input
+        assert "messages" in response_input
+        assert "conversation_summary" in response_input
+        assert response_input["intent_decision"]["intent_type"] == "general_chat"
+        assert response_input["messages"][0]["content_preview"] == "Earlier question"
+        assert (
+            response_input["retrieved_context"]["formatted_context_preview"]
+            == "[Document 1] Ration card application details."
+        )
+
 
 # ---------------------------------------------------------------------------
 # State reading

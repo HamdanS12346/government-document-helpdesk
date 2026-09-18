@@ -96,7 +96,11 @@ class ResponseGenerator:
 
         # Use combined_text when attachments exist so the LLM sees the user's
         # wording together with uploaded filenames, previews, and extracted text.
-        has_attachments = bool(normalized_input.image_content or normalized_input.pdf_content)
+        has_attachments = bool(
+            normalized_input.image_content
+            or normalized_input.pdf_content
+            or normalized_input.spreadsheet_content
+        )
         query_text = (
             normalized_input.combined_text
             if has_attachments

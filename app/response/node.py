@@ -32,7 +32,10 @@ from app.contracts.intent_decision import IntentDecision
 from app.contracts.normalized_input import NormalizedInput
 from app.contracts.response import RetrievedContext
 from app.observability import start_observation
-from app.observability.metadata import build_response_output_metadata
+from app.observability.metadata import (
+    build_response_input_metadata,
+    build_response_output_metadata,
+)
 from app.response.generator import ResponseGenerator
 
 logger = logging.getLogger(__name__)
@@ -112,11 +115,13 @@ def response_node(
         "response",
         as_type="generation",
         model="gpt-4o-mini",
-        input={
-            "intent_type": str(intent_decision.intent_type),
-            "has_retrieved_context": retrieved_context is not None,
-            "history_message_count": len(messages),
-        },
+        input=build_response_input_metadata(
+            normalized_input=normalized_input,
+            intent_decision=intent_decision,
+            retrieved_context=retrieved_context,
+            messages=messages,
+            conversation_summary=conversation_summary,
+        ),
     ) as observation:
         with get_openai_callback() as cb:
             ai_message = active_generator.generate(
