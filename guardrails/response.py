@@ -25,7 +25,7 @@ from enum import StrEnum
 from typing import Optional
 
 from app.contracts.response import RetrievedContext
-from guardrails.input_processor import PII_MASK, PII_PATTERNS
+from guardrails.input_processor import PII_MASK, PII_PATTERNS, RegexPIIMasker
 
 logger = logging.getLogger(__name__)
 
@@ -490,14 +490,9 @@ class ResponsePIIScanner:
             )
 
     def _scan(self, response_text: str) -> ResponsePIIScanResult:
-        masked = response_text
-        redaction_count = 0
-        for pattern in PII_PATTERNS:
-            new_text, count = pattern.subn(PII_MASK, masked)
-            redaction_count += count
-            masked = new_text
+        result = RegexPIIMasker().mask(response_text)
 
-        if redaction_count == 0:
+        if result.redaction_count == 0:
             return ResponsePIIScanResult(
                 decision=ResponseGuardrailDecision.ALLOW,
                 cleaned_text=response_text,
@@ -506,13 +501,14 @@ class ResponsePIIScanner:
 
         logger.warning(
             "ResponsePIIScanner: REDACT — %d PII instance(s) removed from response.",
-            redaction_count,
+            result.redaction_count,
         )
         return ResponsePIIScanResult(
             decision=ResponseGuardrailDecision.REDACT_AND_CONTINUE,
-            cleaned_text=masked,
-            redaction_count=redaction_count,
+            cleaned_text=result.text,
+            redaction_count=result.redaction_count,
         )
+
 
 
 # ---------------------------------------------------------------------------
