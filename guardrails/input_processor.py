@@ -44,24 +44,121 @@ MEDIA_TYPE_MODALITIES = {
 }
 SUPPORTED_MEDIA_TYPES = frozenset(MEDIA_TYPE_MODALITIES)
 PII_MASK = "[REDACTED]"
-PII_PATTERNS = (
-    re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b"),
-    re.compile(r"\b\d{4}[ -]?\d{4}[ -]?\d{4}\b"),
-    re.compile(r"\b(?:\+91[- ]?)?[6-9]\d{9}\b"),
-    re.compile(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b"),
-    # Voter ID / EPIC
-    re.compile(r"\b[A-Z]{3}[0-9]{7}\b"),
-    # Indian Passport Number (1 letter followed by 7 digits)
-    re.compile(r"\b[A-Z][0-9]{7}\b"),
-    # Indian Driving License
+
+PAN_PATTERN = re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b")
+AADHAAR_PATTERN = re.compile(r"\b\d{4}[ -]?\d{4}[ -]?\d{4}\b")
+PHONE_PATTERN = re.compile(r"\b(?:\+91[- ]?)?[6-9]\d{9}\b")
+EMAIL_PATTERN = re.compile(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
+VOTER_ID_PATTERN = re.compile(r"\b[A-Z]{3}[0-9]{7}\b")
+PASSPORT_PATTERN = re.compile(r"\b[A-Z][0-9]{7}\b")
+DRIVING_LICENSE_PATTERNS = (
     re.compile(r"\b[A-Z]{2}[- ]?[0-9]{2}[- ]?[0-9]{4}[- ]?[0-9]{7}\b"),
     re.compile(r"\b[A-Z]{2}[0-9]{13,15}\b"),
-    # IFSC Code
-    re.compile(r"\b[A-Z]{4}0[A-Z0-9]{6}\b"),
-    # Bank Account Numbers with label/prefix or standalone 13-18 digits
+)
+IFSC_PATTERN = re.compile(r"\b[A-Z]{4}0[A-Z0-9]{6}\b")
+BANK_ACCOUNT_PATTERNS = (
     re.compile(r"\b(?:A/C|Account(?:\s*No\.?)?|Bank\s*A/C)[\s:#-]*[0-9]{9,18}\b", re.I),
     re.compile(r"\b[0-9]{13,18}\b"),
 )
+
+# Strict citizen PII patterns that are always redacted (never official government contacts)
+STRICT_CITIZEN_PII_PATTERNS = (
+    PAN_PATTERN,
+    AADHAAR_PATTERN,
+    VOTER_ID_PATTERN,
+    PASSPORT_PATTERN,
+    *DRIVING_LICENSE_PATTERNS,
+    IFSC_PATTERN,
+    *BANK_ACCOUNT_PATTERNS,
+)
+
+# Kept for backward compatibility with external imports
+PII_PATTERNS = (
+    PAN_PATTERN,
+    AADHAAR_PATTERN,
+    PHONE_PATTERN,
+    EMAIL_PATTERN,
+    VOTER_ID_PATTERN,
+    PASSPORT_PATTERN,
+    *DRIVING_LICENSE_PATTERNS,
+    IFSC_PATTERN,
+    *BANK_ACCOUNT_PATTERNS,
+)
+
+GOVERNMENT_EMAIL_DOMAIN_PATTERN = re.compile(
+    r"@(?:[a-zA-Z0-9-]+\.)*(?:gov\.in|nic\.in|india\.gov\.in|mygov\.in|digitalindia\.gov\.in|rbi\.org\.in|irctc\.co\.in|epfindia\.gov\.in|gst\.gov\.in)\b",
+    re.IGNORECASE,
+)
+
+OFFICIAL_HELPLINE_NUMBERS: frozenset[str] = frozenset(
+    {
+        "1947",   # UIDAI Aadhaar
+        "1950",   # Voter Helpline (ECI)
+        "1930",   # National Cyber Crime Helpline
+        "1075",   # National Health / COVID Helpline
+        "1091",   # Women Helpline
+        "1098",   # Childline
+        "112",    # National Emergency Services
+        "100",    # Police
+        "101",    # Fire
+        "102",    # Ambulance
+        "108",    # Disaster & Medical Emergency
+        "155255", # National Consumer Helpline / Cyber Crime
+        "1912",   # Electricity Consumer Helpline
+        "1070",   # State Disaster Management
+        "1077",   # District Disaster Management
+        "14434",  # DigiLocker Helpline
+        "14444",  # Digital Payments (BHIM)
+        "139",    # Indian Railways Helpline
+    }
+)
+
+HELPLINE_CONTEXT_KEYWORDS_PATTERN = re.compile(
+    r"\b(?:helpline|toll[- ]?free|helpdesk|customer[- ]?care|call[- ]?cent(?:er|re))\b",
+    re.IGNORECASE,
+)
+
+CITIZEN_PHONE_INDICATORS_PATTERN = re.compile(
+    r"\b(?:applicant|my|citizen|user|resident|personal|candidate|client|me)\b",
+    re.IGNORECASE,
+)
+
+
+def is_official_government_email(email: str) -> bool:
+    """Return True if the email belongs to an official government or statutory public domain."""
+    return bool(GOVERNMENT_EMAIL_DOMAIN_PATTERN.search(email))
+
+
+def is_official_helpline(
+    phone: str,
+    full_text: str = "",
+    span: tuple[int, int] | None = None,
+) -> bool:
+    """Return True if phone is a recognized official government helpline or appears in helpline context."""
+    digits_only = re.sub(r"\D", "", phone)
+
+    # 1. Known official short-code (1947, 1950, 1930, 112, etc.)
+    if digits_only in OFFICIAL_HELPLINE_NUMBERS:
+        return True
+
+    # 2. Known toll-free 1800-series
+    if digits_only.startswith("1800") and len(digits_only) in {10, 11}:
+        return True
+
+    # 3. For 10-digit numbers: only exempt if explicitly preceded by helpline keywords
+    if span is not None and full_text:
+        start_idx = max(0, span[0] - 35)
+        preceding = full_text[start_idx:span[0]]
+
+        if CITIZEN_PHONE_INDICATORS_PATTERN.search(preceding):
+            return False
+
+        if HELPLINE_CONTEXT_KEYWORDS_PATTERN.search(preceding):
+            return True
+
+    return False
+
+
 AI_DIRECTED_INSTRUCTION_PATTERNS = (
     re.compile(r"\bignore (?:all )?(?:previous |prior |above )?instructions\b", re.I),
     re.compile(r"\breveal (?:the |your )?(?:system|developer) (?:prompt|instructions)\b", re.I),
@@ -125,9 +222,15 @@ class InputGuardrailDecision(StrEnum):
 class PIIMaskingResult:
     """Result of PII masking for extracted document text."""
 
-    def __init__(self, text: str, decision: InputGuardrailDecision) -> None:
+    def __init__(
+        self,
+        text: str,
+        decision: InputGuardrailDecision,
+        redaction_count: int = 0,
+    ) -> None:
         self.text = text
         self.decision = decision
+        self.redaction_count = redaction_count
 
 
 class UntrustedDocumentText:
@@ -147,19 +250,57 @@ class PIIMasker(Protocol):
 
 
 class RegexPIIMasker:
-    """Deterministic placeholder PII masker until provider/taxonomy is finalized."""
+    """Deterministic PII masker that redacts citizen identifiers while preserving official government helplines and emails."""
 
     def mask(self, text: str) -> PIIMaskingResult:
+        if not text:
+            return PIIMaskingResult(
+                text=text,
+                decision=InputGuardrailDecision.ALLOW,
+                redaction_count=0,
+            )
+
+        redaction_count = 0
         masked_text = text
-        for pattern in PII_PATTERNS:
-            masked_text = pattern.sub(PII_MASK, masked_text)
+
+        # 1. Non-email, non-phone patterns (Aadhaar, PAN, Voter ID, Passport, DL, IFSC, Bank A/C)
+        for pattern in STRICT_CITIZEN_PII_PATTERNS:
+            new_text, count = pattern.subn(PII_MASK, masked_text)
+            redaction_count += count
+            masked_text = new_text
+
+        # 2. Email pattern with government domain exemption
+        def _replace_email(match: re.Match) -> str:
+            nonlocal redaction_count
+            email = match.group(0)
+            if is_official_government_email(email):
+                return email
+            redaction_count += 1
+            return PII_MASK
+
+        masked_text = EMAIL_PATTERN.sub(_replace_email, masked_text)
+
+        # 3. Phone pattern with official helpline exemption
+        def _replace_phone(match: re.Match) -> str:
+            nonlocal redaction_count
+            phone = match.group(0)
+            if is_official_helpline(phone, masked_text, match.span()):
+                return phone
+            redaction_count += 1
+            return PII_MASK
+
+        masked_text = PHONE_PATTERN.sub(_replace_phone, masked_text)
 
         decision = (
             InputGuardrailDecision.MASK_AND_CONTINUE
-            if masked_text != text
+            if redaction_count > 0
             else InputGuardrailDecision.ALLOW
         )
-        return PIIMaskingResult(text=masked_text, decision=decision)
+        return PIIMaskingResult(
+            text=masked_text,
+            decision=decision,
+            redaction_count=redaction_count,
+        )
 
 
 MAX_IMAGE_PIXELS = 10_000_000
@@ -435,6 +576,10 @@ __all__ = [
     "validate_post_extraction_boundary",
     "validate_pre_processing_boundary",
     "validate_safety_compliance",
+    "GOVERNMENT_EMAIL_DOMAIN_PATTERN",
+    "OFFICIAL_HELPLINE_NUMBERS",
+    "is_official_government_email",
+    "is_official_helpline",
     "validate_supported_media_type",
     "validate_user_query_safety",
     "validate_xlsx_filename_extension",

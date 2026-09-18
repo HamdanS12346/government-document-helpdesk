@@ -157,11 +157,23 @@ class TestResponsePIIScanner:
         assert "9876543210" not in result.cleaned_text
 
     def test_redacts_email_address(self):
-        """Email address is redacted."""
-        text = "Contact support at citizen@example.gov.in for help."
+        """Citizen personal email address is redacted."""
+        text = "Contact applicant at citizen@example.com for help."
         result = self.scanner.scan(text)
         assert result.decision == ResponseGuardrailDecision.REDACT_AND_CONTINUE
-        assert "citizen@example.gov.in" not in result.cleaned_text
+        assert "citizen@example.com" not in result.cleaned_text
+
+    def test_preserves_official_government_email_and_helpline(self):
+        """Official government emails and helplines are preserved without redaction."""
+        text = (
+            "For inquiries, email support@uidai.gov.in or contact the "
+            "national helpline 1800-180-1947 or call UIDAI helpline 1947."
+        )
+        result = self.scanner.scan(text)
+        assert result.decision == ResponseGuardrailDecision.ALLOW
+        assert "support@uidai.gov.in" in result.cleaned_text
+        assert "1800-180-1947" in result.cleaned_text
+        assert "1947" in result.cleaned_text
 
     def test_multiple_pii_types_all_redacted(self):
         """Multiple PII types in one response — all redacted."""
