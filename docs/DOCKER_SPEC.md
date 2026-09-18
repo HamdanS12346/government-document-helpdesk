@@ -3,7 +3,7 @@
 ## 1. Executive Summary & Core Objectives
 
 ### 1.1 Purpose
-The **Government Document Helpdesk** is a multi-tier AI system consisting of an asynchronous FastAPI backend (running LangGraph, OCR image/PDF parsing, hybrid RAG, and safety guardrails), a Next.js 16 frontend (with SSR, Google OAuth, and Supabase auth), and external vector/relational databases.
+The **Government Document Helpdesk** is a multi-tier AI system consisting of an asynchronous FastAPI backend (running LangGraph, OCR image/PDF parsing, hybrid RAG, and safety guardrails), a Next.js 16 frontend (with SSR, Google OAuth, and Supabase auth), and managed cloud databases (Chroma Cloud for vector retrieval, Supabase for auth/session persistence).
 
 Currently, running the system locally requires manual orchestration across separate terminal sessions:
 1. Native Windows Python virtual environment requiring local system binaries (`tesseract-ocr`).
@@ -12,8 +12,8 @@ Currently, running the system locally requires manual orchestration across separ
 ### 1.2 Objectives
 This specification defines the containerization strategy for the project. It provides:
 1. **Zero-Setup Portability**: Package complex system binaries (Tesseract OCR, Poppler, C++ libraries) directly into Linux containers, eliminating host-OS installation requirements.
-2. **Clean 2-Service Core Stack**: Focused strictly on the core application services: **Backend** (FastAPI) and **Frontend** (Next.js 16).
-3. **Modular Architecture Options**: Profiles for **Standard Hybrid Cloud** (Chroma/Supabase SaaS), **100% Self-Hosted Local** (Local ChromaDB), and **Development Mode** (live code hot-reloading).
+2. **Clean 2-Service Architecture**: Strictly focused on the two core application components: **Backend** (FastAPI) and **Frontend** (Next.js 16).
+3. **Cloud-Native Database Model**: Relies entirely on managed cloud services (**Chroma Cloud** for vector embeddings/retrieval and **Supabase Cloud** for auth and multi-turn memory), eliminating the need for local database container management.
 4. **Internal Reverse Proxying**: Dynamic internal routing (`INTERNAL_API_URL=http://backend:8000`) preventing container isolation issues across Docker bridge networks.
 
 ---
@@ -39,16 +39,11 @@ flowchart TD
             LangGraph["LangGraph Workflow\n(Input -> Intent -> RAG -> Response)"]
             Guardrails["Safety & Redaction Guardrails"]
         end
-
-        subgraph OptionalChroma ["Optional Local Vector DB (helpdesk-chroma)"]
-            ChromaServer["ChromaDB Server\n(Port 8001)"]
-            ChromaVol[("Volume: chroma_data")]
-        end
     end
 
-    subgraph ExternalCloud ["External Managed Cloud Services"]
-        SupabaseCloud[("Supabase PostgreSQL & GoTrue Auth")]
-        ChromaCloudDB[("Chroma Cloud (Managed)")]
+    subgraph ExternalCloud ["External Managed Cloud Services (via .env)"]
+        ChromaCloudDB[("Chroma Cloud (Managed Vector DB)")]
+        SupabaseCloud[("Supabase Cloud (PostgreSQL & Auth)")]
         OpenAIAPI["OpenAI API (GPT-4o-mini & Embeddings)"]
         CohereAPI["Cohere API (Cross-Encoder Reranker)"]
     end
@@ -61,26 +56,20 @@ flowchart TD
     FastAPI --> LangGraph
     LangGraph --> Guardrails
 
-    LangGraph -.->|If Local Profile| ChromaServer
-    ChromaServer --- ChromaVol
-
-    LangGraph -.->|If Hybrid Default| ChromaCloudDB
-    FastAPI -.->|Auth & Session Storage| SupabaseCloud
-    LangGraph -.->|LLM & Embeddings| OpenAIAPI
-    LangGraph -.->|Reranking| CohereAPI
+    LangGraph -->|Dense Semantic Search| ChromaCloudDB
+    FastAPI -->|User Auth & Thread History| SupabaseCloud
+    LangGraph -->|LLM & Query Embeddings| OpenAIAPI
+    LangGraph -->|Document Reranking| CohereAPI
 ```
 
 ---
 
-## 3. Architecture Options Matrix
+## 3. Architecture Modes
 
-The Docker specification supports 3 deployment options:
-
-| Profile Option | Best Suited For | Backend | Frontend | Vector Database | Auth / Database |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Option 1: Hybrid Cloud** *(Default)* | Current project setup | Containerized FastAPI + Tesseract | Containerized Next.js 16 | Managed Chroma Cloud | Managed Supabase Cloud |
-| **Option 2: 100% Full Local** | Offline / Air-gapped / Local-only environments | Containerized FastAPI + Tesseract | Containerized Next.js 16 | Containerized ChromaDB (`chroma:8001`) | Managed or Local Supabase |
-| **Option 3: Development Mode** | Rapid local feature iteration with live code sync | FastAPI (`--reload` + Volume Bind Mount) | Next.js (Turbopack + Volume Bind Mount) | Chroma Cloud or Local | Managed Supabase |
+| Mode | Best Suited For | Backend | Frontend | Cloud Services |
+| :--- | :--- | :--- | :--- | :--- |
+| **Production Mode** *(Default)* | Testing the full optimized build | Containerized FastAPI (Python 3.11) | Containerized Next.js 16 (Multi-stage build) | Chroma Cloud + Supabase Cloud |
+| **Development Mode** | Rapid local feature iteration with live code sync | FastAPI (`--reload` + Volume Bind Mount) | Next.js (`npm run dev` + Volume Bind Mount) | Chroma Cloud + Supabase Cloud |
 
 ---
 
@@ -139,9 +128,9 @@ CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ---
 
-### 4.2 Frontend Service (`frontend/Dockerfile`)
+### 4.2 Frontend Service (`frontend/Dockerfile` — Production)
 
-Next.js 16 multi-stage build to minimize the final image size and isolate build-time dependencies:
+Next.js 16 multi-stage build to minimize the final image size (< 150MB) and isolate build-time dependencies:
 
 ```dockerfile
 # frontend/Dockerfile
@@ -226,7 +215,7 @@ CMD ["npm", "run", "dev"]
 
 ## 5. Master Docker Compose Orchestration (`docker-compose.yml`)
 
-The root `docker-compose.yml` configures the core Backend and Frontend services with an optional profile for local ChromaDB:
+The root `docker-compose.yml` configures the clean two-tier application stack:
 
 ```yaml
 version: '3.8'
@@ -234,10 +223,6 @@ version: '3.8'
 networks:
   helpdesk-network:
     driver: bridge
-
-volumes:
-  chroma_data:
-    driver: local
 
 services:
   # =========================================================================
@@ -274,25 +259,6 @@ services:
       - "3000:3000"
     depends_on:
       - backend
-    networks:
-      - helpdesk-network
-
-  # =========================================================================
-  # 3. Optional: Local ChromaDB Vector Store (Profile: full-local)
-  # =========================================================================
-  chromadb:
-    image: chromadb/chroma:0.5.5
-    container_name: helpdesk-chroma
-    restart: unless-stopped
-    profiles:
-      - full-local
-    ports:
-      - "8001:8000"
-    volumes:
-      - chroma_data:/chroma/chroma
-    environment:
-      - IS_PERSISTENT=TRUE
-      - PERSIST_DIRECTORY=/chroma/chroma
     networks:
       - helpdesk-network
 ```
@@ -333,12 +299,13 @@ This single configuration ensures zero code changes whether running bare-metal o
 
 ---
 
-## 7. Storage, Volumes & Persistence Matrix
+## 7. Storage & Volumes Matrix
 
-| Volume Name | Container Path | Purpose | Backup Strategy |
+Because **ChromaDB** and **Supabase** are managed in the cloud, there are **no persistent database volumes** required to manage on your local machine:
+
+| Volume / Path | Type | Purpose | Lifecycle |
 | :--- | :--- | :--- | :--- |
-| `chroma_data` | `/chroma/chroma` | (Full-local profile) Persists Chroma HNSW vector index files and metadata SQLite DB. | File-level directory copy when container is stopped. |
-| `/tmp` (ephemeral) | `/tmp` | Staging area for temporary PDF page extraction and uploaded image OCR. | Auto-cleared by Linux tmpfs on container restart. |
+| `/tmp` | Ephemeral (tmpfs) | Staging area for temporary PDF page extraction and uploaded image OCR. | Automatically cleared by Linux when container restarts. |
 
 ---
 
@@ -356,7 +323,6 @@ __pycache__/
 .env.local
 node_modules/
 .next/
-chroma_db/
 *.log
 scratch/
 ```
@@ -367,12 +333,12 @@ scratch/
 OPENAI_API_KEY=sk-...
 COHERE_API_KEY=...
 
-# Supabase Auth & PostgreSQL
+# Supabase Auth & PostgreSQL Cloud
 SUPABASE_URL=https://<project-id>.supabase.co
 SUPABASE_ANON_KEY=eyJ...
 SUPABASE_JWT_SECRET=...
 
-# Chroma Vector Store (Hybrid Mode)
+# Chroma Vector Store (Chroma Cloud SaaS)
 CHROMA_TENANT=...
 CHROMA_DATABASE=...
 CHROMA_API_KEY=...
@@ -385,25 +351,19 @@ LANGFUSE_ENABLED=false
 
 ## 9. Operation & Deployment Runbook
 
-### 9.1 Standard Startup (Default: Hybrid Cloud)
-Builds and starts Backend and Frontend:
+### 9.1 Standard Startup (Production Build)
+Builds and starts both Backend and Frontend:
 ```bash
 docker compose up --build -d
 ```
 
-### 9.2 Full-Local Startup (Self-Hosted ChromaDB)
-Starts all local services including self-hosted ChromaDB:
-```bash
-docker compose --profile full-local up --build -d
-```
-
-### 9.3 Development Mode with Live Code Sync
-Using `docker-compose.override.yml` to bind-mount source code:
+### 9.2 Development Mode with Live Code Sync
+Using `docker-compose.override.yml` to bind-mount source code for live hot-reloading:
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ```
 
-### 9.4 Verifying Container Status & Health
+### 9.3 Verifying Container Status & Health
 ```bash
 # Check running containers and health statuses
 docker compose ps
@@ -415,13 +375,10 @@ docker compose logs -f
 docker compose exec backend pytest
 ```
 
-### 9.5 Graceful Teardown
+### 9.4 Graceful Teardown
 ```bash
 # Stop containers
 docker compose down
-
-# Wipe everything including volumes for clean slate
-docker compose down -v
 ```
 
 ---
@@ -431,7 +388,9 @@ docker compose down -v
 1. **OCR Verification Inside Container**:
    - Execute `docker compose exec backend tesseract --version` to ensure Tesseract 5.x is active.
    - Upload a sample Indian government ID image; verify OCR extracts text cleanly without `TesseractNotFoundError`.
-2. **Internal Proxy & Rewrite Test**:
+2. **Chroma Cloud Connectivity**:
+   - Verify `backend` container can reach Chroma Cloud over HTTPS without network proxy errors.
+3. **Internal Proxy & Rewrite Test**:
    - Send `POST http://localhost:3000/api/py/chat`; confirm Next.js proxies to `http://backend:8000/chat` and returns `200 OK`.
-3. **Automated Test Suite**:
+4. **Automated Test Suite**:
    - Run `docker compose exec backend pytest` to verify all 761 tests pass inside the Linux container environment.
