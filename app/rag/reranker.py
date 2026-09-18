@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 class CohereReranker:
     """Reranks candidate document chunks using Cohere cross-encoder models."""
 
+    applies_relevance_threshold = True
+
     def __init__(
         self,
         api_key: Optional[str] = None,

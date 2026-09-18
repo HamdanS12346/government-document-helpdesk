@@ -1,127 +1,140 @@
-# Govt Doc Helpdesk
+# Government Document Helpdesk
 
-Govt Doc Helpdesk is a document-focused assistant architecture for processing user input, classifying intent, retrieving relevant document context, and generating grounded responses.
+Government Document Helpdesk is a document-focused chat assistant for helping users ask questions about government forms, PDFs, images, and spreadsheets. The backend normalizes the user input, classifies the intent, retrieves relevant document evidence when needed, builds a grounded context, generates a response, applies response guardrails, and stores conversation memory when memory credentials are configured.
 
-## Project Structure
-
-```text
-.
-|-- app/
-|   |-- api/              # FastAPI HTTP boundary
-|   |-- config/           # Settings and environment loading
-|   |-- contracts/        # Shared schemas between nodes
-|   |-- graph/            # LangGraph state, graph setup, routing
-|   |-- input_processing/ # User input and attachment normalization
-|   |-- intent/           # Intent classification and clarification
-|   |-- memory/           # Message history and summaries
-|   |-- rag/              # Retrieval and context building
-|   `-- response/         # Final answer generation
-|-- docs/
-|-- evaluation/
-|-- frontend/             # Next.js browser frontend
-|-- guardrails/
-|-- tests/
-|-- .env.example
-|-- .gitignore
-|-- requirements.txt
-`-- README.md
-```
-
-## Current Local Flow
-
-The current frontend integration runs the Input Processor and the intent graph
-slice through retrieval/context building or clarification display:
+The project has a FastAPI backend and a Next.js frontend:
 
 ```text
-Next.js frontend
+Frontend chat UI
   -> FastAPI /chat
-  -> InputRequest
   -> Input Processor
-  -> NormalizedInput
-  -> intent-retriever graph
-  -> IntentDecision
-  -> document_info: Retriever -> Context Builder
-  -> ambiguous: Clarification Node
+  -> Intent Classifier
+  -> document_info: Retriever -> Context Builder -> Response -> Guardrails
+  -> general_chat: Response -> Guardrails
+  -> ambiguous: Clarification -> Guardrails
+  -> Memory load/save when conversation memory is available
 ```
 
-The `/chat` response includes a stable `status` field. Ambiguous requests return
-`status: "clarification_required"` with the graph-generated clarification
-question in both `message` and `assistant_message.content`, so the frontend can
-display it as a normal assistant message.
-
-For local debugging, the FastAPI terminal prints `NormalizedInput` first, then
-`IntentDecision` after classification. Document-info requests also print
-retrieved documents and built context when present. Durable memory and final
-response generation will be connected later.
-
-Local development uses two servers:
+## Main Folders
 
 ```text
-FastAPI: http://localhost:8000
-Next.js: http://localhost:3000
+app/
+|-- api/              # FastAPI routes, auth, and public response serialization
+|-- config/           # Settings and .env loading
+|-- contracts/        # Shared Pydantic schemas between nodes
+|-- graph/            # LangGraph state, graph setup, and routing
+|-- input_processing/ # Text, image, PDF, and spreadsheet normalization
+|-- intent/           # Intent classification and query shaping
+|-- memory/           # Conversation threads, summaries, and persistence
+|-- rag/              # Retrieval, reranking, metadata, and context building
+`-- response/         # Final answer generation and response guardrail adapter
+
+frontend/             # Next.js chat interface
+docs/                 # Architecture and folder documentation
+evaluation/           # Evaluation data and scripts
+guardrails/           # Safety and validation checks
+tests/                # Backend tests grouped by feature area
 ```
+
+## What Works Now
+
+- `POST /chat` accepts a message, optional attachments, and an optional `conversation_id`.
+- Input processing supports plain text plus PDF, image, and `.xlsx` attachment normalization.
+- Intent classification routes requests as `document_info`, `general_chat`, or `ambiguous`.
+- Document questions run through retrieval, context building, response generation, and response guardrails.
+- General chat requests go directly to response generation and response guardrails.
+- Ambiguous requests return a clarification-style assistant message with `status: "clarification_required"`.
+- Conversation memory is connected. It uses Supabase when configured and falls back to in-memory storage for local development.
+- The frontend can send chat messages and attachments, display assistant responses, and use Supabase auth/thread history when configured.
 
 ## Prerequisites
 
-- Python with `venv`
+- Python 3.11+ with `venv`
 - Node.js and npm
 - Tesseract OCR for real image OCR
+- API credentials for the services you want to use locally
 
-## Backend Setup
+## Environment Variables
 
-### 1. Create A Virtual Environment
+Backend environment variables live in the project root:
 
-From the project root:
-
-```bash
-python -m venv .venv
+```text
+.env.example  # committed template
+.env          # local secrets, do not commit
 ```
 
-### 2. Activate The Virtual Environment
-
-On Windows PowerShell:
+Create `.env` from the template:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-On Windows Command Prompt:
-
-```cmd
-.venv\Scripts\activate.bat
+Copy-Item .env.example .env
 ```
 
 On macOS/Linux:
 
 ```bash
-source .venv/bin/activate
+cp .env.example .env
 ```
 
-### 3. Install Python Requirements
+Fill in the values you need:
 
-Upgrade `pip` first:
+| Variable | Needed for | Notes |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | Required for intent classification, metadata extraction, query rewriting, embeddings, and response generation | Main credential needed for normal chat behavior. |
+| `COHERE_API_KEY` | Optional reranking | Used only if the reranker path is enabled. |
+| `CHROMA_API_KEY`, `CHROMA_TENANT`, `CHROMA_DATABASE`, `CHROMA_COLLECTION_NAME` | Optional Chroma Cloud retrieval | Without cloud credentials, retrieval can fall back to local/in-memory behavior depending on available data. |
+| `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` | Optional backend memory/auth persistence | Without Supabase credentials, backend memory falls back to in-memory storage for the running process. |
+| `LANGFUSE_ENABLED`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Optional tracing and evaluation reporting | `.env.example` keeps tracing disabled by default for local setup. |
+| `LANGFUSE_CAPTURE_TEXT` | Optional tracing detail | Controls whether trace metadata may include text previews. |
+| `CHAT_DEBUG_PRINTS` | Optional local debugging | Set `true` to print normalized input, intent, and assistant output in the backend terminal. |
+| `UPLOAD_MAX_ATTACHMENT_COUNT`, `UPLOAD_MAX_TOTAL_SIZE_BYTES` | Optional upload limits | Defaults are already provided in `.env.example`. |
+
+Frontend environment variables are read by Next.js. Create a local frontend env file from the frontend template:
+
+```powershell
+Copy-Item frontend/.env.local.example frontend/.env.local
+```
+
+On macOS/Linux:
 
 ```bash
+cp frontend/.env.local.example frontend/.env.local
+```
+
+The template contains:
+
+```text
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+```
+
+`NEXT_PUBLIC_API_URL` defaults to `http://localhost:8000`. Supabase frontend values are only needed for login and thread history in the UI.
+
+Never commit `.env`, `frontend/.env.local`, API keys, access tokens, or private user documents.
+
+## Backend Setup
+
+From the project root, create and activate a virtual environment:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+Install dependencies:
+
+```powershell
 python -m pip install --upgrade pip
-```
-
-Then install all project requirements:
-
-```bash
 pip install -r requirements.txt
 ```
 
-### 4. Install OCR System Dependency
-
-Image OCR uses `pytesseract`, which is a Python wrapper around the external Tesseract OCR executable. Installing `requirements.txt` is not enough for OCR; Tesseract must also be installed on the machine and available on `PATH`.
-
-On Windows, install Tesseract OCR and make sure this folder is on `PATH`:
+Install Tesseract OCR if you need image OCR. On Windows, make sure this folder is on `PATH`:
 
 ```text
 C:\Program Files\Tesseract-OCR
 ```
 
-Verify from an activated virtual environment:
+Verify OCR setup:
 
 ```powershell
 where.exe tesseract
@@ -129,108 +142,56 @@ tesseract --version
 python -c "import pytesseract; print(pytesseract.get_tesseract_version())"
 ```
 
-All three commands should succeed before real OCR integration is expected to work.
-
-### 5. Configure Environment Variables
-
-Copy `.env.example` to `.env`:
-
-```bash
-cp .env.example .env
-```
-
-On Windows PowerShell, you can use:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Then fill in the required values in `.env`. The backend loads this file at
-startup for local development. Intent classification requires `OPENAI_API_KEY`.
-Langfuse tracing is optional. To enable it locally, set `LANGFUSE_ENABLED=true`
-and provide `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and
-`LANGFUSE_BASE_URL`.
-
-## Frontend Setup
-
-Install the frontend dependencies from the isolated Next.js app:
-
-```powershell
-cd frontend
-npm install
-```
-
-## Run The Application
-
-Start the backend API from the project root:
+Start the backend:
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn app.api.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-In a second terminal, start the frontend:
+The API runs at:
+
+```text
+http://localhost:8000
+```
+
+## Frontend Setup
+
+In a second terminal:
 
 ```powershell
 cd frontend
+npm install
 npm.cmd run dev
 ```
 
-Open the browser at:
+Open:
 
 ```text
 http://localhost:3000
 ```
 
-Submit a message, supported document attachment, or both. The frontend sends a multipart request to FastAPI, and the backend prints the `NormalizedInput` JSON and then the `IntentDecision` JSON in the terminal for local verification.
+The frontend sends multipart chat requests to the backend, including uploaded files and an optional `conversation_id`.
 
-For ambiguous requests, the backend returns `clarification_required` and the UI
-renders the actual clarification question from the graph. The user answers
-through the same chat composer; durable cross-request continuation is deferred
-to the memory branch.
+## Tests
 
-## Test Commands
-
-Run the full backend test suite from the project root:
+Run the backend test suite from the project root:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-Run focused API tests:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest tests/api
-```
-
-Run the existing manual Input Processor baseline:
-
-```powershell
-.\.venv\Scripts\python.exe tests\input-processor\test_full.py
-```
-
-Run frontend lint:
+Run frontend lint and frontend tests:
 
 ```powershell
 cd frontend
 npm.cmd run lint
+npm.cmd test
 ```
 
-## Requirements
+## Useful Docs
 
-The project currently uses dependencies for:
-
-- API serving: `fastapi`, `uvicorn`
-- Multipart upload handling: `python-multipart`
-- LLM and graph workflow: `openai`, `langchain`, `langgraph`
-- Observability: `langfuse`
-- Configuration and validation: `python-dotenv`, `pydantic`, `pydantic-settings`
-- Retrieval/vector storage: `chromadb`, `faiss-cpu`
-- PDF/image processing: `pypdf`, `pdfplumber`, `pillow`, `pytesseract`
-- Testing: `pytest`, `pytest-asyncio`
-- Frontend: Next.js, React, TypeScript, ESLint in `frontend/package.json`
-
-## Documentation
-
-Architecture notes are available in `docs/architecture/`.
-
-Folder guidance is available in `docs/folder-structure.md`.
+- `INSTRUCTIONS.md`: team workflow, branches, commits, and PRs
+- `docs/folder-structure.md`: what belongs in each folder
+- `docs/architecture/state-flow.md`: node inputs, outputs, and routing
+- `docs/architecture/state.md`: shared graph state
+- `docs/architecture/schema/`: shared schema documentation

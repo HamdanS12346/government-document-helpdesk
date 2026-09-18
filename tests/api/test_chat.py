@@ -28,6 +28,7 @@ from app.input_processing.schemas import (
     InputProcessingResult,
     InputRequest,
 )
+from guardrails.input_processor import MAX_ATTACHMENT_SIZE_BYTES
 
 
 class FakeIntentClassifier:
@@ -37,6 +38,35 @@ class FakeIntentClassifier:
             intent_type="document_info",
             confidence_score=0.9,
         )
+
+
+class FakeAsyncUploadFile:
+    def __init__(
+        self,
+        *,
+        filename: str,
+        content_type: str,
+        chunks: list[bytes],
+        size: int | None = None,
+    ) -> None:
+        self.filename = filename
+        self.content_type = content_type
+        self.size = size
+        self._chunks = chunks
+        self.read_sizes: list[int] = []
+        self.returned_sizes: list[int] = []
+
+    async def read(self, size: int = -1) -> bytes:
+        self.read_sizes.append(size)
+        if not self._chunks:
+            self.returned_sizes.append(0)
+            return b""
+        chunk = self._chunks.pop(0)
+        if size >= 0 and len(chunk) > size:
+            self._chunks.insert(0, chunk[size:])
+            chunk = chunk[:size]
+        self.returned_sizes.append(len(chunk))
+        return chunk
 
 
 EXPECTED_CHAT_RESPONSE_KEYS = {
@@ -925,6 +955,144 @@ def test_chat_converts_uploads_to_attachment_models(
     assert attachment.media_type == "image/png"
     assert attachment.content == b"\x89PNG\r\n\x1a\nimage bytes"
     assert not isinstance(attachment.content, str)
+
+
+def test_read_uploaded_files_rejects_declared_oversized_upload_without_reading() -> None:
+    upload = FakeAsyncUploadFile(
+        filename="oversized_test_pdf.pdf",
+        content_type="application/pdf",
+        chunks=[b"x" * 100],
+        size=MAX_ATTACHMENT_SIZE_BYTES,
+    )
+
+    results = asyncio.run(routes._read_uploaded_files([upload]))
+
+    assert upload.read_sizes == []
+    assert results[0].file is None
+    assert results[0].error_status is not None
+    assert results[0].error_status.error is not None
+    assert results[0].error_status.error.code == InputProcessingErrorCode.FILE_TOO_LARGE
+    assert results[0].error_status.error.message == (
+        "This attachment is too large. Upload a file smaller than 10 MB."
+    )
+
+
+def test_read_uploaded_files_rejects_oversized_upload_while_streaming() -> None:
+    upload = FakeAsyncUploadFile(
+        filename="oversized_test_pdf.pdf",
+        content_type="application/pdf",
+        chunks=[
+            b"x" * (MAX_ATTACHMENT_SIZE_BYTES - 1),
+            b"x" * 100,
+        ],
+        size=None,
+    )
+
+    results = asyncio.run(routes._read_uploaded_files([upload]))
+
+    assert sum(upload.returned_sizes) == MAX_ATTACHMENT_SIZE_BYTES
+    assert upload._chunks
+    assert results[0].file is None
+    assert results[0].error_status is not None
+    assert results[0].error_status.error is not None
+    assert results[0].error_status.error.code == InputProcessingErrorCode.FILE_TOO_LARGE
+
+
+def test_read_uploaded_files_rejects_too_many_attachments_without_reading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    get_settings.cache_clear()
+    uploads = [
+        FakeAsyncUploadFile(
+            filename=f"file-{index}.pdf",
+            content_type="application/pdf",
+            chunks=[b"content"],
+            size=7,
+        )
+        for index in range(6)
+    ]
+
+    results = asyncio.run(routes._read_uploaded_files(uploads))
+
+    assert all(upload.read_sizes == [] for upload in uploads)
+    assert len(results) == 1
+    assert results[0].error_status is not None
+    assert results[0].error_status.error is not None
+    assert (
+        results[0].error_status.error.code
+        == InputProcessingErrorCode.TOO_MANY_ATTACHMENTS
+    )
+    assert results[0].error_status.error.message == (
+        "Too many attachments. Upload 5 files or fewer."
+    )
+
+
+def test_read_uploaded_files_rejects_declared_total_size_before_next_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UPLOAD_MAX_TOTAL_SIZE_BYTES", "10")
+    get_settings.cache_clear()
+    first_upload = FakeAsyncUploadFile(
+        filename="first.pdf",
+        content_type="application/pdf",
+        chunks=[b"123456", b""],
+        size=6,
+    )
+    second_upload = FakeAsyncUploadFile(
+        filename="second.pdf",
+        content_type="application/pdf",
+        chunks=[b"abcdef"],
+        size=6,
+    )
+
+    results = asyncio.run(routes._read_uploaded_files([first_upload, second_upload]))
+
+    assert first_upload.returned_sizes == [6, 0]
+    assert second_upload.read_sizes == []
+    assert results[0].file is not None
+    assert results[1].error_status is not None
+    assert results[1].error_status.error is not None
+    assert (
+        results[1].error_status.error.code
+        == InputProcessingErrorCode.TOTAL_UPLOAD_TOO_LARGE
+    )
+    assert results[1].error_status.error.message == (
+        "Total upload size is too large. Upload 50 MB or less per request."
+    )
+    get_settings.cache_clear()
+
+
+def test_read_uploaded_files_rejects_total_size_while_streaming(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UPLOAD_MAX_TOTAL_SIZE_BYTES", "10")
+    get_settings.cache_clear()
+    first_upload = FakeAsyncUploadFile(
+        filename="first.pdf",
+        content_type="application/pdf",
+        chunks=[b"123456", b""],
+        size=None,
+    )
+    second_upload = FakeAsyncUploadFile(
+        filename="second.pdf",
+        content_type="application/pdf",
+        chunks=[b"abcdef"],
+        size=None,
+    )
+
+    results = asyncio.run(routes._read_uploaded_files([first_upload, second_upload]))
+
+    assert first_upload.returned_sizes == [6, 0]
+    assert second_upload.returned_sizes == [5]
+    assert second_upload._chunks == [b"f"]
+    assert results[0].file is not None
+    assert results[1].error_status is not None
+    assert results[1].error_status.error is not None
+    assert (
+        results[1].error_status.error.code
+        == InputProcessingErrorCode.TOTAL_UPLOAD_TOO_LARGE
+    )
+    get_settings.cache_clear()
 
 
 def test_chat_preserves_multiple_uploaded_files_in_order(

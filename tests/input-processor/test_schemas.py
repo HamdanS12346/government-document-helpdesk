@@ -386,6 +386,8 @@ def test_error_taxonomy_includes_required_categories() -> None:
         "UNSUPPORTED_FORMAT",
         "SIGNATURE_MISMATCH",
         "FILE_TOO_LARGE",
+        "TOO_MANY_ATTACHMENTS",
+        "TOTAL_UPLOAD_TOO_LARGE",
         "PDF_PAGE_LIMIT_EXCEEDED",
         "SPREADSHEET_WORKSHEET_LIMIT_EXCEEDED",
         "UNSUPPORTED_WORKBOOK_PROTECTION",

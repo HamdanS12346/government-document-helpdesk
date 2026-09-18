@@ -10,7 +10,7 @@ from app.rag.metadata_extractor import MetadataFilterDecision
 from app.rag.node import RetrieverPipeline, retriever_node, set_default_retriever_pipeline
 from app.rag.query_rewriter import QueryRewriter
 from app.rag.reranker import CohereReranker
-from app.rag.vector_store import VectorStoreRetriever
+from app.rag.vector_store import RetrievalServiceError, VectorStoreRetriever
 
 
 def get_mock_corpus() -> list[RetrievedDocument]:
@@ -60,6 +60,7 @@ def test_retriever_node_single_turn():
         vector_retriever=VectorStoreRetriever(),
         reranker=CohereReranker(api_key=None),  # Uses RRF fallback
         final_top_k=2,
+        lexical_min_score=0.0,
     )
     set_default_retriever_pipeline(pipeline)
 
@@ -117,6 +118,7 @@ def test_retriever_node_multi_turn_with_cohere_rerank():
         vector_retriever=VectorStoreRetriever(),
         reranker=reranker,
         final_top_k=1,
+        lexical_min_score=0.0,
     )
 
     state = {
@@ -159,6 +161,7 @@ def test_retriever_node_with_multimodal_attachments():
         vector_retriever=VectorStoreRetriever(),
         reranker=CohereReranker(api_key=None),
         final_top_k=1,
+        lexical_min_score=0.0,
     )
 
     state = {
@@ -233,12 +236,35 @@ class EmptyVectorRetriever:
         return []
 
 
+class FailingVectorRetriever:
+    def search(self, query, top_k=25, where=None):
+        raise RetrievalServiceError(
+            "dense_retrieval",
+            "openai_embedding_failed",
+            "Could not generate the query embedding for dense retrieval.",
+        )
+
+
 class StaticVectorRetriever:
     def __init__(self, documents):
         self.documents = documents
 
     def search(self, query, top_k=25, where=None):
         return self.documents[:top_k]
+
+
+class ScoredReranker:
+    applies_relevance_threshold = True
+
+    def __init__(self, scores):
+        self.scores = scores
+
+    def rerank(self, query, documents, top_n=5):
+        reranked = [
+            doc.model_copy(update={"score": score})
+            for doc, score in zip(documents[:top_n], self.scores)
+        ]
+        return reranked, False
 
 
 class CorpusOnlyVectorRetriever:
@@ -325,6 +351,89 @@ def test_retriever_pipeline_rewrites_from_combined_text_not_intent_query():
     assert query_rewriter.messages == state["messages"]
     assert query_rewriter.conversation_summary == state["conversation_summary"]
     assert query_rewriter.attachment_previews == []
+    assert result["retrieval_status"].status == "no_documents_found"
+    assert result["retrieval_status"].no_documents_found is True
+
+
+def test_retriever_pipeline_marks_clean_empty_results_as_no_documents_found():
+    pipeline = RetrieverPipeline(
+        query_rewriter=QueryRewriter(),
+        metadata_extractor=FakeMetadataExtractor(),
+        lexical_searcher=EmptyLexicalSearcher(),
+        vector_retriever=EmptyVectorRetriever(),
+        reranker=PassthroughReranker(),
+    )
+    state = {
+        "normalized_input": NormalizedInput(
+            user_query="not in corpus",
+            image_content=[],
+            pdf_content=[],
+            combined_text="not in corpus",
+        ),
+        "messages": [],
+        "conversation_summary": None,
+    }
+
+    result = pipeline.execute(state)
+
+    assert result["documents"] == []
+    assert result["retrieval_status"].status == "no_documents_found"
+    assert result["retrieval_status"].errors == []
+
+
+def test_retriever_pipeline_marks_provider_failure_without_results_as_failed():
+    pipeline = RetrieverPipeline(
+        query_rewriter=QueryRewriter(),
+        metadata_extractor=FakeMetadataExtractor(),
+        lexical_searcher=EmptyLexicalSearcher(),
+        vector_retriever=FailingVectorRetriever(),
+        reranker=PassthroughReranker(),
+    )
+    state = {
+        "normalized_input": NormalizedInput(
+            user_query="PAN application",
+            image_content=[],
+            pdf_content=[],
+            combined_text="PAN application",
+        ),
+        "messages": [],
+        "conversation_summary": None,
+    }
+
+    result = pipeline.execute(state)
+
+    assert result["documents"] == []
+    assert result["retrieval_status"].status == "failed"
+    assert result["retrieval_status"].no_documents_found is False
+    assert result["retrieval_status"].errors[0].code == "openai_embedding_failed"
+
+
+def test_retriever_pipeline_marks_provider_failure_with_results_as_partial_failure():
+    docs = get_mock_corpus()
+    pipeline = RetrieverPipeline(
+        query_rewriter=QueryRewriter(),
+        metadata_extractor=FakeMetadataExtractor(),
+        lexical_searcher=StaticLexicalSearcher(docs),
+        vector_retriever=FailingVectorRetriever(),
+        reranker=PassthroughReranker(),
+        final_top_k=1,
+    )
+    state = {
+        "normalized_input": NormalizedInput(
+            user_query="passport address proof",
+            image_content=[],
+            pdf_content=[],
+            combined_text="passport address proof",
+        ),
+        "messages": [],
+        "conversation_summary": None,
+    }
+
+    result = pipeline.execute(state)
+
+    assert len(result["documents"]) == 1
+    assert result["retrieval_status"].status == "partial_failure"
+    assert result["retrieval_status"].errors[0].component == "dense_retrieval"
 
 
 def test_retriever_pipeline_uses_startup_warmed_lexical_index():
@@ -338,6 +447,7 @@ def test_retriever_pipeline_uses_startup_warmed_lexical_index():
         vector_retriever=vector_retriever,
         reranker=PassthroughReranker(),
         final_top_k=2,
+        lexical_min_score=0.0,
     )
     state = {
         "normalized_input": NormalizedInput(
@@ -412,3 +522,173 @@ def test_retriever_pipeline_default_rrf_pool_caps_reranker_input_at_15():
 
     assert len(result["documents"]) == 5
     assert reranker.input_count == 15
+
+
+def test_retriever_pipeline_filters_zero_dense_scores_before_fusion():
+    docs = [
+        RetrievedDocument(
+            id="dense-zero",
+            text_content="Zero score document",
+            metadata=ChunkMetadata(
+                document_id="dense-zero",
+                category="general",
+                document_name="zero",
+            ),
+            score=0.0,
+        ),
+        RetrievedDocument(
+            id="dense-positive",
+            text_content="Positive score document",
+            metadata=ChunkMetadata(
+                document_id="dense-positive",
+                category="general",
+                document_name="positive",
+            ),
+            score=0.1,
+        ),
+    ]
+    pipeline = RetrieverPipeline(
+        query_rewriter=QueryRewriter(),
+        metadata_extractor=FakeMetadataExtractor(),
+        lexical_searcher=EmptyLexicalSearcher(),
+        vector_retriever=StaticVectorRetriever(docs),
+        reranker=PassthroughReranker(),
+    )
+    state = {
+        "normalized_input": NormalizedInput(
+            user_query="positive",
+            image_content=[],
+            pdf_content=[],
+            combined_text="positive",
+        ),
+        "messages": [],
+        "conversation_summary": None,
+    }
+
+    result = pipeline.execute(state)
+
+    assert [doc.id for doc in result["documents"]] == ["dense-positive"]
+    assert result["retrieval_status"].dense_result_count == 1
+
+
+def test_retriever_pipeline_filters_lexical_scores_below_eight_before_fusion():
+    docs = [
+        RetrievedDocument(
+            id="lexical-low",
+            text_content="Low lexical score document",
+            metadata=ChunkMetadata(
+                document_id="lexical-low",
+                category="general",
+                document_name="low",
+            ),
+            score=7.99,
+        ),
+        RetrievedDocument(
+            id="lexical-keep",
+            text_content="Kept lexical score document",
+            metadata=ChunkMetadata(
+                document_id="lexical-keep",
+                category="general",
+                document_name="keep",
+            ),
+            score=8.0,
+        ),
+    ]
+    pipeline = RetrieverPipeline(
+        query_rewriter=QueryRewriter(),
+        metadata_extractor=FakeMetadataExtractor(),
+        lexical_searcher=StaticLexicalSearcher(docs),
+        vector_retriever=EmptyVectorRetriever(),
+        reranker=PassthroughReranker(),
+    )
+    state = {
+        "normalized_input": NormalizedInput(
+            user_query="kept",
+            image_content=[],
+            pdf_content=[],
+            combined_text="kept",
+        ),
+        "messages": [],
+        "conversation_summary": None,
+    }
+
+    result = pipeline.execute(state)
+
+    assert [doc.id for doc in result["documents"]] == ["lexical-keep"]
+    assert result["retrieval_status"].lexical_result_count == 1
+
+
+def test_retriever_pipeline_filters_reranked_scores_at_or_below_point_two():
+    docs = [
+        RetrievedDocument(
+            id=f"candidate-{idx}",
+            text_content=f"Candidate document {idx}",
+            metadata=ChunkMetadata(
+                document_id=f"candidate-{idx}",
+                category="general",
+                document_name=f"candidate-{idx}",
+            ),
+            score=8.0,
+        )
+        for idx in range(4)
+    ]
+    pipeline = RetrieverPipeline(
+        query_rewriter=QueryRewriter(),
+        metadata_extractor=FakeMetadataExtractor(),
+        lexical_searcher=StaticLexicalSearcher(docs),
+        vector_retriever=EmptyVectorRetriever(),
+        reranker=ScoredReranker([0.9, 0.21, 0.2, 0.1]),
+        final_top_k=4,
+    )
+    state = {
+        "normalized_input": NormalizedInput(
+            user_query="candidate",
+            image_content=[],
+            pdf_content=[],
+            combined_text="candidate",
+        ),
+        "messages": [],
+        "conversation_summary": None,
+    }
+
+    result = pipeline.execute(state)
+
+    assert [doc.id for doc in result["documents"]] == ["candidate-0", "candidate-1"]
+    assert result["retrieval_status"].final_document_count == 2
+
+
+def test_retriever_pipeline_empty_after_rerank_threshold_is_no_documents_found():
+    docs = [
+        RetrievedDocument(
+            id="candidate-low",
+            text_content="Candidate document",
+            metadata=ChunkMetadata(
+                document_id="candidate-low",
+                category="general",
+                document_name="candidate-low",
+            ),
+            score=8.0,
+        )
+    ]
+    pipeline = RetrieverPipeline(
+        query_rewriter=QueryRewriter(),
+        metadata_extractor=FakeMetadataExtractor(),
+        lexical_searcher=StaticLexicalSearcher(docs),
+        vector_retriever=EmptyVectorRetriever(),
+        reranker=ScoredReranker([0.2]),
+    )
+    state = {
+        "normalized_input": NormalizedInput(
+            user_query="candidate",
+            image_content=[],
+            pdf_content=[],
+            combined_text="candidate",
+        ),
+        "messages": [],
+        "conversation_summary": None,
+    }
+
+    result = pipeline.execute(state)
+
+    assert result["documents"] == []
+    assert result["retrieval_status"].status == "no_documents_found"

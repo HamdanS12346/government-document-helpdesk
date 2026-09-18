@@ -211,6 +211,67 @@ def build_token_usage_metadata(
     return data
 
 
+def build_response_output_metadata(response_text: str) -> dict[str, Any]:
+    """Build Response Node output metadata."""
+
+    metadata = {
+        "response_chars": len(response_text),
+    }
+    _add_text_preview(metadata, "response_text", response_text)
+    return metadata
+
+
+def build_response_input_metadata(
+    *,
+    normalized_input: NormalizedInput,
+    intent_decision: IntentDecision,
+    retrieved_context: Any | None = None,
+    messages: Iterable[Any] | None = None,
+    conversation_summary: str | None = None,
+) -> dict[str, Any]:
+    """Build safe metadata for the full Response Node input state."""
+
+    message_list = list(messages or [])
+    metadata: dict[str, Any] = {
+        "normalized_input": build_normalized_input_metadata(
+            normalized_input,
+            messages=message_list,
+            conversation_summary=conversation_summary,
+        ),
+        "intent_decision": build_intent_decision_metadata(intent_decision),
+        "retrieved_context": (
+            build_retrieved_context_metadata(retrieved_context)
+            if retrieved_context is not None
+            else None
+        ),
+        "messages": [
+            {
+                "index": idx,
+                "type": str(getattr(message, "type", "")),
+                "role": str(getattr(message, "role", "")),
+                "content_length": len(str(getattr(message, "content", ""))),
+            }
+            for idx, message in enumerate(message_list)
+        ],
+        "conversation_summary": {
+            "present": bool(conversation_summary),
+            "length": len(conversation_summary or ""),
+        },
+    }
+    if get_settings().langfuse_capture_text:
+        for idx, message in enumerate(message_list):
+            content = str(getattr(message, "content", ""))
+            if content:
+                metadata["messages"][idx]["content_preview"] = _safe_text_preview(
+                    content
+                )
+        if conversation_summary:
+            metadata["conversation_summary"]["preview"] = _safe_text_preview(
+                conversation_summary
+            )
+    return metadata
+
+
 def build_chat_graph_response_metadata(
     graph_state: Mapping[str, Any],
     *,
@@ -506,6 +567,8 @@ __all__ = [
     "build_query_rewrite_input_metadata",
     "build_query_rewrite_output_metadata",
     "build_retrieved_context_metadata",
+    "build_response_output_metadata",
+    "build_response_input_metadata",
     "build_token_usage_metadata",
     "TEXT_PREVIEW_MAX_CHARS",
 ]

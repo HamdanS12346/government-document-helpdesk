@@ -4,6 +4,7 @@ Tests: context_builder_node (app/rag/context_builder/node.py)
 """
 
 from app.contracts.retrieval import ChunkMetadata, RetrievedDocument
+from app.contracts.retrieval import RetrievalError, RetrievalStatus
 from app.contracts.response import RetrievedContext
 from app.rag.context_builder import ContextBuilder, context_builder_node
 
@@ -98,6 +99,18 @@ def test_node_empty_documents_returns_fallback():
     assert rc.fallback_applied is True
 
 
+def test_node_preserves_no_documents_found_status_on_empty_context():
+    state = {
+        "documents": [],
+        "retrieval_status": RetrievalStatus(status="no_documents_found"),
+    }
+
+    rc = context_builder_node(state)["retrieved_context"]
+
+    assert rc.has_relevant_documents is False
+    assert rc.retrieval_status == "no_documents_found"
+
+
 def test_node_missing_documents_key_handled():
     state = {}  # no "documents" key at all
     rc = context_builder_node(state)["retrieved_context"]
@@ -109,6 +122,32 @@ def test_node_none_documents_returns_fallback():
     rc = context_builder_node(state)["retrieved_context"]
     assert rc.has_relevant_documents is False
     assert rc.fallback_applied is True
+
+
+def test_node_retrieval_failure_returns_failure_context_not_no_documents_message():
+    state = {
+        "documents": [],
+        "retrieval_status": RetrievalStatus(
+            status="failed",
+            errors=[
+                RetrievalError(
+                    component="dense_retrieval",
+                    code="openai_embedding_failed",
+                    message="Could not generate the query embedding for dense retrieval.",
+                )
+            ],
+            no_documents_found=False,
+        ),
+    }
+
+    output = context_builder_node(state)
+    rc = output["retrieved_context"]
+
+    assert rc.has_relevant_documents is False
+    assert rc.fallback_applied is True
+    assert "retrieval service failed" in rc.formatted_context
+    assert "No relevant government documents were found" not in rc.formatted_context
+    assert output["guardrail_flags"]["retrieval_failed"] is True
 
 
 # ---------------------------------------------------------------------------

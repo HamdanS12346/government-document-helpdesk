@@ -7,6 +7,7 @@ import {
   ACCEPTED_UPLOAD_HINT,
   ACCEPTED_UPLOAD_TYPES,
   ATTACH_TOOLTIP,
+  validateUploadLimits,
 } from "@/lib/attachmentUi";
 
 type Props = {
@@ -44,8 +45,14 @@ export default function Composer({ onSend, isLoading, initialValue = "", onValue
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(e.target.files ?? []);
-    setFiles((prev) => [...prev, ...selected]);
-    setError("");
+    const nextFiles = [...files, ...selected];
+    const uploadLimitError = validateUploadLimits(nextFiles);
+    if (uploadLimitError) {
+      setError(uploadLimitError);
+    } else {
+      setFiles(nextFiles);
+      setError("");
+    }
     e.target.value = "";
   };
 
@@ -57,6 +64,11 @@ export default function Composer({ onSend, isLoading, initialValue = "", onValue
     if (isLoading) return;
     if (!text.trim() && files.length === 0) {
       setError("Enter a message or attach a file before sending.");
+      return;
+    }
+    const uploadLimitError = validateUploadLimits(files);
+    if (uploadLimitError) {
+      setError(uploadLimitError);
       return;
     }
     const messageText = text;

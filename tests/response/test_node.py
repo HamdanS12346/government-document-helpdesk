@@ -1,5 +1,6 @@
 """Tests for the response_node LangGraph state contract."""
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 import pytest
@@ -64,6 +65,135 @@ class TestResponseNodeReturnContract:
         result = response_node(_base_state(), generator=_mock_generator("Some answer."))
         ai_msgs = [m for m in result["messages"] if isinstance(m, AIMessage)]
         assert ai_msgs[0].content == "Some answer."
+
+
+class TestResponseNodeObservability:
+
+    def test_logs_response_text_when_text_capture_enabled(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from app.config import get_settings
+        import app.response.node as response_node_module
+
+        updates: list[dict] = []
+
+        class CapturingObservation:
+            def update(self, **kwargs):
+                updates.append(kwargs)
+
+        @contextmanager
+        def capture_observation(*args, **kwargs):
+            yield CapturingObservation()
+
+        monkeypatch.setenv("LANGFUSE_CAPTURE_TEXT", "true")
+        get_settings.cache_clear()
+        monkeypatch.setattr(
+            response_node_module,
+            "start_observation",
+            capture_observation,
+        )
+
+        response_node(
+            _base_state(),
+            generator=_mock_generator("Here is the actual response."),
+        )
+
+        assert updates[-1]["output"]["response_chars"] == len(
+            "Here is the actual response."
+        )
+        assert updates[-1]["output"]["response_text"] == (
+            "Here is the actual response."
+        )
+
+    def test_omits_response_text_when_text_capture_disabled(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from app.config import get_settings
+        import app.response.node as response_node_module
+
+        updates: list[dict] = []
+
+        class CapturingObservation:
+            def update(self, **kwargs):
+                updates.append(kwargs)
+
+        @contextmanager
+        def capture_observation(*args, **kwargs):
+            yield CapturingObservation()
+
+        monkeypatch.setenv("LANGFUSE_CAPTURE_TEXT", "false")
+        get_settings.cache_clear()
+        monkeypatch.setattr(
+            response_node_module,
+            "start_observation",
+            capture_observation,
+        )
+
+        response_node(
+            _base_state(),
+            generator=_mock_generator("Here is the actual response."),
+        )
+
+        assert updates[-1]["output"]["response_chars"] == len(
+            "Here is the actual response."
+        )
+        assert "response_text" not in updates[-1]["output"]
+
+    def test_response_observation_input_includes_full_node_inputs(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from app.config import get_settings
+        import app.response.node as response_node_module
+
+        observations: list[dict] = []
+
+        class CapturingObservation:
+            def update(self, **kwargs):
+                pass
+
+        @contextmanager
+        def capture_observation(*args, **kwargs):
+            observations.append(kwargs)
+            yield CapturingObservation()
+
+        monkeypatch.setenv("LANGFUSE_CAPTURE_TEXT", "true")
+        get_settings.cache_clear()
+        monkeypatch.setattr(
+            response_node_module,
+            "start_observation",
+            capture_observation,
+        )
+
+        state = _base_state()
+        state["messages"] = [HumanMessage(content="Earlier question")]
+        state["conversation_summary"] = "User asked about ration card documents."
+        state["retrieved_context"] = RetrievedContext(
+            formatted_context="[Document 1] Ration card application details.",
+            sources=[],
+            total_documents_retrieved=1,
+            documents_used=1,
+            has_relevant_documents=True,
+            truncated=False,
+            fallback_applied=False,
+        )
+
+        response_node(state, generator=_mock_generator())
+
+        response_input = observations[-1]["input"]
+        assert "normalized_input" in response_input
+        assert "intent_decision" in response_input
+        assert "retrieved_context" in response_input
+        assert "messages" in response_input
+        assert "conversation_summary" in response_input
+        assert response_input["intent_decision"]["intent_type"] == "general_chat"
+        assert response_input["messages"][0]["content_preview"] == "Earlier question"
+        assert (
+            response_input["retrieved_context"]["formatted_context_preview"]
+            == "[Document 1] Ration card application details."
+        )
 
 
 # ---------------------------------------------------------------------------

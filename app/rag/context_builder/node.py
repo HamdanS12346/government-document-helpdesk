@@ -23,6 +23,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from app.rag.context_builder.builder import ContextBuilder
+from app.contracts.retrieval import RetrievalStatus
 from app.contracts.response import RetrievedContext
 from app.observability import start_observation
 from app.observability.metadata import (
@@ -48,6 +49,10 @@ logger = logging.getLogger(__name__)
 #       min_relevance_score=settings.context_min_score,
 #   )
 _DEFAULT_BUILDER = ContextBuilder()
+
+RETRIEVAL_FAILURE_CONTEXT_MESSAGE = (
+    "Document retrieval could not be completed because a retrieval service failed."
+)
 
 
 def context_builder_node(
@@ -78,6 +83,35 @@ def context_builder_node(
 
     # Read documents from state. The Retriever writes List[RetrievedDocument] here.
     raw_documents = state.get("documents")
+    raw_retrieval_status = state.get("retrieval_status")
+    retrieval_status = (
+        raw_retrieval_status
+        if isinstance(raw_retrieval_status, RetrievalStatus)
+        else (
+            RetrievalStatus.model_validate(raw_retrieval_status)
+            if isinstance(raw_retrieval_status, dict)
+            else None
+        )
+    )
+
+    if retrieval_status is not None and retrieval_status.status == "failed":
+        retrieved_context = RetrievedContext(
+            formatted_context=RETRIEVAL_FAILURE_CONTEXT_MESSAGE,
+            sources=[],
+            total_documents_retrieved=0,
+            documents_used=0,
+            has_relevant_documents=False,
+            truncated=False,
+            fallback_applied=True,
+            retrieval_status=retrieval_status.status,
+        )
+        existing_flags = dict(state.get("guardrail_flags") or {})
+        existing_flags["retrieval_ungrounded"] = True
+        existing_flags["retrieval_failed"] = True
+        return {
+            "retrieved_context": retrieved_context,
+            "guardrail_flags": existing_flags,
+        }
 
     doc_count = len(raw_documents) if isinstance(raw_documents, (list, tuple)) else 0
     logger.debug("context_builder_node: %d document(s) received from Retriever.", doc_count)
@@ -89,6 +123,10 @@ def context_builder_node(
         input=build_documents_metadata(raw_documents or []),
     ) as observation:
         retrieved_context: RetrievedContext = active_builder.build_context(raw_documents)
+        if retrieval_status is not None:
+            retrieved_context = retrieved_context.model_copy(
+                update={"retrieval_status": retrieval_status.status}
+            )
         observation.update(output=build_retrieved_context_metadata(retrieved_context))
 
     logger.info(
