@@ -67,6 +67,7 @@ Provides a single, stable evaluation interface to the connected LangGraph withou
   - `input_result` & `normalized_input` (Input Processor)
   - `intent_decision`, `intent`, `confidence_score` (Intent Classifier)
   - `documents` & `retrieved_chunk_ids` (Retriever)
+  - `dense_result_count` & `lexical_result_count` (Hybrid Search Candidate Counts)
   - `retrieved_context`, `formatted_context`, `citations` (Context Builder)
   - `response`, `is_clarification`, `clarification_question` (Response / Clarification)
   - `messages`, `conversation_summary`, `clarification_round_count`, `thread_id` (Memory Context)
@@ -75,11 +76,26 @@ Provides a single, stable evaluation interface to the connected LangGraph withou
 
 ### B. End-to-End Evaluation Runner (`evaluation/runners/run_e2e_demo.py`)
 A runner that executes evaluation datasets through the connected pipeline:
-- Connects to ChromaDB and populates the in-memory BM25 lexical searcher across all 1,947 documents from the corpus.
-- Supports batch execution via `--start` and `--end` CLI flags.
+- Validates both ChromaDB vector store and in-memory BM25 lexical index across all 1,948 documents, failing fast if either is empty.
+- Supports batch execution via `--start` and `--end` CLI flags, and saves structured JSON reports via `--output` (default: `evaluation/reports/e2e/latest.json`).
 - Wraps each test turn in a Langfuse observation trace (`eval_case:<CASE_ID>`).
-- Passes actual retrieved context into `evaluate_response_case()`.
-- Logs all 6 judge criteria scores and composite score to Langfuse.
+- **Hybrid Retrieval Evidence**:
+  - Captures and logs `dense_result_count` and `lexical_result_count` per case and publishes them to Langfuse.
+  - Aggregates an overarching `corpus_evidence` block:
+    ```json
+    "corpus_evidence": {
+      "chroma_document_count": 1948,
+      "bm25_document_count": 1948,
+      "average_dense_result_count": 16.0,
+      "average_lexical_result_count": 25.0,
+      "hybrid_retrieval_verified": true
+    }
+    ```
+  - Prints a human-readable `HYBRID RETRIEVAL EVALUATION EVIDENCE SUMMARY` console banner.
+- **Dual-Stage Evaluation**:
+  - **Retrieval IR Metrics**: Computes `recall@5`, `precision@5`, `MRR`, and `nDCG@5` on actual retrieved chunks against ground-truth context chunks.
+  - **Response Judge Metrics**: Passes actual retrieved context into `evaluate_response_case()` across all 6 judge criteria (`groundedness`, `completeness`, `citation_precision`, `relevance`, `clarity`, `safety`).
+- **Multi-Tier Langfuse Scoring**: Logs candidate counts, retrieval metrics, judge scores, composite score, and token consumption to Langfuse.
 - Flushes all observations and prints summary progress with Langfuse Trace IDs.
 
 ---
@@ -149,14 +165,18 @@ Trace: eval_case:<CASE_ID>
 6. `eval_citation`: Valid government source links cited (0.0 to 1.0).
 7. `eval_safety`: Complies with safety guidelines and avoids misleading policy guidance (0.0 to 1.0).
 
+#### Hybrid Retrieval Candidate Metrics
+8. `retrieval_dense_result_count`: Candidate chunks retrieved by Chroma dense vector search.
+9. `retrieval_lexical_result_count`: Candidate chunks retrieved by BM25 lexical search.
+
 #### Token Consumption & Cost Metrics
-8. `tokens_input`: Total input (prompt) tokens consumed across the full turn.
-9. `tokens_output`: Total output (completion) tokens generated across the full turn.
-10. `tokens_total`: Total tokens consumed across pipeline and evaluators.
-11. `tokens_pipeline_input` & `tokens_pipeline_output`: Input/output tokens used by graph nodes (`intent_classifier`, `retriever` query rewriter/metadata extractor, `response_generator`).
-12. `tokens_eval_input` & `tokens_eval_output`: Input/output tokens consumed by the 6 LLM judge evaluators.
-13. `cost_usd`: Total estimated cost (USD) for the evaluation turn.
-14. Stage-specific breakdown available in trace output metadata under `token_usage.stages` (`intent`, `retrieval`, `response`, `clarification`).
+10. `tokens_input`: Total input (prompt) tokens consumed across the full turn.
+11. `tokens_output`: Total output (completion) tokens generated across the full turn.
+12. `tokens_total`: Total tokens consumed across pipeline and evaluators.
+13. `tokens_pipeline_input` & `tokens_pipeline_output`: Input/output tokens used by graph nodes (`intent_classifier`, `retriever` query rewriter/metadata extractor, `response_generator`).
+14. `tokens_eval_input` & `tokens_eval_output`: Input/output tokens consumed by the 6 LLM judge evaluators.
+15. `cost_usd`: Total estimated cost (USD) for the evaluation turn.
+16. Stage-specific breakdown available in trace output metadata under `token_usage.stages` (`intent`, `retrieval`, `response`, `clarification`).
 
 ---
 
@@ -172,6 +192,9 @@ Trace: eval_case:<CASE_ID>
 
 # Run a single specific case (e.g. record 6):
 .venv\Scripts\python -u -m evaluation.runners.run_e2e_demo --start 6 --end 6
+
+# Save evaluation report to custom JSON file:
+.venv\Scripts\python -u -m evaluation.runners.run_e2e_demo --start 1 --end 5 --output evaluation\reports\e2e\latest.json
 ```
 
 ### View Help & Options

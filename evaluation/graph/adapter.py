@@ -62,6 +62,9 @@ class GraphEvaluationOutput:
     # Stage 3: Retrieval Output
     documents: List[Any] = field(default_factory=list)
     retrieved_chunk_ids: List[str] = field(default_factory=list)
+    retrieval_status: Optional[Any] = None
+    dense_result_count: int = 0
+    lexical_result_count: int = 0
 
     # Stage 4: Context Builder Output
     retrieved_context: Optional[RetrievedContext] = None
@@ -99,6 +102,8 @@ class GraphEvaluationOutput:
             "intent": self.intent,
             "confidence_score": self.confidence_score,
             "retrieved_chunk_ids": self.retrieved_chunk_ids,
+            "dense_result_count": self.dense_result_count,
+            "lexical_result_count": self.lexical_result_count,
             "retrieved_context": (
                 [self.formatted_context] if self.formatted_context else []
             ),
@@ -304,6 +309,11 @@ class ConnectedGraphAdapter:
                 else:
                     final_response = content
 
+            # Retrieval status and hybrid candidate counts
+            ret_status = output_state.get("retrieval_status")
+            dense_count = int(getattr(ret_status, "dense_result_count", 0)) if ret_status else 0
+            lexical_count = int(getattr(ret_status, "lexical_result_count", 0)) if ret_status else 0
+
             return GraphEvaluationOutput(
                 success=True,
                 query=query,
@@ -315,6 +325,9 @@ class ConnectedGraphAdapter:
                 confidence_score=confidence,
                 documents=docs,
                 retrieved_chunk_ids=chunk_ids,
+                retrieval_status=ret_status,
+                dense_result_count=dense_count,
+                lexical_result_count=lexical_count,
                 retrieved_context=retrieved_ctx,
                 formatted_context=formatted_ctx,
                 citations=citations,
