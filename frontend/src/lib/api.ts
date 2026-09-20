@@ -55,6 +55,8 @@ export type ChatApiResponse = {
     confidence_score: number | null;
   } | null;
   conversation_id: string | null;
+  error_type?: string;
+  httpStatus?: number;
 };
 
 export type ThreadItem = {
@@ -82,7 +84,8 @@ export async function postChat(
   message: string,
   files: File[],
   conversationId?: string | null,
-  token?: string | null
+  token?: string | null,
+  signal?: AbortSignal
 ): Promise<ChatApiResponse> {
   const form = new FormData();
 
@@ -108,10 +111,15 @@ export async function postChat(
     method: "POST",
     headers,
     body: form,
+    signal,
   });
 
   // Parse body regardless of HTTP status so we can surface API error messages.
   const data = (await response.json().catch(() => ({}))) as ChatApiResponse;
+  data.httpStatus = response.status;
+  if (!response.ok) {
+    data.success = false;
+  }
   return data;
 }
 
@@ -138,13 +146,15 @@ export async function fetchUserThreads(token: string): Promise<ThreadItem[]> {
  */
 export async function fetchThreadMessages(
   threadId: string,
-  token: string
+  token: string,
+  signal?: AbortSignal
 ): Promise<ThreadMessage[]> {
   const response = await fetch(`${API_BASE}/threads/${threadId}/messages`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
     },
+    signal,
   });
   if (!response.ok) {
     const errData = (await response.json().catch(() => ({}))) as { detail?: string };

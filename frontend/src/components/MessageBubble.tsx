@@ -131,6 +131,46 @@ function UserContent({ text }: { text: string }) {
   );
 }
 
+function ErrorCard({
+  category,
+  badge,
+  badgeIcon,
+  title,
+  message,
+  suggestion,
+}: {
+  category?: string;
+  badge?: string;
+  badgeIcon?: string;
+  title?: string;
+  message: string;
+  suggestion?: string;
+}) {
+  const categoryClass = category ? styles[`errorCard_${category}`] || "" : "";
+  const badgeClass = category ? styles[`errorBadge_${category}`] || "" : "";
+
+  return (
+    <div className={`${styles.errorCard} ${categoryClass}`} role="alert">
+      <div className={styles.errorHeader}>
+        {badge && (
+          <span className={`${styles.errorBadge} ${badgeClass}`}>
+            <span className={styles.errorBadgeIcon} aria-hidden>{badgeIcon || "⚠️"}</span>
+            {badge}
+          </span>
+        )}
+        {title && <h4 className={styles.errorTitle}>{title}</h4>}
+      </div>
+      <p className={styles.errorMessage}>{message}</p>
+      {suggestion && (
+        <div className={styles.errorSuggestion}>
+          <span className={styles.errorSuggestionIcon} aria-hidden>💡</span>
+          <span>{suggestion}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function MessageBubble({ message }: Props) {
   const isUser = message.role === "user";
 
@@ -151,10 +191,20 @@ export default function MessageBubble({ message }: Props) {
 
         {/* Bubble */}
         <div className={`${styles.bubble} ${message.isError ? styles.errorBubble : ""}`}>
-          {isUser
-            ? <UserContent text={message.content} />
-            : <BotContent text={message.content} isStreaming={message.isStreaming} />
-          }
+          {isUser ? (
+            <UserContent text={message.content} />
+          ) : message.isError ? (
+            <ErrorCard
+              category={message.errorCategory}
+              badge={message.errorBadge}
+              badgeIcon={message.errorBadgeIcon}
+              title={message.errorTitle}
+              message={message.content}
+              suggestion={message.errorSuggestion}
+            />
+          ) : (
+            <BotContent text={message.content} isStreaming={message.isStreaming} />
+          )}
 
           {/* Attached file chips (user messages only) */}
           {message.attachmentNames && message.attachmentNames.length > 0 && (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   postChat,
   fetchThreadMessages,
@@ -8,11 +8,12 @@ import {
   type AttachmentStatus,
   type ProcessingWarning,
   type AssistantMessage,
-} from "@/lib/api";
+} from "../lib/api.ts";
 import {
   ALL_FAILED_ATTACHMENTS_MESSAGE,
   buildAttachmentSummary,
-} from "@/lib/attachmentUi";
+} from "../lib/attachmentUi.ts";
+import { classifyError, type ErrorCategory } from "../lib/errorHandling.ts";
 
 export type MessageRole = "user" | "bot";
 
@@ -29,8 +30,18 @@ export type ChatMessage = {
   attachmentSummary?: AttachmentSummary;
   /** Non-fatal processing warnings */
   warnings?: string[];
-  /** True when the API returned success: false */
+  /** True when the API returned success: false or an error occurred */
   isError?: boolean;
+  /** Categorized error domain */
+  errorCategory?: ErrorCategory;
+  /** Visual badge text for the error */
+  errorBadge?: string;
+  /** Visual badge icon for the error */
+  errorBadgeIcon?: string;
+  /** Title for the error card */
+  errorTitle?: string;
+  /** Actionable suggestion to resolve the error */
+  errorSuggestion?: string;
   /** True while the assistant response is actively streaming */
   isStreaming?: boolean;
 };
@@ -46,7 +57,7 @@ type UseChatReturn = {
   setPendingQuery: (q: string) => void;
 };
 
-const WELCOME_MESSAGE: ChatMessage = {
+export const WELCOME_MESSAGE: ChatMessage = {
   id: "welcome",
   role: "bot",
   content:
@@ -58,13 +69,13 @@ function uid(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-function safeText(text: string | undefined, fallback: string): string {
+export function safeText(text: string | undefined, fallback: string): string {
   if (!text) return fallback;
   const unsafe = ["Traceback", 'File "', "site-packages", "RuntimeError", "Exception"];
   return unsafe.some((p) => text.includes(p)) ? fallback : text;
 }
 
-function buildBotContent(
+export function buildBotContent(
   success: boolean,
   message: string,
   assistantMessage: AssistantMessage | null,
@@ -149,13 +160,27 @@ export function useChat(): UseChatReturn {
   const [pendingQuery, setPendingQuery] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const threadAbortRef = useRef<AbortController | null>(null);
   // Track conversation_id for multi-turn memory (set after first response)
   const conversationIdRef = useRef<string | null>(null);
+
+  // Clean up any pending network requests when component unmounts
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      threadAbortRef.current?.abort();
+    };
+  }, []);
 
   const sendMessage = useCallback(async (text: string, files: File[], token?: string | null) => {
     const trimmed = text.trim();
     if (!trimmed && files.length === 0) return;
     if (isLoading) return;
+
+    // Abort any prior in-flight request and create a fresh AbortController for this turn
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     // Add user message immediately
     const userMsg: ChatMessage = {
@@ -169,19 +194,40 @@ export function useChat(): UseChatReturn {
     setIsLoading(true);
 
     try {
-      const data = await postChat(trimmed, files, conversationId, token);
+      const data = await postChat(trimmed, files, conversationId, token, controller.signal);
+      if (controller.signal.aborted) {
+        return;
+      }
+
       if (data.conversation_id) {
         conversationIdRef.current = data.conversation_id;
         setConversationId(data.conversation_id);
       }
 
-      const botContent = buildBotContent(
-        data.success,
-        data.message,
-        data.assistant_message ?? null,
-        data.warnings ?? [],
-        data.attachment_statuses ?? []
-      );
+      let classified: ReturnType<typeof classifyError> | undefined;
+      if (!data.success) {
+        classified = classifyError({
+          httpStatus: data.httpStatus,
+          apiStatus: data.status,
+          apiErrorType: data.error_type,
+          apiMessage: data.message,
+          attachmentStatuses: data.attachment_statuses ?? [],
+        });
+      }
+
+      const botContent = !data.success && classified
+        ? classified.message
+        : buildBotContent(
+            data.success,
+            data.message,
+            data.assistant_message ?? null,
+            data.warnings ?? [],
+            data.attachment_statuses ?? []
+          );
+
+      if (controller.signal.aborted) {
+        return;
+      }
 
       const botMsgId = uid();
       const shouldStream = data.success && Boolean(data.assistant_message?.content) && botContent.length > 20;
@@ -199,34 +245,68 @@ export function useChat(): UseChatReturn {
           safeText(w.message, "The request was processed with a warning.")
         ),
         isError: !data.success,
+        errorCategory: classified?.category,
+        errorBadge: classified?.badge,
+        errorBadgeIcon: classified?.badgeIcon,
+        errorTitle: classified?.title,
+        errorSuggestion: classified?.suggestion,
       };
 
       setMessages((prev) => [...prev, botMsg]);
       setIsLoading(false);
 
       if (shouldStream) {
-        abortRef.current = new AbortController();
-        await streamBotResponse(botMsgId, botContent, setMessages, abortRef.current.signal);
+        await streamBotResponse(botMsgId, botContent, setMessages, controller.signal);
       }
-    } catch {
+    } catch (err) {
+      if (
+        controller.signal.aborted ||
+        (err instanceof DOMException && err.name === "AbortError") ||
+        (err instanceof Error && err.name === "AbortError")
+      ) {
+        // Request was aborted by clearing chat or switching threads — do not surface an error
+        return;
+      }
+
+      const classified = classifyError({
+        errorObject: err,
+      });
       const errorMsg: ChatMessage = {
         id: uid(),
         role: "bot",
-        content:
-          "I couldn't reach the helpdesk server. Please make sure the FastAPI backend is running on port 8000 and try again.",
+        content: classified.message,
         timestamp: new Date(),
         isError: true,
+        errorCategory: classified.category,
+        errorBadge: classified.badge,
+        errorBadgeIcon: classified.badgeIcon,
+        errorTitle: classified.title,
+        errorSuggestion: classified.suggestion,
       };
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
-      setIsLoading(false);
+      if (!controller.signal.aborted) {
+        setIsLoading(false);
+      }
     }
   }, [isLoading, conversationId]);
 
   const loadThread = useCallback(async (threadId: string, token: string) => {
+    // Abort active chat request or active streaming response
+    abortRef.current?.abort();
+    abortRef.current = null;
+
+    // Abort active thread loading and create new controller
+    threadAbortRef.current?.abort();
+    const threadController = new AbortController();
+    threadAbortRef.current = threadController;
+
     setIsLoading(true);
     try {
-      const threadMessages = await fetchThreadMessages(threadId, token);
+      const threadMessages = await fetchThreadMessages(threadId, token, threadController.signal);
+      if (threadController.signal.aborted) {
+        return;
+      }
       const converted: ChatMessage[] = threadMessages.map((m) => ({
         id: m.id || uid(),
         role: m.role === "ai" ? "bot" : "user",
@@ -236,14 +316,43 @@ export function useChat(): UseChatReturn {
       setMessages(converted.length > 0 ? converted : [WELCOME_MESSAGE]);
       setConversationId(threadId);
     } catch (err) {
+      if (
+        threadController.signal.aborted ||
+        (err instanceof DOMException && err.name === "AbortError") ||
+        (err instanceof Error && err.name === "AbortError")
+      ) {
+        return;
+      }
+
       console.error("Failed to load thread messages:", err);
+      const classified = classifyError({
+        errorObject: err,
+      });
+      const errorMsg: ChatMessage = {
+        id: uid(),
+        role: "bot",
+        content: `Could not load conversation thread: ${classified.message}`,
+        timestamp: new Date(),
+        isError: true,
+        errorCategory: classified.category,
+        errorBadge: classified.badge,
+        errorBadgeIcon: classified.badgeIcon,
+        errorTitle: classified.title,
+        errorSuggestion: classified.suggestion,
+      };
+      setMessages((prev) => [...prev, errorMsg]);
     } finally {
-      setIsLoading(false);
+      if (!threadController.signal.aborted) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
   const clearChat = useCallback(() => {
     abortRef.current?.abort();
+    abortRef.current = null;
+    threadAbortRef.current?.abort();
+    threadAbortRef.current = null;
     setMessages([{ ...WELCOME_MESSAGE, timestamp: new Date() }]);
     setIsLoading(false);
     setPendingQuery("");
