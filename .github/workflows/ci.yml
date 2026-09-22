@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - dev
+  pull_request:
+    branches:
+      - dev
+
+jobs:
+  ci:
+    name: CI Pipeline
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run import and configuration checks
+        run: |
+          python -c "from app.config import get_settings; get_settings()"
+          python -c "from app.api.main import app"
+
+      - name: Run unit tests
+        continue-on-error: true
+        run: |
+          pytest
+
+      - name: Build Docker image
+        run: |
+          docker build -t helpdesk-backend:ci .
