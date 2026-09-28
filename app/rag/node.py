@@ -142,6 +142,7 @@ class RetrieverPipeline:
 
         with start_observation(
             "retriever",
+            as_type="retriever",
             input={
                 **build_normalized_input_metadata(
                     norm_input,
@@ -221,7 +222,7 @@ class RetrieverPipeline:
             with start_observation(
                 "metadata_filter",
                 as_type="generation",
-                model="gpt-4o-mini",
+                model=getattr(self.metadata_extractor, "model", "gpt-4o-mini"),
                 input={"rewritten_query_length": len(rewritten_query)},
             ) as metadata_observation:
                 with get_openai_callback() as meta_cb:

@@ -226,3 +226,153 @@ def test_build_criteria():
         is_confident=False,
     )
     assert MetadataExtractor.build_criteria(decision_unconf) is None
+
+
+def test_jev_metadata_extractor_confident_category_and_document(monkeypatch):
+    """JevMetadataExtractor correctly parses confident category choice and specific subcategory document."""
+    from unittest.mock import patch, MagicMock
+    from app.rag.metadata_extractor import JevMetadataExtractor
+
+    extractor = JevMetadataExtractor(api_key="test-key")
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = json.dumps({
+        "answers": {
+            "category": {"choice": "identity-documents", "confidence": 0.98},
+            "document_name": {"choice": "aadhaar-card", "confidence": 0.96},
+        }
+    })
+    mock_resp.json.return_value = {
+        "answers": {
+            "category": {
+                "choice": "identity-documents",
+                "confidence": 0.98,
+            },
+            "document_name": {
+                "choice": "aadhaar-card",
+                "confidence": 0.96,
+            },
+        }
+    }
+
+    with patch("httpx.Client.post", return_value=mock_resp):
+        decision = extractor.extract("How do I update my Aadhaar card details?")
+        assert decision.is_confident is True
+        assert decision.category == "identity-documents"
+        assert decision.document_name == "aadhaar-card"
+
+
+def test_jev_metadata_extractor_confident_category_broad_document(monkeypatch):
+    """JevMetadataExtractor sets category but leaves document_name None if broad."""
+    from unittest.mock import patch, MagicMock
+    from app.rag.metadata_extractor import JevMetadataExtractor
+
+    extractor = JevMetadataExtractor(api_key="test-key")
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = json.dumps({
+        "answers": {
+            "category": {"choice": "identity-documents", "confidence": 0.95},
+            "document_name": {"choice": "none", "confidence": 0.90},
+        }
+    })
+    mock_resp.json.return_value = {
+        "answers": {
+            "category": {
+                "choice": "identity-documents",
+                "confidence": 0.95,
+            },
+            "document_name": {
+                "choice": "none",
+                "confidence": 0.90,
+            },
+        }
+    }
+
+    with patch("httpx.Client.post", return_value=mock_resp):
+        decision = extractor.extract("What are the accepted identity documents in India?")
+        assert decision.is_confident is True
+        assert decision.category == "identity-documents"
+        assert decision.document_name is None
+
+
+def test_jev_metadata_extractor_none_choice(monkeypatch):
+    """When JEV chooses 'none', decision is marked unconfident with category=None."""
+    from unittest.mock import patch, MagicMock
+    from app.rag.metadata_extractor import JevMetadataExtractor
+
+    extractor = JevMetadataExtractor(api_key="test-key")
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = '{"answers": {"category": {"choice": "none", "confidence": 0.90}}}'
+    mock_resp.json.return_value = {
+        "answers": {
+            "category": {
+                "choice": "none",
+                "confidence": 0.90,
+            }
+        }
+    }
+
+    with patch("httpx.Client.post", return_value=mock_resp):
+        decision = extractor.extract("What is the general office hours for city services?")
+        assert decision.is_confident is False
+        assert decision.category is None
+        assert decision.document_name is None
+
+
+def test_jev_metadata_extractor_low_confidence(monkeypatch):
+    """When confidence is below threshold, filter is not applied."""
+    from unittest.mock import patch, MagicMock
+    from app.rag.metadata_extractor import JevMetadataExtractor
+
+    extractor = JevMetadataExtractor(api_key="test-key", confidence_threshold=0.70)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = '{"answers": {"category": {"choice": "caste-documents", "confidence": 0.45}}}'
+    mock_resp.json.return_value = {
+        "answers": {
+            "category": {
+                "choice": "caste-documents",
+                "confidence": 0.45,
+            }
+        }
+    }
+
+    with patch("httpx.Client.post", return_value=mock_resp):
+        decision = extractor.extract("I need some certificate")
+        assert decision.is_confident is False
+        assert decision.category is None
+        assert decision.document_name is None
+
+
+def test_metadata_extractor_fallback_on_jev_failure():
+    """MetadataExtractor falls back to LLM if JEV fails."""
+    from unittest.mock import MagicMock
+    from app.rag.metadata_extractor import JevMetadataExtractor, MetadataExtractor
+
+    mock_jev = MagicMock(spec=JevMetadataExtractor)
+    mock_jev.api_key = "test-key"
+    mock_jev.extract.side_effect = RuntimeError("OpenRouter connection failed")
+
+    mock_llm = MagicMock()
+    mock_structured = MagicMock()
+    mock_llm.with_structured_output.return_value = mock_structured
+    mock_structured.invoke.return_value = MetadataFilterDecision(
+        category="vehicle-documents",
+        document_name=None,
+        is_confident=True,
+        reasoning="Fallback LLM extraction",
+    )
+
+    extractor = MetadataExtractor(llm=None, jev_extractor=mock_jev)
+    extractor._llm = mock_llm
+
+    decision = extractor.extract("How do I renew my driving license?")
+    assert decision.is_confident is True
+    assert decision.category == "vehicle-documents"
+

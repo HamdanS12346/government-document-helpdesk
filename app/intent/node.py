@@ -30,7 +30,7 @@ def classify_intent(state: State, classifier: IntentClassifier) -> dict[str, Int
     with start_observation(
         "intent_classifier",
         as_type="generation",
-        model="gpt-4o-mini",
+        model=getattr(classifier, "model", "gpt-4o-mini"),
         input=build_normalized_input_metadata(
             normalized_input,
             messages=messages,

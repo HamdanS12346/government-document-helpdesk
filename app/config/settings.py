@@ -82,6 +82,23 @@ class Settings(BaseSettings):
         validation_alias="SPREADSHEET_PREVIEW_ROW_COUNT",
     )
 
+    openrouter_api_key: Optional[str] = Field(
+        default=None,
+        validation_alias="OPENROUTER_API_KEY",
+    )
+    openrouter_base_url: str = Field(
+        default="https://openrouter.ai/api/v1",
+        validation_alias="OPENROUTER_BASE_URL",
+    )
+    jev_model_name: str = Field(
+        default="~typesafe/jev-latest",
+        validation_alias="JEV_MODEL_NAME",
+    )
+    jev_triage_enabled: bool = Field(
+        default=True,
+        validation_alias="JEV_TRIAGE_ENABLED",
+    )
+
 
 @cache
 def get_settings() -> Settings:

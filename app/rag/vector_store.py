@@ -181,6 +181,8 @@ class VectorStoreRetriever:
 
         with start_observation(
             "dense_embedding",
+            as_type="embedding",
+            model="text-embedding-3-small",
             input={"query_length": len(query)},
         ) as embedding_observation:
             try:
