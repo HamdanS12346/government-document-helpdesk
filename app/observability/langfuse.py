@@ -137,9 +137,74 @@ def _safe_exit(manager: Any, exc_type: Any, exc: Any, traceback: Any) -> None:
         logger.warning("Failed to close Langfuse observation: %s", exit_exc)
 
 
+@contextmanager
+def propagate_trace_context(
+    *,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    tags: Optional[list[str]] = None,
+    metadata: Optional[dict[str, Any]] = None,
+) -> Iterator[None]:
+    """Propagate trace context such as session_id and user_id to all child spans."""
+    client = get_langfuse_client()
+    if client is None:
+        yield
+        return
+
+    try:
+        from langfuse import propagate_attributes
+
+        clean_user_id = str(user_id) if user_id is not None else None
+        clean_session_id = str(session_id) if session_id is not None else None
+        clean_tags = [str(t) for t in tags] if tags else None
+
+        with propagate_attributes(
+            user_id=clean_user_id,
+            session_id=clean_session_id,
+            tags=clean_tags,
+            metadata=metadata,
+        ):
+            yield
+    except Exception as exc:
+        logger.warning("Failed to propagate Langfuse attributes: %s", exc)
+        yield
+
+
+def set_trace_attributes(
+    *,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    tags: Optional[list[str]] = None,
+    metadata: Optional[dict[str, Any]] = None,
+) -> None:
+    """Set trace attributes on the active trace and propagate to future spans in this async task."""
+    client = get_langfuse_client()
+    if client is None:
+        return
+
+    try:
+        from langfuse._client.propagation import _propagate_attributes
+
+        clean_user_id = str(user_id) if user_id is not None else None
+        clean_session_id = str(session_id) if session_id is not None else None
+        clean_tags = [str(t) for t in tags] if tags else None
+
+        cm = _propagate_attributes(
+            user_id=clean_user_id,
+            session_id=clean_session_id,
+            tags=clean_tags,
+            metadata=metadata,
+        )
+        cm.__enter__()
+    except Exception as exc:
+        logger.warning("Failed to set Langfuse attributes: %s", exc)
+
+
 __all__ = [
     "NoOpObservation",
     "flush_langfuse",
     "get_langfuse_client",
+    "propagate_trace_context",
+    "set_trace_attributes",
     "start_observation",
 ]

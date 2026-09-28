@@ -2,6 +2,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cache
 import logging
+import time
 from typing import Annotated, Any
 
 logger = logging.getLogger(__name__)
@@ -9,6 +10,8 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+import uuid
+from langchain_core.messages import AIMessage, HumanMessage
 
 from app.api.auth import AuthenticatedUser, get_optional_user, require_authenticated_user
 from app.api.serialization import serialize_public_message
@@ -20,17 +23,18 @@ from app.contracts.chat import (
     ChatResponse,
     ChatStatus,
 )
+from app.contracts.intent_decision import IntentDecision, IntentType
 from app.graph.graph import invoke_full_graph, invoke_intent_retriever_graph
 from app.input_processing.processors import process_input
 from app.input_processing.errors import InputProcessingErrorCode
 from app.input_processing.schemas import Attachment, InputProcessingResult, InputRequest
 from app.input_processing.schemas import AttachmentProcessingError, AttachmentProcessingStatus
-from app.intent.classifier import OpenAIIntentClassifier
+from app.intent.classifier import IntentClassifier, JevIntentClassifier, OpenAIIntentClassifier
 from app.memory import get_default_memory_manager
 from app.memory.repository import get_default_memory_repository
 from langchain_community.callbacks import get_openai_callback
 
-from app.observability import flush_langfuse, start_observation
+from app.observability import flush_langfuse, set_trace_attributes, start_observation
 from app.observability.metadata import (
     build_chat_request_metadata,
     build_chat_graph_response_metadata,
@@ -41,6 +45,7 @@ from guardrails.input_processor import MAX_ATTACHMENT_SIZE_BYTES
 
 
 _DEFAULT_INVOKE_INTENT_RETRIEVER = invoke_intent_retriever_graph
+_DEFAULT_INVOKE_FULL_GRAPH = invoke_full_graph
 UPLOAD_READ_CHUNK_SIZE = 1024 * 1024
 
 
@@ -77,11 +82,21 @@ async def chat(
     user: Annotated[AuthenticatedUser | None, Depends(get_optional_user)] = None,
 ) -> JSONResponse:
     """Process frontend chat input through the Input Processor boundary."""
+    start_turn_time = time.perf_counter()
     incoming_files = files or []
+    effective_session_id = conversation_id or str(uuid.uuid4())
+    effective_user_id = user.id if user else None
+    trace_tags = ["chat_api", "intent_jev" if get_settings().openrouter_api_key else "rag"]
+
     with start_observation(
         "chat_request",
         input=build_chat_request_metadata(message, incoming_files),
     ) as trace:
+        set_trace_attributes(
+            user_id=effective_user_id,
+            session_id=effective_session_id,
+            tags=trace_tags,
+        )
         graph_state: dict[str, object] | None = None
         try:
             upload_results = await _read_uploaded_files(incoming_files)
@@ -112,6 +127,7 @@ async def chat(
                 _debug_print(result.normalized_input.model_dump_json(indent=2), flush=True)
                 try:
                     user_id = user.id if user else None
+                    total_cb = None
                     with get_openai_callback() as total_cb:
                         graph_state = _invoke_chat_graph(
                             result,
@@ -139,7 +155,7 @@ async def chat(
                     _debug_print(assistant_message.content, flush=True)
 
                 token_usage_data = None
-                if total_cb.total_tokens > 0:
+                if total_cb is not None and total_cb.total_tokens > 0:
                     token_usage_data = {
                         "input_tokens": total_cb.prompt_tokens,
                         "output_tokens": total_cb.completion_tokens,
@@ -147,8 +163,8 @@ async def chat(
                         "cost_usd": total_cb.total_cost,
                     }
 
-                trace.update(
-                    output=build_chat_graph_response_metadata(
+                trace_kwargs: dict[str, Any] = {
+                    "output": build_chat_graph_response_metadata(
                         graph_state,
                         status=str(response_status),
                         assistant_message_content=(
@@ -157,13 +173,15 @@ async def chat(
                             else None
                         ),
                         token_usage=token_usage_data,
-                    ),
-                    usage_details={
+                    )
+                }
+                if total_cb is not None:
+                    trace_kwargs["usage_details"] = {
                         "input": total_cb.prompt_tokens,
                         "output": total_cb.completion_tokens,
                         "total": total_cb.total_tokens,
-                    },
-                )
+                    }
+                trace.update(**trace_kwargs)
             else:
                 _debug_print(result.model_dump_json(indent=2))
                 trace.update(
@@ -183,6 +201,14 @@ async def chat(
         finally:
             flush_langfuse()
 
+    response_headers: dict[str, str] = {}
+
+    turn_duration_ms = (time.perf_counter() - start_turn_time) * 1000
+    print(
+        f"\033[95mINFO:     [Performance Summary]\033[0m Entire response generated in \033[1m{turn_duration_ms:.1f}ms\033[0m\n",
+        flush=True,
+    )
+
     return JSONResponse(
         status_code=status.HTTP_200_OK,
         content=_build_response_payload(
@@ -190,6 +216,7 @@ async def chat(
             graph_state,
             conversation_id=conversation_id,
         ),
+        headers=response_headers or None,
     )
 
 
@@ -362,7 +389,10 @@ def _build_attachments(uploaded_files: list[UploadedFileBytes]) -> list[Attachme
 
 
 @cache
-def _build_intent_classifier() -> OpenAIIntentClassifier:
+def _build_intent_classifier() -> IntentClassifier:
+    settings = get_settings()
+    if settings.openrouter_api_key:
+        return JevIntentClassifier()
     return OpenAIIntentClassifier()
 
 

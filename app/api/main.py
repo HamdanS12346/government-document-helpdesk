@@ -11,10 +11,13 @@ from app.api.routes import router
 from app.rag.node import get_default_retriever_pipeline
 
 
-logger = logging.getLogger(__name__)
-
-
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="INFO:     %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -37,7 +40,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

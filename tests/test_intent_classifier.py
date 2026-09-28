@@ -1,7 +1,7 @@
 from pydantic import ValidationError
 import pytest
 
-from app.contracts.intent_decision import IntentDecision
+from app.contracts.intent_decision import IntentDecision, IntentType
 from app.contracts.normalized_input import (
     ImageContent,
     NormalizedInput,
@@ -10,7 +10,11 @@ from app.contracts.normalized_input import (
     SpreadsheetMetadata,
     SpreadsheetSheet,
 )
-from app.intent.classifier import CLASSIFICATION_SYSTEM_PROMPT, OpenAIIntentClassifier
+from app.intent.classifier import (
+    CLASSIFICATION_SYSTEM_PROMPT,
+    JevIntentClassifier,
+    OpenAIIntentClassifier,
+)
 from app.intent.node import classify_intent
 from app.intent.query_builder import MAX_PREVIEW_LENGTH, build_classification_query
 
@@ -318,3 +322,108 @@ def test_node_requires_normalized_input():
 
     with pytest.raises(ValueError, match="normalized_input is required"):
         classify_intent({}, classifier)
+
+
+def test_jev_classifier_happy_path(monkeypatch):
+    import httpx
+
+    captured_request = {}
+
+    class MockResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "answers": {
+                    "intent_type": {
+                        "choice": "document_info",
+                        "confidence": 0.96,
+                    }
+                }
+            }
+
+    def mock_post(url, json=None, headers=None, **kwargs):
+        captured_request["url"] = url
+        captured_request["json"] = json
+        captured_request["headers"] = headers
+        return MockResponse()
+
+    monkeypatch.setattr(httpx.Client, "post", lambda self, url, **kwargs: mock_post(url, **kwargs))
+
+    classifier = JevIntentClassifier(api_key="test-openrouter-key")
+    decision = classifier.classify("How do I renew my passport?")
+
+    assert decision.intent_type == IntentType.DOCUMENT_INFO
+    assert decision.confidence_score == 0.96
+    assert decision.query == "How do I renew my passport?"
+    assert captured_request["url"] == "https://openrouter.ai/api/alpha/decisions"
+    assert captured_request["headers"]["Authorization"] == "Bearer test-openrouter-key"
+    assert captured_request["json"]["state"] == "How do I renew my passport?"
+    assert "criteria" in captured_request["json"]["questions"]["intent_type"]
+
+
+def test_jev_classifier_rejects_blank_query():
+    classifier = JevIntentClassifier(api_key="test-openrouter-key")
+    with pytest.raises(ValueError, match="query must not be empty"):
+        classifier.classify("   ")
+
+
+def test_jev_classifier_fallback_on_api_error(monkeypatch):
+    import httpx
+
+    class ErrorResponse:
+        status_code = 500
+        text = "Internal Server Error"
+
+        def json(self):
+            return {}
+
+    monkeypatch.setattr(httpx.Client, "post", lambda self, url, **kwargs: ErrorResponse())
+
+    fallback = FakeClassifier(
+        IntentDecision(query="test", intent_type="general_chat", confidence_score=0.88)
+    )
+    classifier = JevIntentClassifier(
+        api_key="test-openrouter-key",
+        fallback_classifier=fallback,
+    )
+
+    decision = classifier.classify("Tell me a joke")
+    assert decision.intent_type == IntentType.GENERAL_CHAT
+    assert decision.confidence_score == 0.88
+
+
+def test_jev_classifier_fallback_on_timeout(monkeypatch):
+    import httpx
+
+    def mock_timeout(self, url, **kwargs):
+        raise httpx.ConnectTimeout("Request timed out")
+
+    monkeypatch.setattr(httpx.Client, "post", mock_timeout)
+
+    fallback = FakeClassifier(
+        IntentDecision(query="test", intent_type="ambiguous", confidence_score=0.7)
+    )
+    classifier = JevIntentClassifier(
+        api_key="test-openrouter-key",
+        fallback_classifier=fallback,
+    )
+
+    decision = classifier.classify("What is that?")
+    assert decision.intent_type == IntentType.AMBIGUOUS
+    assert decision.confidence_score == 0.7
+
+
+def test_jev_classifier_fallback_when_no_api_key(monkeypatch):
+    fallback = FakeClassifier(
+        IntentDecision(query="test", intent_type="document_info", confidence_score=0.99)
+    )
+    classifier = JevIntentClassifier(
+        api_key="",
+        fallback_classifier=fallback,
+    )
+
+    decision = classifier.classify("How to apply for driving license?")
+    assert decision.intent_type == IntentType.DOCUMENT_INFO
+    assert decision.confidence_score == 0.99
+
