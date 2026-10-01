@@ -1,0 +1,363 @@
+[
+  {
+    "id": "MEM-001",
+    "title": "Passport renewal pronoun resolution",
+    "metadata": {
+      "category": "coreference_resolution",
+      "topic": "indian-passport"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "How do I apply for an Indian passport renewal?",
+        "mock_assistant_response": "To renew your Indian passport, submit an online application on the Passport Seva portal and schedule an appointment at a PSK or POPSK.",
+        "expected_intent": "document_info"
+      },
+      {
+        "turn": 2,
+        "user_input": "What documents are required for it?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["passport", "renewal"],
+        "expected_rewritten_query_contains": ["passport", "renewal"]
+      }
+    ]
+  },
+  {
+    "id": "MEM-002",
+    "title": "OCI card spouse eligibility pronoun resolution",
+    "metadata": {
+      "category": "coreference_resolution",
+      "topic": "oci"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "Who is eligible to apply for an OCI card?",
+        "mock_assistant_response": "OCI cards are available to foreign nationals who were citizens of India or eligible to become citizens of India at or after the commencement of the Constitution.",
+        "expected_intent": "document_info"
+      },
+      {
+        "turn": 2,
+        "user_input": "Can my foreign spouse apply for it as well?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["oci", "spouse"],
+        "expected_rewritten_query_contains": ["oci", "spouse"]
+      }
+    ]
+  },
+  {
+    "id": "MEM-003",
+    "title": "Disability certificate fee ellipsis follow-up",
+    "metadata": {
+      "category": "ellipsis_resolution",
+      "topic": "disability-certificate"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "Can you explain the procedure to obtain a disability certificate?",
+        "mock_assistant_response": "You can apply for a disability certificate through the UDID portal by submitting medical assessment records, photo ID, and address proof.",
+        "expected_intent": "document_info"
+      },
+      {
+        "turn": 2,
+        "user_input": "What is the fee?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["disability certificate", "fee"],
+        "expected_rewritten_query_contains": ["disability", "fee"]
+      }
+    ]
+  },
+  {
+    "id": "MEM-004",
+    "title": "Tourist visa processing and extension multi-turn chain",
+    "metadata": {
+      "category": "multi_turn_chain",
+      "topic": "visa"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "How long does an Indian tourist visa application usually take?",
+        "mock_assistant_response": "An e-Tourist visa for India is typically processed within 72 hours to 4 business days after successful submission and fee payment.",
+        "expected_intent": "document_info"
+      },
+      {
+        "turn": 2,
+        "user_input": "Can I extend it online while staying in India?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["tourist visa", "extend"],
+        "expected_rewritten_query_contains": ["visa", "extend"]
+      },
+      {
+        "turn": 3,
+        "user_input": "Which government portal should I use for that?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["visa extension", "portal"],
+        "expected_rewritten_query_contains": ["visa", "portal"]
+      }
+    ]
+  },
+  {
+    "id": "MEM-005",
+    "title": "Passport urgent Tatkaal refinement",
+    "metadata": {
+      "category": "refinement",
+      "topic": "indian-passport"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "What are the general rules for applying for a fresh passport?",
+        "mock_assistant_response": "Applicants must register on the Passport Seva portal, fill Form 1, pay online fees, and provide birth, photo ID, and address verification at their appointment.",
+        "expected_intent": "document_info"
+      },
+      {
+        "turn": 2,
+        "user_input": "What if I need it urgently under the Tatkaal scheme?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["passport", "tatkaal"],
+        "expected_rewritten_query_contains": ["passport", "tatkaal"]
+      }
+    ]
+  },
+  {
+    "id": "MEM-006",
+    "title": "Residence certificate issuing authority pronoun resolution",
+    "metadata": {
+      "category": "coreference_resolution",
+      "topic": "residence-certificate"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "What is a residence certificate used for in government applications?",
+        "mock_assistant_response": "A residence certificate proves your domicile or permanent stay in a particular state or district for quota benefits, college admissions, and local government jobs.",
+        "expected_intent": "document_info"
+      },
+      {
+        "turn": 2,
+        "user_input": "Who is the designated issuing authority for this certificate?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["residence certificate", "issuing authority"],
+        "expected_rewritten_query_contains": ["residence", "issuing authority"]
+      }
+    ]
+  },
+  {
+    "id": "MEM-007",
+    "title": "Income certificate documents follow-up",
+    "metadata": {
+      "category": "ellipsis_resolution",
+      "topic": "income-certificate"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "I am applying for a student government scholarship and need an income certificate.",
+        "mock_assistant_response": "Income certificates for scholarships must be issued by the designated revenue officer (Tehsildar or Sub-Divisional Magistrate).",
+        "expected_intent": "document_info"
+      },
+      {
+        "turn": 2,
+        "user_input": "Which documents prove my family income?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["income certificate", "proof"],
+        "expected_rewritten_query_contains": ["income", "documents"]
+      }
+    ]
+  },
+  {
+    "id": "MEM-008",
+    "title": "Clean topic switch from passport to PAN card",
+    "metadata": {
+      "category": "topic_switch",
+      "topic": "pan-card"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "How do I renew my Indian passport online?",
+        "mock_assistant_response": "Visit passportindia.gov.in, select renewal of passport, and submit your previous passport details.",
+        "expected_intent": "document_info"
+      },
+      {
+        "turn": 2,
+        "user_input": "Thanks. Now what about a PAN card application?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["pan card", "application"],
+        "expected_rewritten_query_contains": ["pan card"],
+        "negative_entities": ["passport"]
+      }
+    ]
+  },
+  {
+    "id": "MEM-009",
+    "title": "Lost document FIR requirement pronoun resolution",
+    "metadata": {
+      "category": "coreference_resolution",
+      "topic": "lost-document"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "How can I replace a lost government identity card?",
+        "mock_assistant_response": "To replace a lost identity card, file a lost document report or police complaint first, then apply for a duplicate with the issuing department.",
+        "expected_intent": "document_info"
+      },
+      {
+        "turn": 2,
+        "user_input": "Where should I file the police report for it?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["lost identity card", "police report"],
+        "expected_rewritten_query_contains": ["police report", "lost"]
+      }
+    ]
+  },
+  {
+    "id": "MEM-010",
+    "title": "Passport jurisdiction constraint follow-up",
+    "metadata": {
+      "category": "refinement",
+      "topic": "indian-passport"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "Can I apply for a passport from a Passport Office outside my current residential district?",
+        "mock_assistant_response": "Yes, applicants can choose any Passport Office or PSK across India regardless of their current residential address.",
+        "expected_intent": "document_info"
+      },
+      {
+        "turn": 2,
+        "user_input": "Where will the police verification be conducted in that case?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["passport", "police verification"],
+        "expected_rewritten_query_contains": ["police verification", "passport"]
+      }
+    ]
+  },
+  {
+    "id": "MEM-011",
+    "title": "Clarification response contextual resolution",
+    "metadata": {
+      "category": "clarification_followup",
+      "topic": "visa"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "I need a visa.",
+        "mock_assistant_response": "To guide you accurately, which type of Indian visa are you looking for: tourist, student, business, or employment visa?",
+        "expected_intent": "ambiguous"
+      },
+      {
+        "turn": 2,
+        "user_input": "A student visa for university admission.",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["student visa", "admission"],
+        "expected_rewritten_query_contains": ["student visa"]
+      }
+    ]
+  },
+  {
+    "id": "MEM-012",
+    "title": "OCI re-issuance fee and submission chain",
+    "metadata": {
+      "category": "multi_turn_chain",
+      "topic": "oci"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "When is an OCI card re-issuance required?",
+        "mock_assistant_response": "OCI re-issuance is required once when a new passport is issued after completing 20 years of age.",
+        "expected_intent": "document_info"
+      },
+      {
+        "turn": 2,
+        "user_input": "How much do I need to pay for this re-issuance?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["oci re-issuance", "fee"],
+        "expected_rewritten_query_contains": ["oci", "fee"]
+      },
+      {
+        "turn": 3,
+        "user_input": "Where do I submit the physical documents?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["oci documents", "submit"],
+        "expected_rewritten_query_contains": ["oci", "submit"]
+      }
+    ]
+  },
+  {
+    "id": "MEM-013",
+    "title": "Minor passport parental presence refinement",
+    "metadata": {
+      "category": "refinement",
+      "topic": "indian-passport"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "What is the procedure for an Indian passport application for a minor child?",
+        "mock_assistant_response": "Minors require Form 1 with parents' consent (Annexure D or C) and proof of date of birth.",
+        "expected_intent": "document_info"
+      },
+      {
+        "turn": 2,
+        "user_input": "Do both parents need to be physically present at the appointment?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["minor passport", "parents present"],
+        "expected_rewritten_query_contains": ["minor", "parents"]
+      }
+    ]
+  },
+  {
+    "id": "MEM-014",
+    "title": "Tax certificate physical verification follow-up",
+    "metadata": {
+      "category": "coreference_resolution",
+      "topic": "tax-certificate"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "Can I apply for a tax clearance certificate online?",
+        "mock_assistant_response": "Yes, tax clearance certificates can be applied for electronically through the national income tax e-filing portal.",
+        "expected_intent": "document_info"
+      },
+      {
+        "turn": 2,
+        "user_input": "Is any physical in-person verification required for this?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["tax clearance certificate", "verification"],
+        "expected_rewritten_query_contains": ["tax", "verification"]
+      }
+    ]
+  },
+  {
+    "id": "MEM-015",
+    "title": "Topic switch from disability certificate to driving license",
+    "metadata": {
+      "category": "topic_switch",
+      "topic": "driving-license"
+    },
+    "turns": [
+      {
+        "turn": 1,
+        "user_input": "What medical documents are needed for a disability certificate?",
+        "mock_assistant_response": "You need clinical assessment reports from a government hospital medical board.",
+        "expected_intent": "document_info"
+      },
+      {
+        "turn": 2,
+        "user_input": "Understood. Switching topics, how can I renew my driving license?",
+        "expected_intent": "document_info",
+        "expected_resolved_entities": ["driving license", "renew"],
+        "expected_rewritten_query_contains": ["driving license"],
+        "negative_entities": ["disability"]
+      }
+    ]
+  }
+]

@@ -18,9 +18,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.contracts.intent_decision import IntentDecision  # noqa: E402
 from app.contracts.normalized_input import NormalizedInput  # noqa: E402
-from app.intent.classifier import OpenAIIntentClassifier  # noqa: E402
+from app.intent.classifier import (  # noqa: E402
+    IntentClassifier,
+    JevIntentClassifier,
+    OpenAIIntentClassifier,
+)
 from app.intent.node import classify_intent  # noqa: E402
 from evaluation.case_loader import find_default_dataset, load_cases, validate_case_ids  # noqa: E402
+from evaluation.graph.adapter import resolve_intent_classifier  # noqa: E402
 from evaluation.evaluators.intent.evaluator import (  # noqa: E402
     evaluate_intent_case,
     summarize_intent_results,
@@ -54,10 +59,29 @@ class OfflineIntentClassifier:
         return IntentDecision(query=query, intent_type=intent, confidence_score=0.5)
 
 
-def run_dataset(dataset_path: Path, *, offline: bool) -> dict[str, Any]:
+def _resolve_runner_classifier(
+    *,
+    offline: bool,
+    classifier_choice: str = "auto",
+) -> IntentClassifier:
+    if offline:
+        return OfflineIntentClassifier()
+    if classifier_choice == "jev":
+        return JevIntentClassifier()
+    if classifier_choice == "openai":
+        return OpenAIIntentClassifier()
+    return resolve_intent_classifier()
+
+
+def run_dataset(
+    dataset_path: Path,
+    *,
+    offline: bool,
+    classifier_choice: str = "auto",
+) -> dict[str, Any]:
     cases = load_cases(dataset_path)
     validate_case_ids(cases)
-    classifier = OfflineIntentClassifier() if offline else OpenAIIntentClassifier()
+    classifier = _resolve_runner_classifier(offline=offline, classifier_choice=classifier_choice)
     results = []
     for case in cases:
         state = {
@@ -84,6 +108,12 @@ def main() -> int:
         action="store_true",
         help="Use a deterministic baseline instead of making OpenAI API calls.",
     )
+    parser.add_argument(
+        "--classifier",
+        choices=["auto", "jev", "openai"],
+        default="auto",
+        help="Select intent classifier (auto prioritizes JEV if OPENROUTER_API_KEY is configured).",
+    )
     langfuse_group = parser.add_mutually_exclusive_group()
     langfuse_group.add_argument(
         "--langfuse",
@@ -97,9 +127,10 @@ def main() -> int:
     )
     args = parser.parse_args()
     dataset = args.dataset or find_default_dataset(PROJECT_ROOT / "evaluation/datasets/intent")
-    report = run_dataset(dataset, offline=args.offline)
+    report = run_dataset(dataset, offline=args.offline, classifier_choice=args.classifier)
     if not args.no_langfuse:
-        LangfuseReporter.from_environment().publish("intent_offline" if args.offline else "intent", report)
+        run_name = "intent_offline" if args.offline else f"intent_{args.classifier}"
+        LangfuseReporter.from_environment().publish(run_name, report)
     rendered = json.dumps(report, indent=2)
     if args.output:
         args.output.write_text(rendered + "\n", encoding="utf-8")

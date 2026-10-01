@@ -1,0 +1,345 @@
+[
+  {
+    "id": "CLAR-001",
+    "title": "Unspecified application fee inquiry",
+    "metadata": {
+      "category": "missing_document_type",
+      "difficulty": "easy"
+    },
+    "input": {
+      "query": "What is the fee for the application form?",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_document_type",
+    "expected_missing_dimensions": ["document_type"],
+    "expected_question_cues": ["which document", "which application", "specify", "type of document", "passport", "visa", "license"]
+  },
+  {
+    "id": "CLAR-002",
+    "title": "Vague submission location without document",
+    "metadata": {
+      "category": "missing_document_type",
+      "difficulty": "easy"
+    },
+    "input": {
+      "query": "Where do I need to submit it?",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_document_type",
+    "expected_missing_dimensions": ["document_type"],
+    "expected_question_cues": ["which document", "what document", "which application", "specify"]
+  },
+  {
+    "id": "CLAR-003",
+    "title": "Validity check on unspecified document",
+    "metadata": {
+      "category": "missing_document_type",
+      "difficulty": "easy"
+    },
+    "input": {
+      "query": "Is my certificate still valid or do I need a renewal?",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_document_type",
+    "expected_missing_dimensions": ["document_type"],
+    "expected_question_cues": ["which certificate", "type of certificate", "what certificate", "specify"]
+  },
+  {
+    "id": "CLAR-004",
+    "title": "Online application availability without document name",
+    "metadata": {
+      "category": "missing_document_type",
+      "difficulty": "easy"
+    },
+    "input": {
+      "query": "Can I apply for this online through the portal?",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_document_type",
+    "expected_missing_dimensions": ["document_type"],
+    "expected_question_cues": ["which document", "which service", "what document", "specify"]
+  },
+  {
+    "id": "CLAR-005",
+    "title": "Aadhaar document named but no service or question specified",
+    "metadata": {
+      "category": "missing_service_or_task",
+      "difficulty": "easy"
+    },
+    "input": {
+      "query": "Aadhaar card.",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_service_or_task",
+    "expected_missing_dimensions": ["service_or_task"],
+    "expected_question_cues": ["how can I help", "what would you like to do", "update", "download", "correction", "enrolment", "need help with"]
+  },
+  {
+    "id": "CLAR-006",
+    "title": "Passport document mentioned without specific inquiry",
+    "metadata": {
+      "category": "missing_service_or_task",
+      "difficulty": "easy"
+    },
+    "input": {
+      "query": "Regarding my Indian passport booklet.",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_service_or_task",
+    "expected_missing_dimensions": ["service_or_task"],
+    "expected_question_cues": ["what assistance", "reissue", "renewal", "fresh", "status", "appointment", "help you with"]
+  },
+  {
+    "id": "CLAR-007",
+    "title": "PAN card statement without actionable request",
+    "metadata": {
+      "category": "missing_service_or_task",
+      "difficulty": "easy"
+    },
+    "input": {
+      "query": "I have my PAN card with me.",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_service_or_task",
+    "expected_missing_dimensions": ["service_or_task"],
+    "expected_question_cues": ["what would you like to do", "link", "update", "correction", "how can I assist"]
+  },
+  {
+    "id": "CLAR-008",
+    "title": "Residence certificate without state or jurisdiction",
+    "metadata": {
+      "category": "missing_location",
+      "difficulty": "medium"
+    },
+    "input": {
+      "query": "How do I apply for a residence certificate?",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_location",
+    "expected_missing_dimensions": ["location"],
+    "expected_question_cues": ["state", "union territory", "district", "where", "location"]
+  },
+  {
+    "id": "CLAR-009",
+    "title": "Income certificate procedure missing state context",
+    "metadata": {
+      "category": "missing_location",
+      "difficulty": "medium"
+    },
+    "input": {
+      "query": "What are the required documents for obtaining an income certificate?",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_location",
+    "expected_missing_dimensions": ["location"],
+    "expected_question_cues": ["state", "which state", "revenue authority", "location"]
+  },
+  {
+    "id": "CLAR-010",
+    "title": "Domicile certificate missing regional authority",
+    "metadata": {
+      "category": "missing_location",
+      "difficulty": "medium"
+    },
+    "input": {
+      "query": "Where is the tehsildar office for domicile certificate application?",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_location",
+    "expected_missing_dimensions": ["location"],
+    "expected_question_cues": ["state", "district", "city", "which area", "location"]
+  },
+  {
+    "id": "CLAR-011",
+    "title": "Passport application missing applicant age and type",
+    "metadata": {
+      "category": "missing_applicant_context",
+      "difficulty": "medium"
+    },
+    "input": {
+      "query": "Can I apply under Tatkaal scheme, and what is the fee?",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_applicant_context",
+    "expected_missing_dimensions": ["applicant_context", "document_type"],
+    "expected_question_cues": ["passport", "fresh", "renewal", "adult", "minor", "which service"]
+  },
+  {
+    "id": "CLAR-012",
+    "title": "Concession eligibility missing category context",
+    "metadata": {
+      "category": "missing_applicant_context",
+      "difficulty": "medium"
+    },
+    "input": {
+      "query": "Do I qualify for a discount or exemption on this fee?",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_applicant_context",
+    "expected_missing_dimensions": ["applicant_context", "document_type"],
+    "expected_question_cues": ["which document", "category", "senior citizen", "minor", "bpl", "specify"]
+  },
+  {
+    "id": "CLAR-013",
+    "title": "Unattached document review request",
+    "metadata": {
+      "category": "missing_attachment_reference",
+      "difficulty": "easy"
+    },
+    "input": {
+      "query": "Can you check this document and see if it looks right?",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_attachment_reference",
+    "expected_missing_dimensions": ["attachment_reference"],
+    "expected_question_cues": ["upload", "attach", "provide", "no document attached", "which document"]
+  },
+  {
+    "id": "CLAR-014",
+    "title": "Page inspection on missing attachment",
+    "metadata": {
+      "category": "missing_attachment_reference",
+      "difficulty": "easy"
+    },
+    "input": {
+      "query": "What is written in section 3 of my attached form?",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_attachment_reference",
+    "expected_missing_dimensions": ["attachment_reference"],
+    "expected_question_cues": ["attach", "upload", "provide", "no file", "cannot see"]
+  },
+  {
+    "id": "CLAR-015",
+    "title": "Verification request with missing upload",
+    "metadata": {
+      "category": "missing_attachment_reference",
+      "difficulty": "easy"
+    },
+    "input": {
+      "query": "Is the seal on this certificate valid?",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_attachment_reference",
+    "expected_missing_dimensions": ["attachment_reference"],
+    "expected_question_cues": ["upload", "attach", "share", "which certificate"]
+  },
+  {
+    "id": "CLAR-016",
+    "title": "Ultra-short opaque query",
+    "metadata": {
+      "category": "unclear_request",
+      "difficulty": "easy"
+    },
+    "input": {
+      "query": "Help",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "unclear_request",
+    "expected_missing_dimensions": ["unclear_request"],
+    "expected_question_cues": ["how can I help", "what government document", "provide more details", "tell me what you need"]
+  },
+  {
+    "id": "CLAR-017",
+    "title": "Vague government procedure inquiry",
+    "metadata": {
+      "category": "unclear_request",
+      "difficulty": "medium"
+    },
+    "input": {
+      "query": "I have an issue with my government paperwork, what should I do?",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "unclear_request",
+    "expected_missing_dimensions": ["unclear_request"],
+    "expected_question_cues": ["which document", "what specific issue", "type of paperwork", "describe"]
+  },
+  {
+    "id": "CLAR-018",
+    "title": "Non-specific rules query",
+    "metadata": {
+      "category": "unclear_request",
+      "difficulty": "medium"
+    },
+    "input": {
+      "query": "What are the rules and guidelines?",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "unclear_request",
+    "expected_missing_dimensions": ["unclear_request"],
+    "expected_question_cues": ["which document", "which scheme", "what service", "specify"]
+  },
+  {
+    "id": "CLAR-019",
+    "title": "Second round clarification with prior assistant prompt",
+    "metadata": {
+      "category": "missing_document_type",
+      "difficulty": "hard"
+    },
+    "input": {
+      "query": "I still need the renewal fee please.",
+      "messages": [
+        {"role": "user", "content": "What is the fee?"},
+        {"role": "assistant", "content": "Could you please specify which government document you are applying for, such as a passport, driving license, or PAN card?"}
+      ],
+      "conversation_summary": "User asked for an application fee without naming the document.",
+      "clarification_round_count": 1
+    },
+    "expected_reason_code": "missing_document_type",
+    "expected_missing_dimensions": ["document_type"],
+    "expected_question_cues": ["which document", "name of the document", "passport", "license", "specify"]
+  },
+  {
+    "id": "CLAR-020",
+    "title": "Driving license task clarification with incomplete state context",
+    "metadata": {
+      "category": "missing_service_or_task",
+      "difficulty": "hard"
+    },
+    "input": {
+      "query": "Driving license in Maharashtra.",
+      "messages": [],
+      "conversation_summary": null,
+      "clarification_round_count": 0
+    },
+    "expected_reason_code": "missing_service_or_task",
+    "expected_missing_dimensions": ["service_or_task"],
+    "expected_question_cues": ["what would you like to do", "learner", "permanent", "renewal", "duplicate", "address change", "help with"]
+  }
+]

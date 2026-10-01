@@ -1,6 +1,6 @@
 # Evaluation Guide
 
-Comprehensive guide for evaluating the Government Document Helpdesk assistant across all pipeline stages: Input Processing, Intent Classification, Hybrid Retrieval, Response Generation, and End-to-End Connected Graph Execution.
+Comprehensive guide for evaluating the Government Document Helpdesk assistant across all pipeline stages: Input Processing, Intent Classification, Multi-Turn Conversational Memory, Clarification & Ambiguity, Hybrid Retrieval, Response Generation, and End-to-End Connected Graph Execution.
 
 ---
 
@@ -9,10 +9,12 @@ Comprehensive guide for evaluating the Government Document Helpdesk assistant ac
 | Evaluation Stage | Runner Script | Default Dataset | Evaluated Dimensions | Required Keys |
 | :--- | :--- | :--- | :--- | :--- |
 | **Input Processor** | `evaluation/runners/run_input_processor.py` | `evaluation/datasets/input_processor/cases.json` | Parsing success/failure, modality extraction | None (Deterministic fixtures) |
-| **Intent Classifier** | `evaluation/runners/run_intent.py` | `evaluation/datasets/intent/cases.json` | Intent classification accuracy, macro/per-class Precision, Recall, F1 | None (offline) or `OPENAI_API_KEY` (online) |
+| **Intent Classifier** | `evaluation/runners/run_intent.py` | `evaluation/datasets/intent/cases.json` | Intent classification accuracy, macro/per-class Precision, Recall, F1 | None (offline), `OPENROUTER_API_KEY` (JEV), or `OPENAI_API_KEY` (OpenAI) |
+| **Multi-Turn Memory** | `evaluation/runners/run_memory.py` | `evaluation/datasets/memory/cases.json` | Coreference resolution, intent preservation, topic switching, entity accuracy | None (offline) or `OPENAI_API_KEY` / `OPENROUTER_API_KEY` (online) |
+| **Clarification & Ambiguity** | `evaluation/runners/run_clarification.py` | `evaluation/datasets/clarification/cases.json` | Ambiguity reason diagnosis, missing dimension extraction, question quality | None (offline) or `OPENAI_API_KEY` (online) |
 | **Hybrid Retrieval** | `evaluation/runners/run_retrieval.py` | `evaluation/datasets/retrieval/cases.jsonl` | Recall@5, Precision@5, MRR, nDCG@5, Hybrid Evidence | `OPENAI_API_KEY`, optional `COHERE_API_KEY` |
 | **Response Generation** | `evaluation/runners/run_response.py` | `evaluation/datasets/response/cases.jsonl` | 6 LLM judges (Correctness, Faithfulness, Relevance, Completeness, Citation, Safety) | `OPENAI_API_KEY` |
-| **End-to-End Graph** | `evaluation/runners/run_e2e_demo.py` | `evaluation/datasets/response/cases.jsonl` | Full graph execution, dynamic grounding, IR metrics, LLM judges, token usage | `OPENAI_API_KEY`, optional `COHERE_API_KEY` |
+| **End-to-End Graph** | `evaluation/runners/run_e2e_demo.py` | `evaluation/datasets/response/cases.jsonl` (single-turn) or `memory/cases.json` (`--memory`) | Full connected graph execution, dynamic grounding, IR metrics, memory persistence, LLM judges, token usage | `OPENAI_API_KEY` / `OPENROUTER_API_KEY`, optional `COHERE_API_KEY` |
 
 > [!NOTE]
 > All runners support Langfuse observability publishing by default when credentials (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`) are present. Pass `--no-langfuse` to run purely locally.
@@ -29,6 +31,10 @@ evaluation/datasets/
 │   └── cases.json           # Valid/invalid document upload and text inputs
 ├── intent/
 │   └── cases.json           # Queries labeled by intent (document_info, general_chat, ambiguous)
+├── memory/
+│   └── cases.json           # Multi-turn conversational flows (coreference, follow-ups, topic shifts)
+├── clarification/
+│   └── cases.json           # Ambiguous queries requiring targeted follow-ups across 6 reason codes
 ├── retrieval/
 │   └── cases.jsonl          # Government queries paired with expected ground-truth chunk IDs
 └── response/
@@ -73,19 +79,26 @@ Evaluates routing accuracy across `document_info`, `general_chat`, and `ambiguou
 # Offline heuristic baseline (no API call, $0 cost)
 .\.venv\Scripts\python.exe evaluation\runners\run_intent.py --offline
 
-# Real model evaluation with OpenAI
+# Auto-selection (uses JEV if OPENROUTER_API_KEY is configured, else OpenAI)
 .\.venv\Scripts\python.exe evaluation\runners\run_intent.py
+
+# Explicitly evaluate JevIntentClassifier via OpenRouter
+.\.venv\Scripts\python.exe evaluation\runners\run_intent.py --classifier jev
+
+# Explicitly evaluate OpenAIIntentClassifier
+.\.venv\Scripts\python.exe evaluation\runners\run_intent.py --classifier openai
 
 # Local only (skip Langfuse)
 .\.venv\Scripts\python.exe evaluation\runners\run_intent.py --no-langfuse
 
 # Save JSON report
-.\.venv\Scripts\python.exe evaluation\runners\run_intent.py --output evaluation\reports\intent_openai.json
+.\.venv\Scripts\python.exe evaluation\runners\run_intent.py --output evaluation\reports\intent_results.json
 ```
 
 - **Required Keys**:
-  - Offline: None.
-  - Online: `OPENAI_API_KEY` (invokes `gpt-4o-mini`).
+  - Offline: None ($0.00).
+  - Online (JEV): `OPENROUTER_API_KEY` (calls JEV Decisions API on OpenRouter, with graceful fallback to OpenAI).
+  - Online (OpenAI): `OPENAI_API_KEY` (invokes `gpt-4o-mini`).
 - **Cost**:
   - Offline: $0.00.
   - Online: ~$0.0001 per test case (~$0.005 for full 50-case dataset).
@@ -97,7 +110,91 @@ Evaluates routing accuracy across `document_info`, `general_chat`, and `ambiguou
 
 ---
 
-## 3. Hybrid Retrieval Evaluation
+## 3. Multi-Turn Conversational Memory Evaluation
+
+Evaluates dialogue memory context, pronoun/anaphora resolution, elliptical follow-ups, and clean topic switching across sequential turns.
+
+### Commands
+
+```powershell
+# Run deterministic offline evaluation (0 API calls, $0 cost)
+.\.venv\Scripts\python.exe evaluation\runners\run_memory.py --offline --no-langfuse
+
+# Run real LLM evaluation with OpenAI
+.\.venv\Scripts\python.exe evaluation\runners\run_memory.py
+
+# Run subset of cases (e.g. first 5)
+.\.venv\Scripts\python.exe evaluation\runners\run_memory.py --offline --limit 5
+
+# Save custom JSON report
+.\.venv\Scripts\python.exe evaluation\runners\run_memory.py --offline --output evaluation\reports\memory\latest.json
+```
+
+- **Required Keys**:
+  - Offline: None ($0.00). Uses deterministic offline coreference and contextual heuristic resolution.
+  - Online: `OPENAI_API_KEY` or `OPENROUTER_API_KEY` (invokes `QueryRewriter` and `JevIntentClassifier` or `OpenAIIntentClassifier`).
+- **Cost**:
+  - Offline: $0.00.
+  - Online: ~$0.0003 per turn.
+- **Metrics**:
+  - `intent_preservation_accuracy`: Accuracy of intent classification across conversational context (e.g., preventing elliptical follow-ups like "What is the fee?" from dropping to ambiguous).
+  - `entity_resolution_accuracy`: Proportion of dialogue entities correctly resolved into standalone search queries.
+  - `topic_switch_accuracy`: Precision in dropping stale dialogue context when switching topics (e.g., passport to PAN card).
+  - `case_pass_rate` & `turn_pass_rate`: Percentage of cases and turns meeting all evaluation thresholds.
+  - `overall_score`: Weighted composite score across pass rate, entity resolution, and intent preservation.
+- **Evaluated Categories**:
+  - `coreference_resolution`: Pronoun resolution ("it", "this", "that").
+  - `ellipsis_resolution`: Follow-ups with missing subjects.
+  - `refinement`: Narrowing queries with conditions (e.g., Tatkaal, minor child).
+  - `topic_switch`: Abrupt domain shifts between document types.
+  - `clarification_followup`: Answering system clarification prompts.
+  - `multi_turn_chain`: 3+ turn contextual dialogues.
+
+---
+
+## 4. Clarification & Ambiguity Loop Evaluation
+
+Evaluates the Clarification Node when citizen requests are ambiguous, testing diagnostic accuracy of missing information slots, targeted questioning quality, and multi-round repetition suppression.
+
+### Commands
+
+```powershell
+# Run deterministic offline baseline (0 API calls, $0 cost)
+.\.venv\Scripts\python.exe evaluation\runners\run_clarification.py --offline --no-langfuse
+
+# Run real model evaluation with OpenAI
+.\.venv\Scripts\python.exe evaluation\runners\run_clarification.py
+
+# Run subset of cases (e.g. first 5)
+.\.venv\Scripts\python.exe evaluation\runners\run_clarification.py --offline --limit 5
+
+# Save custom JSON report
+.\.venv\Scripts\python.exe evaluation\runners\run_clarification.py --offline --output evaluation\reports\clarification\latest.json
+```
+
+- **Required Keys**:
+  - Offline: None ($0.00). Uses deterministic rule-based clarification diagnostics.
+  - Online: `OPENAI_API_KEY` (invokes `gpt-4o-mini` with structured output).
+- **Cost**:
+  - Offline: $0.00.
+  - Online: ~$0.0002 per test case (~$0.004 for full 20-case dataset).
+- **Metrics**:
+  - `reason_code_accuracy`: Proportion of cases where the primary ambiguity reason code correctly matches ground truth.
+  - `average_dimension_f1`: Precision/Recall/F1 of identified missing information dimensions.
+  - `average_question_score`: Quality score evaluating interrogative sentence structure and presence of targeted clarification cues.
+  - `average_composite_score`: Weighted overall score (45% reason code, 25% dimension F1, 30% question score).
+  - `pass_rate`: Percentage of cases passing composite threshold (>= 0.65) with matching reason code.
+- **Evaluated Ambiguity Reason Codes**:
+  - `missing_document_type`: Inquiries about fees, procedures, or validity without naming the document.
+  - `missing_service_or_task`: Document stated, but desired task or question is absent.
+  - `missing_location`: Regional/state revenue certificates (income, residence, domicile) lacking state context.
+  - `missing_applicant_context`: Eligibility or fee inquiries missing category (minor, adult, Tatkaal, concession).
+  - `missing_attachment_reference`: Queries referencing unattached or missing uploads.
+  - `unclear_request`: Opaque or ultra-short queries requiring general elaboration.
+
+---
+
+## 5. Hybrid Retrieval Evaluation
 
 Evaluates the multi-stage retriever (query rewriting, metadata filtering, BM25 lexical search, Chroma dense vector search, Reciprocal Rank Fusion, and Cohere reranking) against ground-truth document chunks.
 
@@ -151,7 +248,7 @@ Evaluates the multi-stage retriever (query rewriting, metadata filtering, BM25 l
 
 ---
 
-## 4. Response Node Evaluation
+## 6. Response Node Evaluation
 
 Evaluates response generation and citation precision using LLM-as-a-judge across 6 distinct criteria.
 
@@ -200,18 +297,21 @@ Each criterion is scored from 0.0 to 1.0:
 
 ---
 
-## 5. End-to-End Connected Graph Evaluation
+## 7. End-to-End Connected Graph Evaluation
 
 Executes cases through the complete connected LangGraph pipeline (`process_input` -> `intent_classifier` -> `retriever` -> `context_builder` -> `response`), evaluating dynamic grounding, full IR quality, response judges, and token consumption in a single workflow.
 
 ### Commands
 
 ```powershell
-# Run demo on records 1 to 3
+# Run single-turn demo on records 1 to 3
 .\.venv\Scripts\python.exe -m evaluation.runners.run_e2e_demo --start 1 --end 3
 
 # Run on 10 records with custom report output
 .\.venv\Scripts\python.exe -m evaluation.runners.run_e2e_demo --start 1 --end 10 --output evaluation\reports\e2e\latest.json
+
+# Run multi-turn conversational memory cases through the connected graph
+.\.venv\Scripts\python.exe -m evaluation.runners.run_e2e_demo --memory --start 1 --end 3
 ```
 
 ### Metrics & Outputs
@@ -252,6 +352,8 @@ To publish previously generated reports without re-running evaluations:
    ```powershell
    .\.venv\Scripts\python.exe evaluation\runners\run_input_processor.py --no-langfuse
    .\.venv\Scripts\python.exe evaluation\runners\run_intent.py --offline --no-langfuse
+   .\.venv\Scripts\python.exe evaluation\runners\run_memory.py --offline --no-langfuse
+   .\.venv\Scripts\python.exe evaluation\runners\run_clarification.py --offline --no-langfuse
    ```
 2. **Retrieval Verification (Low Cost)**:
    ```powershell
@@ -263,5 +365,9 @@ To publish previously generated reports without re-running evaluations:
    ```
 4. **End-to-End System Verification**:
    ```powershell
+   # Single-turn grounded QA:
    .\.venv\Scripts\python.exe -m evaluation.runners.run_e2e_demo --start 1 --end 3
+
+   # Multi-turn conversational memory:
+   .\.venv\Scripts\python.exe -m evaluation.runners.run_e2e_demo --memory --start 1 --end 3
    ```
