@@ -278,7 +278,7 @@ This gives us visibility into both **Individual case performance** and **Overall
 
 ---
 
-## 10. Use Langfuse Dataset + Experiment Structure
+<!---## 10. Use Langfuse Dataset + Experiment Structure
 
 Ideally, the retrieval evaluation should eventually follow:
 
@@ -303,7 +303,7 @@ Overall metrics
 The source-controlled `evaluation/datasets/retrieval/cases.jsonl` should remain our ground-truth source of truth. Langfuse can contain a mirrored dataset for experiment tracking.
 
 ---
-
+-->
 ## 11. Store Useful Metadata
 
 Every retrieval evaluation run should record information such as:
