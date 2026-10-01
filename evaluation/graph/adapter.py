@@ -27,13 +27,18 @@ from app.graph.graph import (
 from app.graph.state import State
 from app.input_processing.ocr_provider import OCRProvider
 from app.input_processing.pdf_processor import PDFExtractor, PDFPageImageExtractor
+from app.config import get_settings
 from app.input_processing.processors import process_input
 from app.input_processing.schemas import (
     Attachment,
     InputProcessingResult,
     InputRequest,
 )
-from app.intent.classifier import IntentClassifier, OpenAIIntentClassifier
+from app.intent.classifier import (
+    IntentClassifier,
+    JevIntentClassifier,
+    OpenAIIntentClassifier,
+)
 from app.rag.context_builder.node import context_builder_node
 from app.rag.node import retriever_node
 from app.response.node import response_node
@@ -118,6 +123,18 @@ class GraphEvaluationOutput:
         }
 
 
+def resolve_intent_classifier(
+    classifier: Optional[IntentClassifier] = None,
+) -> IntentClassifier:
+    """Resolve an intent classifier, prioritizing JEV when OPENROUTER_API_KEY is configured."""
+    if classifier is not None:
+        return classifier
+    settings = get_settings()
+    if settings.openrouter_api_key:
+        return JevIntentClassifier()
+    return OpenAIIntentClassifier()
+
+
 class ConnectedGraphAdapter:
     """Adapter executing the real connected LangGraph pipeline for evaluation."""
 
@@ -133,7 +150,7 @@ class ConnectedGraphAdapter:
         pdf_extractor: Optional[PDFExtractor] = None,
         page_image_extractor: Optional[PDFPageImageExtractor] = None,
     ) -> None:
-        self.classifier = classifier or OpenAIIntentClassifier()
+        self.classifier = resolve_intent_classifier(classifier)
         self.retriever = retriever
         self.context_builder = context_builder
         self.responder = responder

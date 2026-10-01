@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import uuid
 os.environ["LANGFUSE_ENABLED"] = "true"
 from pathlib import Path
 import sys
@@ -28,6 +29,7 @@ from app.contracts.retrieval import RetrievedDocument
 from app.observability.langfuse import flush_langfuse, get_langfuse_client, start_observation
 get_langfuse_client.cache_clear()
 from langchain_community.callbacks import get_openai_callback
+from app.memory.node import MemoryManager
 from app.rag.node import get_default_retriever_pipeline
 from app.rag.vector_store import VectorStoreRetriever
 from evaluation.case_loader import load_cases
@@ -37,6 +39,7 @@ from evaluation.evaluators.retrieval.evaluator import (
     summarize_retrieval_results,
 )
 from evaluation.graph.adapter import ConnectedGraphAdapter, GraphEvaluationOutput
+from evaluation.runners.run_memory import InMemoryEvaluationRepository
 from evaluation.runners.run_retrieval import initialize_and_validate_corpus
 
 
@@ -46,13 +49,184 @@ def ensure_corpus_indexed() -> tuple[int, int]:
     return initialize_and_validate_corpus(pipeline)
 
 
-def run_demo(
+def run_memory_e2e_demo(
     start: int = 1,
     end: int = 3,
     output: Optional[Path] = None,
     adapter: Optional[ConnectedGraphAdapter] = None,
     cases_file: Optional[Path] = None,
 ) -> dict[str, Any]:
+    """Execute multi-turn conversational memory cases through the connected LangGraph pipeline."""
+    chroma_count, bm25_count = ensure_corpus_indexed()
+
+    if cases_file is None:
+        cases_file = PROJECT_ROOT / "evaluation/datasets/memory/cases.json"
+    all_cases = load_cases(cases_file)
+
+    start_idx = max(1, start)
+    end_idx = min(len(all_cases), end)
+    cases_to_run = all_cases[start_idx - 1 : end_idx]
+
+    langfuse_client = get_langfuse_client()
+    if adapter is None:
+        repo = InMemoryEvaluationRepository()
+        memory_mgr = MemoryManager(repository=repo)
+        adapter = ConnectedGraphAdapter(memory_manager=memory_mgr)
+
+    print("=" * 80, flush=True)
+    print(f"RUNNING CONNECTED GRAPH MULTI-TURN MEMORY EVALUATION ON RECORDS {start_idx} TO {end_idx} ({len(cases_to_run)} TEST CASES)", flush=True)
+    print(f"Langfuse Client Active: {langfuse_client is not None}", flush=True)
+    print("=" * 80, flush=True)
+
+    summary_results = []
+    total_turns_evaluated = 0
+    total_turns_passed = 0
+    total_cases_passed = 0
+
+    for offset, case in enumerate(cases_to_run):
+        record_num = start_idx + offset
+        case_id = case.get("id", f"MEM-{record_num:03d}")
+        title = case.get("title", "")
+        metadata = case.get("metadata", {})
+        turns = case.get("turns", [])
+        thread_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"e2e-demo-{case_id}"))
+
+        print(f"\n[{record_num}/{end_idx}] Case ID: {case_id} - '{title}'", flush=True)
+        print(f"  Category: {metadata.get('category', 'unknown')} | Topic: {metadata.get('topic', 'unknown')} | Turns: {len(turns)}", flush=True)
+
+        turn_results = []
+        case_passed = True
+        trace_id = None
+
+        with start_observation(
+            name=f"eval_memory_case:{case_id}",
+            as_type="chain",
+            input={"case_id": case_id, "title": title, "turn_count": len(turns)},
+            metadata={
+                "evaluation_mode": "connected_graph_memory_demo",
+                "case_id": case_id,
+                "category": metadata.get("category", ""),
+                "topic": metadata.get("topic", ""),
+            },
+        ) as case_trace:
+            trace_id = getattr(case_trace, "trace_id", None) or getattr(case_trace, "id", None)
+
+            for turn_data in turns:
+                turn_idx = turn_data.get("turn", 1)
+                user_input = turn_data.get("user_input", "")
+                expected_intent = turn_data.get("expected_intent")
+
+                print(f"\n  Turn {turn_idx}: \"{user_input}\"", flush=True)
+
+                graph_output = adapter.run(query=user_input, thread_id=thread_id)
+                total_turns_evaluated += 1
+
+                if not graph_output.success:
+                    print(f"    [ERROR] Graph execution failed: {graph_output.error}", flush=True)
+                    case_passed = False
+                    turn_results.append({
+                        "turn": turn_idx,
+                        "query": user_input,
+                        "success": False,
+                        "error": graph_output.error,
+                        "passed": False,
+                    })
+                    continue
+
+                intent_matched = (graph_output.intent == expected_intent) if expected_intent else True
+                if not intent_matched:
+                    case_passed = False
+
+                passed = intent_matched and bool(graph_output.response)
+                if passed:
+                    total_turns_passed += 1
+
+                print(f"    -> Intent: {graph_output.intent} (expected: {expected_intent}, matched: {intent_matched})", flush=True)
+                print(f"    -> Hybrid Candidates: Dense: {graph_output.dense_result_count} | Lexical: {graph_output.lexical_result_count}", flush=True)
+                print(f"    -> Retrieved chunks ({len(graph_output.retrieved_chunk_ids)}): {graph_output.retrieved_chunk_ids[:3]}...", flush=True)
+                preview = (graph_output.response[:120] + "...") if graph_output.response else "None"
+                print(f"    -> Response preview: {preview}", flush=True)
+
+                turn_results.append({
+                    "turn": turn_idx,
+                    "query": user_input,
+                    "intent": graph_output.intent,
+                    "expected_intent": expected_intent,
+                    "intent_matched": intent_matched,
+                    "retrieved_chunk_ids": graph_output.retrieved_chunk_ids,
+                    "response": graph_output.response,
+                    "passed": passed,
+                    "tokens": graph_output.token_usage,
+                })
+
+            if case_passed:
+                total_cases_passed += 1
+
+            summary_results.append({
+                "case_id": case_id,
+                "title": title,
+                "category": metadata.get("category", ""),
+                "topic": metadata.get("topic", ""),
+                "turn_count": len(turns),
+                "passed": case_passed,
+                "trace_id": trace_id,
+                "turns": turn_results,
+            })
+
+    flush_langfuse()
+
+    turn_pass_rate = (total_turns_passed / total_turns_evaluated) if total_turns_evaluated else 0.0
+    case_pass_rate = (total_cases_passed / len(cases_to_run)) if cases_to_run else 0.0
+
+    print("\n" + "=" * 80, flush=True)
+    print("MULTI-TURN CONNECTED GRAPH EVALUATION SUMMARY", flush=True)
+    print("=" * 80, flush=True)
+    print(f"Total Cases:     {len(cases_to_run)}", flush=True)
+    print(f"Cases Passed:    {total_cases_passed}/{len(cases_to_run)} ({case_pass_rate:.1%})", flush=True)
+    print(f"Total Turns:     {total_turns_evaluated}", flush=True)
+    print(f"Turns Passed:    {total_turns_passed}/{total_turns_evaluated} ({turn_pass_rate:.1%})", flush=True)
+    print("=" * 80, flush=True)
+
+    report = {
+        "evaluation_type": "connected_graph_memory",
+        "chroma_document_count": chroma_count,
+        "bm25_document_count": bm25_count,
+        "metrics": {
+            "total_cases": len(cases_to_run),
+            "cases_passed": total_cases_passed,
+            "case_pass_rate": case_pass_rate,
+            "total_turns": total_turns_evaluated,
+            "turns_passed": total_turns_passed,
+            "turn_pass_rate": turn_pass_rate,
+        },
+        "cases": summary_results,
+    }
+
+    report_path = output or (PROJECT_ROOT / "evaluation/reports/e2e/memory_latest.json")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(f"\n[OK] Multi-turn end-to-end evaluation report written to {report_path}", flush=True)
+
+    return report
+
+
+def run_demo(
+    start: int = 1,
+    end: int = 3,
+    output: Optional[Path] = None,
+    adapter: Optional[ConnectedGraphAdapter] = None,
+    cases_file: Optional[Path] = None,
+    memory_mode: bool = False,
+) -> dict[str, Any]:
+    if memory_mode or (cases_file and "memory" in str(cases_file)):
+        return run_memory_e2e_demo(
+            start=start,
+            end=end,
+            output=output,
+            adapter=adapter,
+            cases_file=cases_file,
+        )
+
     chroma_count, bm25_count = ensure_corpus_indexed()
 
     if cases_file is None:
@@ -447,6 +621,14 @@ if __name__ == "__main__":
     parser.add_argument("--start", type=int, default=1, help="1-based start record index (inclusive, default: 1)")
     parser.add_argument("--end", type=int, default=3, help="1-based end record index (inclusive, default: 3)")
     parser.add_argument("--output", type=Path, default=None, help="Path to write the JSON evaluation report (default: evaluation/reports/e2e/latest.json)")
+    parser.add_argument("--memory", action="store_true", help="Run multi-turn conversational memory cases through the connected graph.")
+    parser.add_argument("--dataset", type=Path, default=None, help="Custom dataset path (JSON or JSONL).")
     args = parser.parse_args()
 
-    run_demo(start=args.start, end=args.end, output=args.output)
+    run_demo(
+        start=args.start,
+        end=args.end,
+        output=args.output,
+        cases_file=args.dataset,
+        memory_mode=args.memory,
+    )
