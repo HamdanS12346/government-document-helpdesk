@@ -1,6 +1,6 @@
 # Evaluation Guide
 
-Comprehensive guide for evaluating the Government Document Helpdesk assistant across all pipeline stages: Input Processing, Intent Classification, Multi-Turn Conversational Memory, Clarification & Ambiguity, Hybrid Retrieval, Response Generation, and End-to-End Connected Graph Execution.
+Comprehensive guide for evaluating the Government Document Helpdesk assistant across all pipeline stages: Input Processing, Intent Classification, Multi-Turn Conversational Memory, Clarification & Ambiguity, Hybrid Retrieval, Response Generation, Hallucination & Unsupported Information Detection, Out-of-Scope Detection & Handling, and End-to-End Connected Graph Execution.
 
 ---
 
@@ -14,6 +14,8 @@ Comprehensive guide for evaluating the Government Document Helpdesk assistant ac
 | **Clarification & Ambiguity** | `evaluation/runners/run_clarification.py` | `evaluation/datasets/clarification/cases.json` | Ambiguity reason diagnosis, missing dimension extraction, question quality | None (offline) or `OPENAI_API_KEY` (online) |
 | **Hybrid Retrieval** | `evaluation/runners/run_retrieval.py` | `evaluation/datasets/retrieval/cases.jsonl` | Recall@5, Precision@5, MRR, nDCG@5, Hybrid Evidence | `OPENAI_API_KEY`, optional `COHERE_API_KEY` |
 | **Response Generation** | `evaluation/runners/run_response.py` | `evaluation/datasets/response/cases.jsonl` | 6 LLM judges (Correctness, Faithfulness, Relevance, Completeness, Citation, Safety) | `OPENAI_API_KEY` |
+| **Hallucination Evaluation** | `evaluation/runners/run_hallucination.py` | `evaluation/datasets/hallucination/cases.jsonl` | Claim-level context support, hallucination rate, unsupported claim rate, missing info handling | `OPENAI_API_KEY` |
+| **Out-of-Scope Detection** | `evaluation/runners/run_out_of_scope.py` | `evaluation/datasets/out_of_scope/cases.jsonl` | Scope classification, containment rate, false acceptance, false rejection, mixed queries | `OPENAI_API_KEY` |
 | **End-to-End Graph** | `evaluation/runners/run_e2e_demo.py` | `evaluation/datasets/response/cases.jsonl` (single-turn) or `memory/cases.json` (`--memory`) | Full connected graph execution, dynamic grounding, IR metrics, memory persistence, LLM judges, token usage | `OPENAI_API_KEY` / `OPENROUTER_API_KEY`, optional `COHERE_API_KEY` |
 
 > [!NOTE]
@@ -37,8 +39,12 @@ evaluation/datasets/
 │   └── cases.json           # Ambiguous queries requiring targeted follow-ups across 6 reason codes
 ├── retrieval/
 │   └── cases.jsonl          # Government queries paired with expected ground-truth chunk IDs
-└── response/
-    └── cases.jsonl          # Queries with expected answers, citations, and ground-truth contexts
+├── response/
+│   └── cases.jsonl          # Queries with expected answers, citations, and ground-truth contexts
+├── hallucination/
+│   └── cases.jsonl          # 30 cases across 5 categories (fully supported, partially supported, unsupported, false premise, numerical)
+└── out_of_scope/
+    └── cases.jsonl          # 35 cases across 5 categories (in-scope, out-of-scope, borderline, mixed, adversarial)
 ```
 
 ---
@@ -324,6 +330,162 @@ Executes cases through the complete connected LangGraph pipeline (`process_input
 
 ---
 
+## 8. Hallucination & Unsupported Information Evaluation
+
+Evaluates whether the connected chatbot graph makes factual claims that are not supported by the retrieved context, properly acknowledges missing or unavailable information, refuses to fabricate details (fees, timeframes, eligibility), and challenges false assumptions in user queries.
+
+### Difference from Response Faithfulness
+
+| Dimension | Primary Objective | Key Distinction |
+| :--- | :--- | :--- |
+| **Response → Faithfulness** | Is the overall answer grounded in retrieved chunks? | Evaluates general holistic grounding and tone. |
+| **Hallucination Evaluation** | Does the answer invent unsupported facts, and does it handle missing information appropriately? | Performs **claim-level decomposition**, checks individual assertions against context, verifies honest refusal/uncertainty, and flags false premise acceptance. |
+
+### Commands
+
+```powershell
+# Run the complete 30-case hallucination evaluation
+.\.venv\Scripts\python.exe -m evaluation.runners.run_hallucination
+
+# Run local only without publishing to Langfuse
+.\.venv\Scripts\python.exe -m evaluation.runners.run_hallucination --no-langfuse
+
+# Run on a subset (e.g., first 5 cases)
+.\.venv\Scripts\python.exe -m evaluation.runners.run_hallucination --limit 5
+
+# Run a specific slice (records 11 to 20)
+.\.venv\Scripts\python.exe -m evaluation.runners.run_hallucination --start 11 --end 20
+
+# Save JSON report to custom destination
+.\.venv\Scripts\python.exe -m evaluation.runners.run_hallucination --output evaluation\reports\hallucination_report.json
+
+# Run hallucination evaluator unit tests
+.\.venv\Scripts\python.exe -m pytest tests/test_hallucination_evaluator.py
+```
+
+### Evaluated Test Categories (30 Cases)
+
+| Test Category | Number | Purpose |
+| :--- | :---: | :--- |
+| **Fully Supported** | 10 | Verify that supported answers are not incorrectly flagged as hallucinations (low false positive rate). |
+| **Partially Supported** | 5 | Verify chatbot answers supported parts while refusing to guess missing details. |
+| **Completely Unsupported** | 5 | Verify chatbot acknowledges unavailable information and refuses to fabricate facts. |
+| **False Premise** | 5 | Verify chatbot challenges or refuses to accept unsupported user assumptions as fact. |
+| **Numerical & Eligibility** | 5 | High-risk numerical grounding (fees, age limits, validity periods, appointment reschedules). |
+
+### Claim-Level Structured Output
+
+```json
+{
+  "score": 0.33,
+  "hallucination_detected": true,
+  "claims": [
+    {
+      "claim": "An Indian passport facilitates international travel.",
+      "supported": true,
+      "evidence": "Passports Act 1967 requires travel documents for departing India."
+    },
+    {
+      "claim": "The application fee is ₹1,500.",
+      "supported": false,
+      "evidence": null
+    },
+    {
+      "claim": "Processing takes 15 days.",
+      "supported": false,
+      "evidence": null
+    }
+  ],
+  "unsupported_claims": 2,
+  "unsupported_information_handling": 0.5,
+  "reason": "The response contains two factual claims that are not supported by the retrieved context."
+}
+```
+
+### Metrics & Outputs
+
+- **Average Hallucination Score**: Ratio of supported factual claims to total factual claims across all cases (or 1.0 for valid refusal/uncertainty statements).
+- **Hallucination Rate**: Percentage of test cases containing 1 or more unsupported claims.
+- **Unsupported Claim Rate**: Total unsupported claims divided by total factual claims across all cases.
+- **Unsupported Information Handling**: Rate of appropriately acknowledging missing information and challenging false premises without guessing.
+- **Claim-Level Analysis**: Extracts discrete claims, evaluates grounding strictly against retrieved context, and records supporting evidence.
+
+---
+
+## 9. Out-of-Scope Detection & Handling Evaluation
+
+Evaluates whether the connected chatbot graph correctly identifies queries within versus outside its supported government-document domain, avoids answering unrelated requests (coding, weather, stocks, shopping, general knowledge), politely refuses or redirects users to government document assistance, handles borderline queries, and answers mixed queries by resolving only the in-scope portion.
+
+### Difference from Intent Classification
+
+| Stage | Primary Question | Key Difference |
+| :--- | :--- | :--- |
+| **Intent Classifier** | Did the system map the query to the correct intent class (`document_info`, `general_chat`, `ambiguous`)? | Tests isolated node classification accuracy. |
+| **Out-of-Scope Evaluation** | Does the **end-to-end chatbot** recognize domain boundaries, avoid answering forbidden topics, politely redirect, and handle mixed/adversarial inputs safely? | Tests connected graph behavior, refusal quality, and containment of unsupported requests. |
+
+### Commands
+
+```powershell
+# Run the complete 35-case out-of-scope evaluation
+.\.venv\Scripts\python.exe -m evaluation.runners.run_out_of_scope
+
+# Run local only without publishing to Langfuse
+.\.venv\Scripts\python.exe -m evaluation.runners.run_out_of_scope --no-langfuse
+
+# Run on a subset (e.g., first 5 cases)
+.\.venv\Scripts\python.exe -m evaluation.runners.run_out_of_scope --limit 5
+
+# Run a specific slice (records 11 to 20)
+.\.venv\Scripts\python.exe -m evaluation.runners.run_out_of_scope --start 11 --end 20
+
+# Save JSON report to custom destination
+.\.venv\Scripts\python.exe -m evaluation.runners.run_out_of_scope --output evaluation\reports\out_of_scope_results.json
+
+# Run unit tests for out-of-scope evaluator
+.\.venv\Scripts\python.exe -m pytest tests/test_out_of_scope_evaluator.py
+```
+
+### Evaluated Test Categories (35 Cases)
+
+| Test Category | Number | Purpose |
+| :--- | :---: | :--- |
+| **Clearly In-Scope** | 10 | Verify normal government document queries are answered helpfully (ensures low false rejection rate). |
+| **Clearly Out-of-Scope** | 10 | General knowledge, weather, coding, stocks, medical, entertainment queries (verifies polite refusal/redirection). |
+| **Borderline / Ambiguous** | 5 | Queries tangentially mentioning travel/documents but involving foreign rules or commercial services. |
+| **Mixed In-Scope + Out-of-Scope** | 5 | Combines an in-scope question with an unrelated request (verifies answering in-scope only). |
+| **Adversarial / Scope-Bypass** | 5 | Jailbreak attempts, persona shifts, and instruction overrides attempting to force out-of-scope generation. |
+
+### Structured Evaluation Output
+
+```json
+{
+  "score": 1.0,
+  "scope_classification": {
+    "expected": "out_of_scope",
+    "actual": "out_of_scope",
+    "correct": true
+  },
+  "behavior": {
+    "expected": "refuse_or_redirect",
+    "actual": "refuse_or_redirect",
+    "correct": true
+  },
+  "response_appropriate": true,
+  "reason": "The chatbot correctly recognized the query as outside its government document domain and politely redirected the user."
+}
+```
+
+### Metrics & Outputs
+
+- **Scope Classification Accuracy**: Percentage of cases where the chatbot correctly recognized the query scope (`in_scope`, `out_of_scope`, `borderline`, `mixed`).
+- **Response Behavior Accuracy**: Percentage of cases where the chatbot executed the expected action (`answer`, `refuse_or_redirect`, `answer_in_scope_only`, `clarify`).
+- **Out-of-Scope Containment Rate**: Percentage of out-of-scope queries successfully prevented from generating unsupported responses.
+- **False Acceptance Rate**: Out-of-scope queries incorrectly answered (targeted to be as close to 0% as possible).
+- **False Rejection Rate**: In-scope queries incorrectly refused (targeted to be as close to 0% as possible).
+- **Subcategory Accuracies**: Individual accuracy breakdowns for borderline, mixed, and adversarial queries.
+
+---
+
 ## Langfuse Publishing
 
 Set these variables in `.env`:
@@ -363,7 +525,23 @@ To publish previously generated reports without re-running evaluations:
    ```powershell
    .\.venv\Scripts\python.exe -m evaluation.runners.run_response --limit 3 --no-langfuse
    ```
-4. **End-to-End System Verification**:
+4. **Hallucination Verification (Claim-Level Grounding)**:
+   ```powershell
+   # Smoke test (5 cases, no Langfuse publish):
+   .\.venv\Scripts\python.exe -m evaluation.runners.run_hallucination --limit 5 --no-langfuse
+
+   # Complete run across all 30 benchmark cases:
+   .\.venv\Scripts\python.exe -m evaluation.runners.run_hallucination
+   ```
+5. **Out-of-Scope Containment Verification**:
+   ```powershell
+   # Smoke test (5 cases, no Langfuse publish):
+   .\.venv\Scripts\python.exe -m evaluation.runners.run_out_of_scope --limit 5 --no-langfuse
+
+   # Complete run across all 35 benchmark cases:
+   .\.venv\Scripts\python.exe -m evaluation.runners.run_out_of_scope
+   ```
+6. **End-to-End System Verification**:
    ```powershell
    # Single-turn grounded QA:
    .\.venv\Scripts\python.exe -m evaluation.runners.run_e2e_demo --start 1 --end 3
